@@ -6,10 +6,14 @@ let cachedSqlRuntime: Promise<SqlJsStatic> | null = null;
 async function getSqlWasmRuntime(): Promise<SqlJsStatic> {
   if (!cachedSqlRuntime) {
     const isBrowser = typeof window !== 'undefined';
-    cachedSqlRuntime = initSqlJs(
+    const initFn =
+      typeof initSqlJs === 'function'
+        ? initSqlJs
+        : (initSqlJs as unknown as { default: typeof initSqlJs }).default;
+    cachedSqlRuntime = initFn(
       isBrowser
         ? {
-            locateFile: (file: string) => `/${file}`
+            locateFile: () => '/sql-wasm.wasm'
           }
         : undefined
     );

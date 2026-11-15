@@ -172,11 +172,6 @@ export class SafePocketAppShell {
   }
 
   async bootstrap(): Promise<void> {
-    // Initialize SQLite WASM + OPFS vault & pre-provisioned Firebase database in standby from boot
-    await this.firebaseService.initializeDormant();
-    this.liveCloudConfig = this.firebaseService.toEndpointConfig();
-    this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
-
     this.demoSecretKey =
       localStorage.getItem('safepocket.demo_secret_key') ??
       generateFormattedSecretKey();
@@ -185,12 +180,31 @@ export class SafePocketAppShell {
     this.i18n.subscribe(() => this.render());
     this.updater.subscribe(() => this.render());
     this.bindGlobalShortcuts();
-    void this.updater.registerServiceWorkerAndAutoCheck();
 
     const savedHeader = this.vaultHeaderStore.loadHeader();
     if (!savedHeader) {
-      // First-run state: present Onboarding Wizard (with 1-Click Sample Vault option)
       this.showOnboardingWizard = true;
+    }
+
+    // Render UI shell immediately (0ms first paint — never blank while WASM compiles)
+    this.render();
+    void this.updater.registerServiceWorkerAndAutoCheck();
+
+    try {
+      // Initialize SQLite WASM + OPFS vault & pre-provisioned Firebase database in standby
+      await this.firebaseService.initializeDormant();
+      this.liveCloudConfig = this.firebaseService.toEndpointConfig();
+      this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+    } catch (err) {
+      console.error('SQLite WASM bootstrap warning:', err);
+      this.showToast(
+        err instanceof Error
+          ? `Storage fallback active: ${err.message}`
+          : 'Storage fallback active'
+      );
+    }
+
+    if (!savedHeader) {
       this.render();
       return;
     }
