@@ -50,10 +50,11 @@ echo "==> [2/5] Provisioning Cloud Firestore database (${REGION})..."
 npx --yes firebase-tools firestore:databases:create "(default)" --location "${REGION}" --project "${PROJECT_ID}" 2>/dev/null || \
   echo "    Firestore (default) database already provisioned."
 
-echo "==> [3/5] Deploying Zero-Knowledge Firestore Rules & Indexes..."
+echo "==> [3/5] Deploying Zero-Knowledge Firestore & Storage Security Rules..."
 (
   cd "${REPO_ROOT}"
-  npx --yes firebase-tools deploy --only firestore:rules,firestore:indexes --project "${PROJECT_ID}"
+  npx --yes firebase-tools deploy --only firestore:rules,firestore:indexes,storage --project "${PROJECT_ID}" || \
+    npx --yes firebase-tools deploy --only firestore:rules,firestore:indexes --project "${PROJECT_ID}"
 )
 
 echo "==> [4/5] Registering SafePocket Web App & fetching SDK config..."
