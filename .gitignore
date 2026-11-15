@@ -1,0 +1,29 @@
+# Dependencies & Build Artifacts
+node_modules/
+pwaApp/node_modules/
+pwaApp/dist/
+.gradle/
+build/
+**/build/
+.kotlin/
+local.properties
+
+# Secrets, Signing Keys & Local Firebase Env Overrides
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.pem
+*.p8
+*.p12
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbsumbs.db
+*.swp

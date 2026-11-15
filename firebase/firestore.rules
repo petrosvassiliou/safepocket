@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// SafePocket Zero-Knowledge Cloud Firestore Rules (Default Cloud Service when Cloud Sync is enabled)
+// Enforces:
+//   1. Strict per-UID tenant isolation (`users/{userId}/vaults/{vaultId}/deltas/{entityId}`).
+//   2. Schema-level Zero-Knowledge enforcement: rejects any document containing plaintext titles,
+//      categories, tags, keys, or unexpected metadata fields.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function isValidZeroKnowledgeEnvelope(data) {
+      let allowedKeys = [
+        'entityId',
+        'entityType',
+        'hlcPacked',
+        'versionVector',
+        'ivHex',
+        'ivBase64',
+        'ciphertextHex',
+        'ciphertextBase64',
+        'aadContext',
+        'isTombstone'
+      ];
+      return data.keys().hasOnly(allowedKeys)
+        && data.entityId is string
+        && data.entityType in ['ITEM', 'ATTACHMENT_META']
+        && data.hlcPacked is string
+        && data.aadContext is string
+        && data.isTombstone is bool
+        && (
+          ('ciphertextHex' in data && data.ciphertextHex is string && 'ivHex' in data && data.ivHex is string)
+          || ('ciphertextBase64' in data && data.ciphertextBase64 is string && 'ivBase64' in data && data.ivBase64 is string)
+        );
+    }
+
+    match /users/{userId}/vaults/{vaultId}/deltas/{entityId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && entityId == request.resource.data.entityId
+        && isValidZeroKnowledgeEnvelope(request.resource.data);
+      // CRDT tombstones replace hard deletes so deletions converge offline-first
+      allow delete: if false;
+    }
+  }
+}

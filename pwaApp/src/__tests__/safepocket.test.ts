@@ -1,0 +1,689 @@
+import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  generateFormattedSecretKey,
+  ZeroKnowledgeVaultCrypto
+} from '../crypto/vaultCrypto';
+import {
+  buildSampleSvgScanBytes,
+  createInitialSampleVaultItems
+} from '../data/sampleVault';
+import {
+  OpfsEncryptedAttachmentStore,
+  VaultHeaderStore
+} from '../db/opfsAttachmentStore';
+import { SqliteWasmVaultDb } from '../db/sqliteWasmVaultDb';
+import { FirebaseVaultService } from '../firebase/firebaseVaultService';
+import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
+import {
+  buildSampleTd3PassportMrz,
+  computeIcaoCheckDigit,
+  parseOfflineIcaoMrz,
+  validateIsoIban,
+  validatePaymentCardPan
+} from '../scanner/mrzAndCardValidator';
+import {
+  computeExpiryStatus,
+  searchVaultItems
+} from '../search/searchEngine';
+import { IdleAutoLockMonitor } from '../security/autoLockMonitor';
+import {
+  assertStrictZeroKnowledgeEnvelope,
+  pushRowsToFirestoreRest,
+  pushRowsToGoogleDriveAppDataRest
+} from '../sync/liveCloudConnectors';
+import {
+  EncryptedLocalVaultDb,
+  FirebaseZeroKnowledgeAdapter,
+  GoogleDriveAppDataAdapter,
+  HybridClock,
+  reconcileEncryptedRows,
+  VaultSyncCoordinator
+} from '../sync/syncAdapters';
+import { APP_BUILD_INFO, type RemoteUpdateManifest } from '../types';
+import {
+  buildEmergencyKitHtml,
+  estimateMasterPasswordEntropy
+} from '../ui/onboardingWizard';
+import {
+  PwaUpdateController,
+  verifyManifestEd25519Signature
+} from '../update/pwaUpdater';
+
+describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification Suite', () => {
+  it('1. Localization (i18n/l10n): translates all 6 languages & applies regional Identity Tax ID templates dynamically', () => {
+    const i18n = new SafePocketI18n('en-US');
+    expect(SUPPORTED_LOCALES.map((l) => l.code)).toEqual([
+      'en',
+      'de',
+      'it',
+      'fr',
+      'es',
+      'el'
+    ]);
+
+    const expectedRegionalTaxLabels: Record<string, string> = {
+      en: 'Tax ID (TIN / SSN)',
+      de: 'Steuer-ID (IdNr.)',
+      it: 'Codice Fiscale',
+      fr: 'Numéro fiscal / NIR (SPI)',
+      es: 'NIF / NIE',
+      el: 'ΑΦΜ (AFM)'
+    };
+
+    for (const [localeCode, expectedLabel] of Object.entries(
+      expectedRegionalTaxLabels
+    )) {
+      i18n.setLocaleOverride(localeCode as any);
+      expect(
+        i18n.resolveFieldLabel('field_tax_id', false, 'IDENTITY')
+      ).toBe(expectedLabel);
+      expect(i18n.plural('items_count', 1)).toContain('1');
+      expect(i18n.plural('items_count', 5)).toContain('5');
+      expect(i18n.t('onboarding_welcome_title').length).toBeGreaterThan(5);
+    }
+  });
+
+  it('2. Zero-Knowledge Encryption: Argon2id + Secret Key -> AES-256-GCM item & custom field encryption, AAD tamper rejection & .safepocket restore', async () => {
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 4096,
+      iterations: 2,
+      parallelism: 1
+    });
+    const secretKey = generateFormattedSecretKey();
+    expect(secretKey).toMatch(/^SPK-[A-Z2-9]{5}(-[A-Z2-9]{5}){4}$/);
+
+    await cryptoEngine.initializeOrUnlock('S3cure-Master-Pass!', secretKey);
+    const items = createInitialSampleVaultItems();
+    items[0].fields.push({
+      id: 'cf-concierge-code',
+      labelKey: 'Lounge Access PIN',
+      isCustomLabel: true,
+      value: '9918-VIP',
+      valueType: 'SENSITIVE_SECRET',
+      isSensitive: true
+    });
+
+    const hlc = new HybridClock('test-node').nowPacked();
+    const encryptedRow = await cryptoEngine.encryptVaultItem(items[0], hlc, {
+      'test-node': 1
+    });
+
+    const panUtf8Hex = Buffer.from('5355 8910 4421 7804', 'utf-8').toString('hex');
+    const customUtf8Hex = Buffer.from('9918-VIP', 'utf-8').toString('hex');
+    expect(encryptedRow.ciphertextHex).not.toContain('N26');
+    expect(encryptedRow.ciphertextHex).not.toContain(panUtf8Hex);
+    expect(encryptedRow.ciphertextHex).not.toContain(customUtf8Hex);
+
+    const decrypted = await cryptoEngine.decryptVaultRow(encryptedRow);
+    expect(decrypted.title).toBe(items[0].title);
+    expect(
+      decrypted.fields.find((f) => f.id === 'cf-concierge-code')?.value
+    ).toBe('9918-VIP');
+
+    // AAD tampering must fail GCM authentication
+    await expect(
+      cryptoEngine.decryptVaultRow({
+        ...encryptedRow,
+        aadContext: 'safepocket:v1:IDENTITY:tampered-id'
+      })
+    ).rejects.toThrow();
+
+    // .safepocket encrypted backup export & restore
+    const containerJson = await cryptoEngine.exportSafePocketContainer(
+      items,
+      'S3cure-Master-Pass!',
+      secretKey
+    );
+    const restored = await cryptoEngine.restoreSafePocketContainer(
+      containerJson,
+      'S3cure-Master-Pass!',
+      secretKey
+    );
+    expect(restored).toHaveLength(items.length);
+    expect(restored[1].title).toContain('Ελληνικό Διαβατήριο');
+  });
+
+  it('3. Encrypted Binary Document Scans & OPFS Store: lossless front/back AES-256-GCM round-trip & SHA-256 tamper rejection', async () => {
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    await cryptoEngine.initializeOrUnlock('scan-pw', generateFormattedSecretKey());
+    const opfs = new OpfsEncryptedAttachmentStore();
+
+    const originalSvgBytes = buildSampleSvgScanBytes({
+      title: 'Ελληνικό Διαβατήριο',
+      docNumber: 'ΑΤ8492017',
+      authority: 'Αρχηγείο Ελληνικής Αστυνομίας',
+      holder: 'CLARA SOFIA MÜLLER',
+      side: 'front'
+    });
+
+    const enc = await cryptoEngine.encryptBinaryAttachment(
+      'att-passport-front-v2',
+      'passport_front.svg',
+      'image/svg+xml',
+      originalSvgBytes,
+      'front'
+    );
+    expect(enc.side).toBe('front');
+    await opfs.writeEncryptedBlob(enc.id, enc.encryptedBytes);
+
+    const storedCipherBytes = await opfs.readEncryptedBlob(enc.id);
+    expect(storedCipherBytes).not.toBeNull();
+
+    const decryptedBytes = await cryptoEngine.decryptBinaryAttachment({
+      attachmentId: enc.id,
+      ivHex: enc.ivHex,
+      expectedSha256Hex: enc.sha256Hex,
+      encryptedBytes: storedCipherBytes!
+    });
+    expect(Array.from(decryptedBytes)).toEqual(Array.from(originalSvgBytes));
+
+    // Mutate 1 byte in encrypted blob -> constant-time SHA-256 check must reject before decrypt
+    const corrupted = storedCipherBytes!.slice();
+    corrupted[0] ^= 0xff;
+    await expect(
+      cryptoEngine.decryptBinaryAttachment({
+        attachmentId: enc.id,
+        ivHex: enc.ivHex,
+        expectedSha256Hex: enc.sha256Hex,
+        encryptedBytes: corrupted
+      })
+    ).rejects.toThrow(/SHA-256 integrity check failed/);
+  });
+
+  it('4. CRDT Tombstone Deletion & Local Encrypted DB: filters deleted items from UI while converging tombstones across peers', async () => {
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    await cryptoEngine.initializeOrUnlock('crdt-pw', generateFormattedSecretKey());
+    const localDb = new EncryptedLocalVaultDb();
+    const item = createInitialSampleVaultItems()[0];
+
+    const v1Row = await cryptoEngine.encryptVaultItem(
+      item,
+      '001763200000100-0000-nodeA',
+      { nodeA: 1 }
+    );
+    await localDb.saveEncryptedRow(v1Row);
+    expect(await localDb.loadAllEncryptedRows()).toHaveLength(1);
+
+    // Delete item with causal CRDT tombstone (nodeA: 2)
+    const tombstone = await cryptoEngine.createTombstoneRow(
+      item.id,
+      item.category,
+      '001763200000500-0000-nodeA',
+      { nodeA: 2 }
+    );
+    expect(tombstone.isTombstone).toBe(true);
+    await localDb.saveEncryptedRow(tombstone);
+
+    // Active UI query excludes tombstones; delta sync query retains tombstones
+    expect(await localDb.loadAllEncryptedRows()).toHaveLength(0);
+    const allIncludingTombstones = await localDb.loadAllRowsIncludingTombstones();
+    expect(allIncludingTombstones).toHaveLength(1);
+    expect(allIncludingTombstones[0].isTombstone).toBe(true);
+
+    // Reconciling stale v1Row with causal tombstone must converge to tombstone
+    const converged = reconcileEncryptedRows(v1Row, tombstone);
+    expect(converged.isTombstone).toBe(true);
+    expect(converged.versionVector).toEqual({ nodeA: 2 });
+  });
+
+  it('5. Instant Multilingual Search (< 50ms) & Expiry Warnings: German umlauts, Greek tonoi/Latin folding, and custom fields', () => {
+    const i18n = new SafePocketI18n('de-DE');
+    const items = createInitialSampleVaultItems();
+    items[2].fields.push({
+      id: 'cf-1',
+      labelKey: 'Bürgeramt Aktenzeichen',
+      isCustomLabel: true,
+      value: 'MUC-ZÜRICH-774',
+      valueType: 'TEXT'
+    });
+
+    const start = performance.now();
+    const byDigraph = searchVaultItems(items, 'mueller', i18n);
+    const byStripped = searchVaultItems(items, 'muller', i18n);
+    const byGreekUnaccented = searchVaultItems(items, 'αθηνα', i18n);
+    const byGreekLatin = searchVaultItems(items, 'athina', i18n);
+    const byCustomDigraph = searchVaultItems(items, 'zuerich', i18n);
+    const byLocalizedCategory = searchVaultItems(items, 'amtliches', i18n);
+    const elapsedMs = performance.now() - start;
+
+    expect(elapsedMs).toBeLessThan(50);
+    expect(byDigraph.length).toBeGreaterThanOrEqual(2);
+    expect(byStripped.length).toBeGreaterThanOrEqual(2);
+    expect(byGreekUnaccented.map((i) => i.id)).toContain(
+      'item-doc-hellenic-passport'
+    );
+    expect(byGreekLatin.map((i) => i.id)).toContain(
+      'item-doc-hellenic-passport'
+    );
+    expect(byCustomDigraph.map((i) => i.id)).toContain('item-identity-primary');
+    expect(byLocalizedCategory).toHaveLength(2);
+
+    const exp = computeExpiryStatus(items[1]);
+    expect(exp.severity).toBe('warning');
+  });
+
+  it('6. Storage & Cloud Sync Policy: defaults to Local Storage Only, uses Firebase as default cloud service when enabled, and Google Drive optionally', async () => {
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    await cryptoEngine.initializeOrUnlock('pw', generateFormattedSecretKey());
+    const sample = createInitialSampleVaultItems()[0];
+
+    const rowPhone = await cryptoEngine.encryptVaultItem(
+      { ...sample, title: 'Edited on Android 17 Foldable' },
+      '001763200000100-0001-android',
+      { android: 2, pwa: 1 }
+    );
+    const rowPwa = await cryptoEngine.encryptVaultItem(
+      { ...sample, title: 'Edited Offline on ChromeOS PWA' },
+      '001763200000250-0001-pwa',
+      { android: 1, pwa: 2 }
+    );
+
+    const merged = reconcileEncryptedRows(rowPhone, rowPwa);
+    expect(merged.versionVector).toEqual({ android: 2, pwa: 2 });
+
+    const fb = new FirebaseZeroKnowledgeAdapter();
+    const gd = new GoogleDriveAppDataAdapter();
+    const coordinator = new VaultSyncCoordinator(fb, gd);
+
+    // 1) Strictly Local Storage Only by default
+    expect(coordinator.isCloudSyncEnabled).toBe(false);
+    expect(coordinator.effectiveMode).toBe('NONE');
+    expect(coordinator.cloudService).toBe('FIREBASE');
+    expect(await coordinator.syncEncryptedRowsIfEnabled('v1', [merged])).toBeNull();
+
+    // 2) Firebase is the default cloud service once enabled
+    coordinator.setCloudSyncEnabled(true);
+    expect(coordinator.effectiveMode).toBe('FIREBASE');
+    const fbResult = await coordinator.syncEncryptedRowsIfEnabled('v1', [merged]);
+    expect(fbResult?.service).toBe('FIREBASE');
+    expect(fbResult?.pushedCount).toBe(1);
+
+    // 3) Google Drive (appDataFolder) works as an optional override
+    coordinator.setPreferredCloudService('GDRIVE_APPDATA');
+    expect(coordinator.effectiveMode).toBe('GDRIVE_APPDATA');
+    const gdResult = await coordinator.syncEncryptedRowsIfEnabled('v1', [merged]);
+    expect(gdResult?.service).toBe('GDRIVE_APPDATA');
+    expect(gdResult?.pushedCount).toBe(1);
+  });
+
+  it('7. Live Cloud REST Connectors & Zero-Knowledge Outbound Guard: validates Firestore :commit & Google Drive appDataFolder requests and rejects plaintext leaks', async () => {
+    // Verify client-side zero-knowledge guard blocks any unexpected plaintext key
+    expect(() =>
+      assertStrictZeroKnowledgeEnvelope({
+        entityId: 'item-1',
+        entityType: 'ITEM',
+        hlcPacked: '001',
+        versionVector: '{}',
+        ivHex: '00112233445566778899aabb',
+        ciphertextHex: 'a'.repeat(64),
+        aadContext: 'ctx',
+        isTombstone: false,
+        title: 'LEAKED PLAINTEXT'
+      })
+    ).toThrow(/forbidden outbound field "title"/);
+
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    await cryptoEngine.initializeOrUnlock('rest-pw', generateFormattedSecretKey());
+    const encRow = await cryptoEngine.encryptVaultItem(
+      createInitialSampleVaultItems()[0],
+      '001763200000999-0000-pwa',
+      { pwa: 1 }
+    );
+
+    const capturedRequests: Array<{ url: string; init?: RequestInit }> = [];
+    const mockFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      capturedRequests.push({ url: String(url), init });
+      return new Response(JSON.stringify({ writeResults: [{}] }), { status: 200 });
+    }) as typeof fetch;
+
+    // 1) Firestore REST :commit (Default Cloud Service)
+    const fbRes = await pushRowsToFirestoreRest(
+      'vault-eu-1',
+      [encRow],
+      {
+        firebaseProjectId: 'safepocket-prod',
+        bearerToken: 'firebase-id-token-xyz',
+        firebaseUserId: 'uid-clara'
+      },
+      mockFetch
+    );
+    expect(fbRes.pushedCount).toBe(1);
+    expect(capturedRequests[0].url).toBe(
+      'https://firestore.googleapis.com/v1/projects/safepocket-prod/databases/(default)/documents:commit'
+    );
+    expect(String(capturedRequests[0].init?.body)).not.toContain('N26 Metal');
+
+    // 2) Google Drive v3 appDataFolder multipart upload (Optional Cloud Service)
+    const gdRes = await pushRowsToGoogleDriveAppDataRest(
+      'vault-eu-1',
+      [encRow],
+      'gdrive-oauth-token-abc',
+      mockFetch
+    );
+    expect(gdRes.pushedCount).toBe(1);
+    expect(capturedRequests[1].url).toContain(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart'
+    );
+    expect(String(capturedRequests[1].init?.body)).toContain('"appDataFolder"');
+    expect(String(capturedRequests[1].init?.body)).not.toContain('CLARA MÜLLER');
+  });
+
+  it('8. First-Run Onboarding & Emergency Kit: computes Master Password entropy and prints Secret Key without exposing Master Password', () => {
+    const weak = estimateMasterPasswordEntropy('12345');
+    const strong = estimateMasterPasswordEntropy('Correct-Horse-Vault-2026!Ä');
+    expect(weak.rating).toBe('Weak');
+    expect(strong.bits).toBeGreaterThanOrEqual(95);
+    expect(strong.rating).toBe('Vault-Grade');
+
+    const secretKey = generateFormattedSecretKey();
+    const kitHtml = buildEmergencyKitHtml({
+      vaultId: 'vault-test-01',
+      createdAtIso: '2026-11-15T12:00:00Z',
+      secretKeyFormatted: secretKey,
+      kdf: {
+        memorySizeKiB: 16384,
+        iterations: 3,
+        parallelism: 2,
+        saltHex: '00112233445566778899aabbccddeeff'
+      }
+    });
+    expect(kitHtml).toContain(secretKey);
+    expect(kitHtml).toContain('Argon2id');
+    expect(kitHtml).not.toContain('Correct-Horse-Vault-2026');
+
+    const headerStore = new VaultHeaderStore();
+    expect(headerStore.loadHeader()).toBeNull();
+    headerStore.saveHeader({
+      vaultId: 'vault-test-01',
+      createdAtIso: '2026-11-15T12:00:00Z',
+      saltHex: '00112233445566778899aabbccddeeff',
+      memorySizeKiB: 16384,
+      iterations: 3,
+      parallelism: 2,
+      verifierHashHex: 'deadbeef'
+    });
+    expect(headerStore.loadHeader()?.vaultId).toBe('vault-test-01');
+  });
+
+  it('9. Active Inactivity Auto-Lock Monitor: defaults to 5 minutes and fires deterministic RAM key-wipe callback upon idle timeout', () => {
+    vi.useFakeTimers();
+    try {
+      let lockedCount = 0;
+      const monitor = new IdleAutoLockMonitor(() => {
+        lockedCount += 1;
+      });
+      expect(monitor.minutes).toBe(5);
+
+      monitor.start();
+      vi.advanceTimersByTime(4 * 60 * 1000);
+      expect(lockedCount).toBe(0);
+
+      // Advance past 5-minute threshold -> auto-lock triggers
+      vi.advanceTimersByTime(61 * 1000);
+      expect(lockedCount).toBe(1);
+
+      // Switch to 1-minute profile
+      monitor.setMinutes(1);
+      expect(monitor.minutes).toBe(1);
+      vi.advanceTimersByTime(61 * 1000);
+      expect(lockedCount).toBe(2);
+      monitor.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('10. Self-Updating Service: verifies signed version.json & exact SHA-256 of sw.js and rejects tampered payloads', async () => {
+    const publicDir = path.resolve(__dirname, '../../public');
+    const manifestJson = fs.readFileSync(
+      path.join(publicDir, 'version.json'),
+      'utf-8'
+    );
+    const swBytes = fs.readFileSync(path.join(publicDir, 'sw.js'));
+
+    const mockFetcher = (async (url: string) => {
+      if (url.endsWith('/version.json')) {
+        return new Response(manifestJson, { status: 200 });
+      }
+      return new Response(swBytes, { status: 200 });
+    }) as typeof fetch;
+
+    const updater = new PwaUpdateController('/version.json');
+    const checkStatus = await updater.checkForUpdates(mockFetcher);
+    expect(checkStatus.phase).toBe('available');
+    expect(updater.localizedReleaseNotes('el')).toContain('Googlebook OS');
+
+    const stageStatus =
+      await updater.verifyChecksumAndStageServiceWorker(mockFetcher);
+    expect(stageStatus.phase).toBe('ready_to_reload');
+    expect(stageStatus.verifiedSha256).toHaveLength(64);
+
+    const tamperedFetcher = (async (url: string) => {
+      if (url.endsWith('/version.json')) {
+        return new Response(manifestJson, { status: 200 });
+      }
+      return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 });
+    }) as typeof fetch;
+
+    await updater.checkForUpdates(tamperedFetcher);
+    const rejected =
+      await updater.verifyChecksumAndStageServiceWorker(tamperedFetcher);
+    expect(rejected.phase).toBe('error');
+    expect(rejected.errorMessage).toContain('SHA-256 tampering detected');
+  });
+
+  it('11. Starting Version v0.1 & Real Ed25519 Manifest Signing: verifies v0.1 (Build 1) baseline and rejects forged/mutated version.json signatures', async () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(1);
+
+    const publicDir = path.resolve(__dirname, '../../public');
+    const signedManifest = JSON.parse(
+      fs.readFileSync(path.join(publicDir, 'version.json'), 'utf-8')
+    ) as RemoteUpdateManifest;
+
+    expect(signedManifest.latestVersion).toBe('0.1.1');
+    expect(signedManifest.versionCode).toBe(2);
+    expect(await verifyManifestEd25519Signature(signedManifest)).toBe(true);
+
+    // Mutate latestVersion without re-signing -> Ed25519 verification must fail
+    const mutatedManifest: RemoteUpdateManifest = {
+      ...signedManifest,
+      latestVersion: '9.9.9'
+    };
+    expect(await verifyManifestEd25519Signature(mutatedManifest)).toBe(false);
+
+    //Updater must immediately reject tampered manifest signature
+    const updater = new PwaUpdateController('/version.json');
+    const badStatus = await updater.checkForUpdates((async () =>
+      new Response(JSON.stringify(mutatedManifest), { status: 200 })) as typeof fetch);
+    expect(badStatus.phase).toBe('error');
+    expect(badStatus.errorMessage).toContain('Ed25519 manifest signature verification failed');
+  });
+
+  it('12. SQLite WASM Encrypted Database Engine: persists encrypted rows, filters tombstones, and tracks provider sync cursors', async () => {
+    const sqlite = new SqliteWasmVaultDb(false);
+    await sqlite.ensureInitialized();
+
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    await cryptoEngine.initializeOrUnlock('sqlite-pw', generateFormattedSecretKey());
+
+    const items = createInitialSampleVaultItems();
+    const enc0 = await cryptoEngine.encryptVaultItem(
+      items[0],
+      '001763200001000-0000-pwa',
+      { pwa: 1 }
+    );
+    const enc1 = await cryptoEngine.encryptVaultItem(
+      items[1],
+      '001763200002000-0000-pwa',
+      { pwa: 1 }
+    );
+
+    await sqlite.saveEncryptedRow(enc0);
+    await sqlite.saveEncryptedRow(enc1);
+    expect(await sqlite.loadAllEncryptedRows()).toHaveLength(2);
+
+    await sqlite.setSyncCursor('FIREBASE:uid-1', '001763200002000-0000-pwa');
+    expect(await sqlite.getSyncCursor('FIREBASE:uid-1')).toBe(
+      '001763200002000-0000-pwa'
+    );
+  });
+
+  it('13. Pre-Initialized Firebase Database, Zero-Knowledge User Creation & Two-Way CRDT Sync: creates cloud user and syncs encrypted items across two devices', async () => {
+    // Shared SQLite WASM instance simulating the pre-initialized Firebase DB
+    const sharedFirebaseSqlite = new SqliteWasmVaultDb(false);
+    const firebaseAuth = new FirebaseVaultService(sharedFirebaseSqlite);
+
+    // 1) Dormant initialization at boot (no network calls, local storage remains default)
+    await firebaseAuth.initializeDormant();
+    expect(firebaseAuth.isInitialized).toBe(true);
+    expect(firebaseAuth.currentUser).toBeNull();
+
+    // 2) User Creation (Sign-Up) with HKDF zero-knowledge derived auth verifier
+    const createdUser = await firebaseAuth.createCloudUser(
+      'petros@safepocket.eu',
+      'CloudSyncSecret#2026'
+    );
+    expect(createdUser.email).toBe('petros@safepocket.eu');
+    expect(createdUser.uid).toMatch(/^fb-uid-/);
+
+    // Duplicate email creation must be rejected
+    await expect(
+      firebaseAuth.createCloudUser('petros@safepocket.eu', 'AnotherPass123')
+    ).rejects.toThrow(/EMAIL_EXISTS/);
+
+    // Sign-Out + Sign-In verification + Wrong password rejection
+    firebaseAuth.signOutCloudUser();
+    expect(firebaseAuth.currentUser).toBeNull();
+
+    await expect(
+      firebaseAuth.signInCloudUser('petros@safepocket.eu', 'WrongPassword999')
+    ).rejects.toThrow(/INVALID_PASSWORD/);
+
+    const signedIn = await firebaseAuth.signInCloudUser(
+      'petros@safepocket.eu',
+      'CloudSyncSecret#2026'
+    );
+    expect(signedIn.uid).toBe(createdUser.uid);
+
+    // 3) Two-Way CRDT Sync across Device A (pushes encrypted item) and Device B (pulls & merges)
+    const sharedVaultCrypto = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    const sharedSecret = generateFormattedSecretKey();
+    await sharedVaultCrypto.initializeOrUnlock('shared-vault-master', sharedSecret);
+
+    const endpointCfg = firebaseAuth.toEndpointConfig();
+    const deviceAAdapter = new FirebaseZeroKnowledgeAdapter(sharedFirebaseSqlite);
+    deviceAAdapter.setLiveEndpointConfig(endpointCfg);
+    const deviceACoordinator = new VaultSyncCoordinator(
+      deviceAAdapter,
+      new GoogleDriveAppDataAdapter()
+    );
+    deviceACoordinator.setCloudSyncEnabled(true);
+
+    const sampleCard = createInitialSampleVaultItems()[0];
+    const encCardA = await sharedVaultCrypto.encryptVaultItem(
+      sampleCard,
+      '001763200010000-0000-deviceA',
+      { deviceA: 1 }
+    );
+
+    const syncA = await deviceACoordinator.syncBidirectionalIfEnabled(
+      'vault-shared-01',
+      [encCardA],
+      null
+    );
+    expect(syncA?.pushedCount).toBe(1);
+
+    // Device B starts with empty local rows, signs into same Firebase UID, and runs bidirectional sync
+    const deviceBAdapter = new FirebaseZeroKnowledgeAdapter(sharedFirebaseSqlite);
+    deviceBAdapter.setLiveEndpointConfig(endpointCfg);
+    const deviceBCoordinator = new VaultSyncCoordinator(
+      deviceBAdapter,
+      new GoogleDriveAppDataAdapter()
+    );
+    deviceBCoordinator.setCloudSyncEnabled(true);
+
+    const syncB = await deviceBCoordinator.syncBidirectionalIfEnabled(
+      'vault-shared-01',
+      [],
+      null
+    );
+    expect(syncB?.pulledCount).toBe(1);
+    expect(syncB?.mergedRows).toHaveLength(1);
+
+    const decryptedOnDeviceB = await sharedVaultCrypto.decryptVaultRow(
+      syncB!.mergedRows[0]
+    );
+    expect(decryptedOnDeviceB.title).toBe(sampleCard.title);
+  });
+
+  it('14. Offline ICAO Doc 9303 MRZ Document Scanner & PAN / ISO-13616 IBAN Validators: parses TD3 Passports & TD1 IDs and validates checksums', () => {
+    // 1) TD3 Passport (2x44)
+    const sampleTd3 = buildSampleTd3PassportMrz();
+    const parsedTd3 = parseOfflineIcaoMrz(sampleTd3);
+    expect(parsedTd3.format).toBe('TD3_PASSPORT');
+    expect(parsedTd3.documentSubtype).toBe('PASSPORT');
+    expect(parsedTd3.issuingState).toBe('DEU');
+    expect(parsedTd3.documentNumber).toBe('C01X00T47');
+    expect(parsedTd3.holderFullName).toBe('CLARA SOFIA MUELLER');
+    expect(parsedTd3.birthDateIso).toBe('1992-04-19');
+    expect(parsedTd3.expiryDateIso).toBe('2031-06-15');
+    expect(parsedTd3.checkDigitsValid).toBe(true);
+
+    // 2) TD1 National ID Card (3x30)
+    const idDoc = 'L01X00T47';
+    const idDocChk = computeIcaoCheckDigit(idDoc);
+    const idDob = '920419';
+    const idDobChk = computeIcaoCheckDigit(idDob);
+    const idExp = '320801';
+    const idExpChk = computeIcaoCheckDigit(idExp);
+    const td1Line1 = `IDITA${idDoc}${idDocChk}<<<<<<<<<<<<<<<`;
+    const td1Line2 = `${idDob}${idDobChk}F${idExp}${idExpChk}ITA<<<<<<<<<<<0`;
+    const td1Line3 = 'ROSSI<<MARCO<ANTONIO<<<<<<<<<<';
+    const parsedTd1 = parseOfflineIcaoMrz(
+      `${td1Line1}\n${td1Line2}\n${td1Line3}`
+    );
+    expect(parsedTd1.format).toBe('TD1_NATIONAL_ID');
+    expect(parsedTd1.documentSubtype).toBe('NATIONAL_ID');
+    expect(parsedTd1.nationality).toBe('ITA');
+    expect(parsedTd1.holderFullName).toBe('MARCO ANTONIO ROSSI');
+    expect(parsedTd1.checkDigitsValid).toBe(true);
+
+    // 3) Luhn PAN & ISO-13616 IBAN checksums
+    const mastercardCheck = validatePaymentCardPan('5355 8910 4421 7805');
+    const visaValid = validatePaymentCardPan('4532 0151 1283 0366');
+    expect(visaValid.networkBrand).toBe('Visa');
+    expect(visaValid.validLuhn).toBe(true);
+    expect(mastercardCheck.networkBrand).toBe('Mastercard');
+
+    expect(validateIsoIban('DE89 3704 0044 0532 0130 00')).toBe(true);
+    expect(validateIsoIban('DE00 3704 0044 0532 0130 00')).toBe(false);
+  });
+});
+

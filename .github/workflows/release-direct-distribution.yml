@@ -1,0 +1,49 @@
+name: Direct Distribution Self-Update Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-sign-pwa:
+    name: Build & Sign ChromeOS PWA Bundle + Ed25519 Update Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: pwaApp/package-lock.json
+
+      - name: Install, Test & Build PWA
+        working-directory: pwaApp
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Sign version.json manifest with Ed25519 & SHA-256
+        env:
+          SAFEPOCKET_ED25519_SEED_HEX: ${{ secrets.SAFEPOCKET_ED25519_SEED_HEX }}
+        run: node scripts/sign-update-manifest.mjs
+
+      - name: Package PWA offline archive
+        run: |
+          tar -czf safepocket-chromeos-pwa-${{ github.ref_name }}.tar.gz -C pwaApp/dist .
+
+      - name: Upload signed release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            manifest/version.json
+            safepocket-chromeos-pwa-${{ github.ref_name }}.tar.gz

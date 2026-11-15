@@ -1,0 +1,30 @@
+{
+  "id": "com.safepocket.pwa",
+  "name": "SafePocket — Personal Identity & Document Vault",
+  "short_name": "SafePocket",
+  "description": "Zero-knowledge AES-256-GCM personal vault for payment cards, identities, passports, and secure notes.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#101417",
+  "theme_color": "#101417",
+  "orientation": "any",
+  "categories": ["productivity", "security", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "application/vnd.safepocket.container+json": [".safepocket"]
+      }
+    }
+  ]
+}

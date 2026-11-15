@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 2,
+  "channel": "stable",
+  "latestVersion": "0.1.1",
+  "versionCode": 2,
+  "minimumSupportedVersionCode": 1,
+  "publishedAt": "2026-11-15T12:00:00Z",
+  "signingKeyId": "safepocket-release-ed25519-2026",
+  "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
+  "manifestSignature": "ed25519:121dc98963e8a7f82c97699d6013f58aa0dfadcf80f3bc857904cd70e9626cc4a1fde3723826f5e898baa7f391bb7567b2c39920704323db1232e612edc5710a",
+  "releaseNotes": {
+    "en": "• Enhanced Material Design 3 Expressive 3-column inspector for Googlebook OS freeform windows.\n• Upgraded ChromeOS PWA local storage to SQLite WASM + OPFS with pre-initialized Firebase Cloud Sync.\n• Added offline ICAO Doc 9303 MRZ document scanner and 90-day expiry warnings across all 6 languages.",
+    "de": "• Verbesserter dreispaltiger Material Design 3 Expressive Inspektor für freie Fenstergrößen unter Googlebook OS.\n• Lokaler Speicher der ChromeOS-PWA auf SQLite WASM + OPFS mit vorkonfiguriertem Firebase Cloud Sync aktualisiert.\n• Offline-ICAO-MRZ-Dokumentenscanner und 90-Tage-Ablaufwarnungen hinzugefügt.",
+    "it": "• Migliorato l'ispettore a 3 colonne Material Design 3 Expressive per finestre libere su Googlebook OS.\n• Archiviazione locale PWA ChromeOS aggiornata a SQLite WASM + OPFS con Firebase Cloud Sync preconfigurato.\n• Aggiunto scanner offline MRZ ICAO Doc 9303 e avvisi di scadenza a 90 giorni.",
+    "fr": "• Inspecteur à 3 colonnes Material Design 3 Expressive amélioré pour le fenêtrage libre sur Googlebook OS.\n• Stockage local PWA ChromeOS mis à niveau vers SQLite WASM + OPFS avec Firebase Cloud Sync préconfiguré.\n• Ajout du lecteur hors ligne MRZ OACI Doc 9303 et des alertes d’expiration à 90 jours.",
+    "es": "• Inspector de 3 columnas Material Design 3 Expressive mejorado para ventanas libres en Googlebook OS.\n• Almacenamiento local de ChromeOS PWA actualizado a SQLite WASM + OPFS con Firebase Cloud Sync preconfigurado.\n• Escáner MRZ OACI Doc 9303 sin conexión y alertas de caducidad a 90 días.",
+    "el": "• Βελτιωμένη προβολή 3 στηλών Material Design 3 Expressive για ελεύθερα παράθυρα στο Googlebook OS.\n• Αναβάθμιση τοπικής βάσης ChromeOS PWA σε SQLite WASM + OPFS με προεγκατεστημένο Firebase Cloud Sync.\n• Προσθήκη offline σαρωτή MRZ διαβατηρίων/ταυτοτήτων και ειδοποιήσεων λήξης 90 ημερών."
+  },
+  "artifacts": {
+    "android-universal": {
+      "url": "https://releases.safepocket.app/v0.1.1/SafePocket-v0.1.1-b2-universal-arm64-x86_64.apk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 18432960,
+      "minSdk": 36,
+      "abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
+      "apkSignatureSchemes": [
+        "v2",
+        "v3",
+        "v4"
+      ],
+      "signingCertSha256": "3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea"
+    },
+    "macos-universal": {
+      "url": "https://releases.safepocket.app/v0.1.1/SafePocket-0.1.1-2-macOS-universal.dmg",
+      "sparkleAppcastUrl": "https://releases.safepocket.app/appcast-macos.xml",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
+      "sizeBytes": 14208512,
+      "minMacOS": "15.0"
+    },
+    "chromeos-pwa": {
+      "url": "/sw.js",
+      "bundleManifestUrl": "/manifest.webmanifest",
+      "sha256": "232b3927e60ac312b1b4f2b9db8c72f99c9f38720a2868787d0148dcd5bb9565",
+      "sizeBytes": 2181
+    }
+  }
+}

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Strictly minimal Google Play Protect compliant permission footprint.
+         Intentionally excludes Accessibility, SMS, Call Log, Overlay, and MANAGE_EXTERNAL_STORAGE. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Googlebook OS desktop windowing & Chromebook/laptop trackpad/keyboard compatibility -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.fingerprint" android:required="false" />
+    <uses-feature android:name="android.software.freeform_window_management" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="SafePocket"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <!-- Single adaptive Activity supporting Compact Smartphones, Unfolded Foldables,
+             and Googlebook OS freeform multi-window resizing WITHOUT activity restarts -->
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:exported="true"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize">
+            <layout
+                android:defaultHeight="820dp"
+                android:defaultWidth="1280dp"
+                android:gravity="center"
+                android:minHeight="480dp"
+                android:minWidth="360dp" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- PackageInstaller Session status receiver for Play Protect compliant self-updates -->
+        <receiver
+            android:name=".update.PackageInstallerStatusReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

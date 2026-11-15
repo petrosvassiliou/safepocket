@@ -1,0 +1,64 @@
+name: SafePocket CI Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pwa-typecheck-test-and-manifest:
+    name: ChromeOS PWA • TypeScript, 14-Test Vitest Suite & Ed25519 Manifest Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: pwaApp/package-lock.json
+
+      - name: Install ChromeOS PWA dependencies
+        working-directory: pwaApp
+        run: npm ci
+
+      - name: Run 14-test Zero-Knowledge, SQLite WASM, Firebase Sync & MRZ Vitest suite
+        working-directory: pwaApp
+        run: npm test
+
+      - name: Production TypeScript check & Vite offline bundle build
+        working-directory: pwaApp
+        run: npm run build
+
+  localization-catalog-parity:
+    name: 6-Language ARB Catalog Parity (EN, DE, IT, FR, ES, EL)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify identical localization key sets across all 6 ARB catalogs
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const locales = ["en", "de", "it", "fr", "es", "el"];
+            const enKeys = Object.keys(JSON.parse(fs.readFileSync("i18n/en.arb.json", "utf8")))
+              .filter((k) => !k.startsWith("@@"))
+              .sort();
+            for (const loc of locales) {
+              const keys = Object.keys(JSON.parse(fs.readFileSync(`i18n/${loc}.arb.json`, "utf8")))
+                .filter((k) => !k.startsWith("@@"))
+                .sort();
+              if (JSON.stringify(keys) !== JSON.stringify(enKeys)) {
+                console.error(`ARB key mismatch in ${loc}.arb.json`);
+                process.exit(1);
+              }
+            }
+            console.log(`Verified ${enKeys.length} localization keys across ${locales.length} locales.`);
+          '
