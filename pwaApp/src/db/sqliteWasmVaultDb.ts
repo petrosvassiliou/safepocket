@@ -1,5 +1,5 @@
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
-import type { EncryptedVaultRow } from '../types';
+import type { EncryptedBlobEnvelope, EncryptedVaultRow } from '../types';
 
 let cachedSqlRuntime: Promise<SqlJsStatic> | null = null;
 
@@ -78,6 +78,18 @@ CREATE TABLE IF NOT EXISTS vault_item (
 CREATE INDEX IF NOT EXISTS idx_vault_item_hlc ON vault_item(hlc_packed);
 CREATE INDEX IF NOT EXISTS idx_vault_item_category ON vault_item(category, is_tombstone);
 
+CREATE TABLE IF NOT EXISTS vault_attachment_blob (
+  attachment_id TEXT NOT NULL PRIMARY KEY,
+  vault_id TEXT NOT NULL,
+  sha256_hex TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  encrypted_blob BLOB NOT NULL,
+  cloud_synced INTEGER NOT NULL DEFAULT 0,
+  updated_at_epoch_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vault_attachment_pending ON vault_attachment_blob(vault_id, cloud_synced);
+
 CREATE TABLE IF NOT EXISTS sync_checkpoint (
   provider_id TEXT NOT NULL PRIMARY KEY,
   last_cursor_hlc TEXT
@@ -105,6 +117,17 @@ CREATE TABLE IF NOT EXISTS firebase_firestore_deltas (
   aad_context TEXT NOT NULL,
   is_tombstone INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (uid, vault_id, entity_id)
+);
+
+CREATE TABLE IF NOT EXISTS firebase_storage_blobs (
+  uid TEXT NOT NULL,
+  vault_id TEXT NOT NULL,
+  attachment_id TEXT NOT NULL,
+  ciphertext_sha256 TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  encrypted_blob BLOB NOT NULL,
+  updated_at_iso TEXT NOT NULL,
+  PRIMARY KEY (uid, vault_id, attachment_id)
 );
 `;
 
@@ -378,5 +401,160 @@ export class SqliteWasmVaultDb {
     }
     stmt.free();
     return out;
+  }
+
+  // --- Encrypted Attachment Blob Cache, Sync Queue & Firebase Storage Replica ---
+
+  async saveLocalEncryptedBlob(
+    vaultId: string,
+    attachmentId: string,
+    encryptedBytes: Uint8Array,
+    sha256Hex: string,
+    cloudSynced = false
+  ): Promise<void> {
+    const db = await this.ensureInitialized();
+    db.run(
+      `INSERT OR REPLACE INTO vault_attachment_blob (
+        attachment_id, vault_id, sha256_hex, size_bytes, encrypted_blob, cloud_synced, updated_at_epoch_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        attachmentId,
+        vaultId,
+        sha256Hex.toLowerCase(),
+        encryptedBytes.byteLength,
+        encryptedBytes,
+        cloudSynced ? 1 : 0,
+        Date.now()
+      ]
+    );
+    await this.flushToOpfs();
+  }
+
+  async loadLocalEncryptedBlob(attachmentId: string): Promise<{
+    encryptedBytes: Uint8Array;
+    sha256Hex: string;
+    cloudSynced: boolean;
+  } | null> {
+    const db = await this.ensureInitialized();
+    const stmt = db.prepare(
+      `SELECT sha256_hex, encrypted_blob, cloud_synced
+       FROM vault_attachment_blob
+       WHERE attachment_id = ?`
+    );
+    stmt.bind([attachmentId]);
+    let found: {
+      encryptedBytes: Uint8Array;
+      sha256Hex: string;
+      cloudSynced: boolean;
+    } | null = null;
+    if (stmt.step()) {
+      const r = stmt.getAsObject();
+      const rawBlob = r.encrypted_blob;
+      const bytes =
+        rawBlob instanceof Uint8Array ? rawBlob.slice() : new Uint8Array(0);
+      found = {
+        encryptedBytes: bytes,
+        sha256Hex: String(r.sha256_hex),
+        cloudSynced: Number(r.cloud_synced) === 1
+      };
+    }
+    stmt.free();
+    return found;
+  }
+
+  async markLocalBlobSynced(attachmentId: string): Promise<void> {
+    const db = await this.ensureInitialized();
+    db.run(
+      `UPDATE vault_attachment_blob
+       SET cloud_synced = 1, updated_at_epoch_ms = ?
+       WHERE attachment_id = ?`,
+      [Date.now(), attachmentId]
+    );
+    await this.flushToOpfs();
+  }
+
+  async listPendingUnsyncedBlobs(
+    vaultId: string
+  ): Promise<EncryptedBlobEnvelope[]> {
+    const db = await this.ensureInitialized();
+    const stmt = db.prepare(
+      `SELECT attachment_id, sha256_hex, encrypted_blob
+       FROM vault_attachment_blob
+       WHERE vault_id = ? AND cloud_synced = 0
+       ORDER BY updated_at_epoch_ms ASC`
+    );
+    stmt.bind([vaultId]);
+    const out: EncryptedBlobEnvelope[] = [];
+    while (stmt.step()) {
+      const r = stmt.getAsObject();
+      const rawBlob = r.encrypted_blob;
+      out.push({
+        attachmentId: String(r.attachment_id),
+        sha256Hex: String(r.sha256_hex),
+        encryptedBytes:
+          rawBlob instanceof Uint8Array ? rawBlob.slice() : new Uint8Array(0)
+      });
+    }
+    stmt.free();
+    return out;
+  }
+
+  async deleteLocalEncryptedBlob(attachmentId: string): Promise<void> {
+    const db = await this.ensureInitialized();
+    db.run('DELETE FROM vault_attachment_blob WHERE attachment_id = ?', [
+      attachmentId
+    ]);
+    await this.flushToOpfs();
+  }
+
+  async upsertLocalStorageReplicaBlob(
+    uid: string,
+    vaultId: string,
+    attachmentId: string,
+    encryptedBytes: Uint8Array,
+    ciphertextSha256: string
+  ): Promise<void> {
+    const db = await this.ensureInitialized();
+    db.run(
+      `INSERT OR REPLACE INTO firebase_storage_blobs (
+        uid, vault_id, attachment_id, ciphertext_sha256, content_type, encrypted_blob, updated_at_iso
+      ) VALUES (?, ?, ?, ?, 'application/octet-stream', ?, ?)`,
+      [
+        uid,
+        vaultId,
+        attachmentId,
+        ciphertextSha256.toLowerCase(),
+        encryptedBytes,
+        new Date().toISOString()
+      ]
+    );
+    await this.flushToOpfs();
+  }
+
+  async getLocalStorageReplicaBlob(
+    uid: string,
+    vaultId: string,
+    attachmentId: string
+  ): Promise<{ encryptedBytes: Uint8Array; ciphertextSha256: string } | null> {
+    const db = await this.ensureInitialized();
+    const stmt = db.prepare(
+      `SELECT ciphertext_sha256, encrypted_blob
+       FROM firebase_storage_blobs
+       WHERE uid = ? AND vault_id = ? AND attachment_id = ?`
+    );
+    stmt.bind([uid, vaultId, attachmentId]);
+    let found: { encryptedBytes: Uint8Array; ciphertextSha256: string } | null =
+      null;
+    if (stmt.step()) {
+      const r = stmt.getAsObject();
+      const rawBlob = r.encrypted_blob;
+      found = {
+        ciphertextSha256: String(r.ciphertext_sha256),
+        encryptedBytes:
+          rawBlob instanceof Uint8Array ? rawBlob.slice() : new Uint8Array(0)
+      };
+    }
+    stmt.free();
+    return found;
   }
 }

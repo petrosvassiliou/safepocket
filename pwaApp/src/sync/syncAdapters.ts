@@ -1,11 +1,17 @@
+import { constantTimeHexEquals, sha256Hex } from '../crypto/vaultCrypto';
 import { SqliteWasmVaultDb } from '../db/sqliteWasmVaultDb';
-import type { EncryptedVaultRow } from '../types';
+import type { EncryptedBlobEnvelope, EncryptedVaultRow } from '../types';
 import {
+  assertStrictZeroKnowledgeBlobUpload,
+  downloadEncryptedBlobFromFirebaseStorageRest,
+  downloadEncryptedBlobFromGoogleDriveAppDataRest,
   type LiveCloudEndpointConfig,
   pullRowsFromFirestoreRest,
   pullRowsFromGoogleDriveAppDataRest,
   pushRowsToFirestoreRest,
-  pushRowsToGoogleDriveAppDataRest
+  pushRowsToGoogleDriveAppDataRest,
+  uploadEncryptedBlobToFirebaseStorageRest,
+  uploadEncryptedBlobToGoogleDriveAppDataRest
 } from './liveCloudConnectors';
 
 export type CloudServiceId = 'FIREBASE' | 'GDRIVE_APPDATA';
@@ -81,12 +87,23 @@ export interface CloudSyncProviderAdapter {
     vaultId: string,
     sinceCursorHlc: string | null
   ): Promise<EncryptedVaultRow[]>;
+  uploadEncryptedBlob(
+    vaultId: string,
+    blob: EncryptedBlobEnvelope
+  ): Promise<{ storageObjectPath: string }>;
+  downloadEncryptedBlob(
+    vaultId: string,
+    attachmentId: string,
+    expectedSha256Hex: string
+  ): Promise<Uint8Array | null>;
 }
 
 export interface BidirectionalSyncSummary {
   service: CloudServiceId;
   pushedCount: number;
   pulledCount: number;
+  uploadedBlobCount: number;
+  uploadedBlobPaths: Record<string, string>;
   mergedRows: EncryptedVaultRow[];
   cursorHlc: string | null;
 }
@@ -161,19 +178,65 @@ export class VaultSyncCoordinator {
     return { ...res, service: adapter.id };
   }
 
+  async uploadAttachmentBlobsIfEnabled(
+    vaultId: string,
+    blobs: EncryptedBlobEnvelope[]
+  ): Promise<{
+    service: CloudServiceId;
+    uploadedCount: number;
+    paths: Record<string, string>;
+  } | null> {
+    if (!this.cloudSyncEnabled) {
+      return null;
+    }
+    const adapter = this.activeAdapter;
+    const paths: Record<string, string> = {};
+    for (const blob of blobs) {
+      const res = await adapter.uploadEncryptedBlob(vaultId, blob);
+      paths[blob.attachmentId] = res.storageObjectPath;
+    }
+    return {
+      service: adapter.id,
+      uploadedCount: blobs.length,
+      paths
+    };
+  }
+
+  async downloadMissingAttachmentBlobIfEnabled(
+    vaultId: string,
+    attachmentId: string,
+    expectedSha256Hex: string
+  ): Promise<Uint8Array | null> {
+    if (!this.cloudSyncEnabled) {
+      return null;
+    }
+    return this.activeAdapter.downloadEncryptedBlob(
+      vaultId,
+      attachmentId,
+      expectedSha256Hex
+    );
+  }
+
   /**
-   * Full Two-Way Offline-First CRDT Sync (`Push` local deltas -> `Pull` remote deltas -> `Reconcile`).
+   * Full Two-Way Offline-First CRDT Sync (`Upload Pending .enc Blobs` -> `Push` local deltas -> `Pull` remote deltas -> `Reconcile`).
    * Strictly no-op (`null`) when Cloud Sync is disabled (Local Storage Default).
    */
   async syncBidirectionalIfEnabled(
     vaultId: string,
     localRows: EncryptedVaultRow[],
-    sinceCursorHlc: string | null = null
+    sinceCursorHlc: string | null = null,
+    pendingBlobs: EncryptedBlobEnvelope[] = []
   ): Promise<BidirectionalSyncSummary | null> {
     if (!this.cloudSyncEnabled) {
       return null;
     }
     const adapter = this.activeAdapter;
+    const uploadedBlobPaths: Record<string, string> = {};
+    for (const blob of pendingBlobs) {
+      const uploaded = await adapter.uploadEncryptedBlob(vaultId, blob);
+      uploadedBlobPaths[blob.attachmentId] = uploaded.storageObjectPath;
+    }
+
     const pushRes = await adapter.pushEncryptedDeltas(vaultId, localRows);
     const remoteDeltas = await adapter.pullEncryptedDeltas(
       vaultId,
@@ -199,6 +262,8 @@ export class VaultSyncCoordinator {
       service: adapter.id,
       pushedCount: pushRes.pushedCount,
       pulledCount: remoteDeltas.length,
+      uploadedBlobCount: pendingBlobs.length,
+      uploadedBlobPaths,
       mergedRows,
       cursorHlc: maxCursor
     };
@@ -206,15 +271,22 @@ export class VaultSyncCoordinator {
 }
 
 /**
- * Default Cloud Service: Zero-Knowledge Firebase (Firestore Encrypted Payloads + Cloud Storage Encrypted Blobs).
- * Supports both persistent SQLite WASM Firebase replica (out-of-the-box) and live Firestore REST endpoints.
+ * Default Cloud Service: Zero-Knowledge Firebase (Firestore Encrypted Payloads + EU Cloud Storage `.enc` Blobs).
+ * Supports both persistent SQLite WASM Firebase replica (hermetic offline/tests) and live REST endpoints.
  */
 export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
   readonly id: CloudServiceId = 'FIREBASE';
   private simulatedCloudStore = new Map<string, EncryptedVaultRow>();
+  private simulatedBlobStore = new Map<
+    string,
+    { encryptedBytes: Uint8Array; sha256Hex: string }
+  >();
   private liveConfig: LiveCloudEndpointConfig = {};
 
-  constructor(private readonly sqliteReplica?: SqliteWasmVaultDb) {}
+  constructor(
+    private readonly sqliteReplica?: SqliteWasmVaultDb,
+    private readonly fetcher: typeof fetch = fetch
+  ) {}
 
   setLiveEndpointConfig(config: LiveCloudEndpointConfig): void {
     this.liveConfig = { ...config };
@@ -252,11 +324,16 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
     }
 
     if (this.liveConfig.firebaseProjectId && this.liveConfig.bearerToken) {
-      return pushRowsToFirestoreRest(vaultId, rows, {
-        firebaseProjectId: this.liveConfig.firebaseProjectId,
-        bearerToken: this.liveConfig.bearerToken,
-        firebaseUserId: this.liveConfig.firebaseUserId
-      });
+      return pushRowsToFirestoreRest(
+        vaultId,
+        rows,
+        {
+          firebaseProjectId: this.liveConfig.firebaseProjectId,
+          bearerToken: this.liveConfig.bearerToken,
+          firebaseUserId: this.liveConfig.firebaseUserId
+        },
+        this.fetcher
+      );
     }
     return { pushedCount: rows.length, cursorHlc: maxHlc };
   }
@@ -266,11 +343,16 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
     sinceCursorHlc: string | null
   ): Promise<EncryptedVaultRow[]> {
     if (this.liveConfig.firebaseProjectId && this.liveConfig.bearerToken) {
-      return pullRowsFromFirestoreRest(vaultId, sinceCursorHlc, {
-        firebaseProjectId: this.liveConfig.firebaseProjectId,
-        bearerToken: this.liveConfig.bearerToken,
-        firebaseUserId: this.liveConfig.firebaseUserId
-      });
+      return pullRowsFromFirestoreRest(
+        vaultId,
+        sinceCursorHlc,
+        {
+          firebaseProjectId: this.liveConfig.firebaseProjectId,
+          bearerToken: this.liveConfig.bearerToken,
+          firebaseUserId: this.liveConfig.firebaseUserId
+        },
+        this.fetcher
+      );
     }
 
     const uid = this.liveConfig.firebaseUserId || 'local-default-uid';
@@ -287,15 +369,115 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
       .map(([, val]) => val)
       .filter((r) => !sinceCursorHlc || r.hlcPacked > sinceCursorHlc);
   }
+
+  async uploadEncryptedBlob(
+    vaultId: string,
+    blob: EncryptedBlobEnvelope
+  ): Promise<{ storageObjectPath: string }> {
+    await assertStrictZeroKnowledgeBlobUpload(blob);
+    const uid = this.liveConfig.firebaseUserId || 'local-default-uid';
+    const objectPath = `users/${uid}/vaults/${vaultId}/blobs/${blob.attachmentId}.enc`;
+
+    if (
+      this.liveConfig.firebaseProjectId &&
+      this.liveConfig.firebaseStorageBucket &&
+      this.liveConfig.bearerToken
+    ) {
+      return uploadEncryptedBlobToFirebaseStorageRest(
+        vaultId,
+        blob,
+        {
+          firebaseStorageBucket: this.liveConfig.firebaseStorageBucket,
+          bearerToken: this.liveConfig.bearerToken,
+          firebaseUserId: uid
+        },
+        this.fetcher
+      );
+    }
+
+    this.simulatedBlobStore.set(`${uid}:${vaultId}:${blob.attachmentId}`, {
+      encryptedBytes: blob.encryptedBytes.slice(),
+      sha256Hex: blob.sha256Hex.toLowerCase()
+    });
+    if (this.sqliteReplica) {
+      await this.sqliteReplica.upsertLocalStorageReplicaBlob(
+        uid,
+        vaultId,
+        blob.attachmentId,
+        blob.encryptedBytes,
+        blob.sha256Hex
+      );
+    }
+    return { storageObjectPath: objectPath };
+  }
+
+  async downloadEncryptedBlob(
+    vaultId: string,
+    attachmentId: string,
+    expectedSha256Hex: string
+  ): Promise<Uint8Array | null> {
+    const uid = this.liveConfig.firebaseUserId || 'local-default-uid';
+
+    if (
+      this.liveConfig.firebaseProjectId &&
+      this.liveConfig.firebaseStorageBucket &&
+      this.liveConfig.bearerToken
+    ) {
+      return downloadEncryptedBlobFromFirebaseStorageRest(
+        vaultId,
+        attachmentId,
+        expectedSha256Hex,
+        {
+          firebaseStorageBucket: this.liveConfig.firebaseStorageBucket,
+          bearerToken: this.liveConfig.bearerToken,
+          firebaseUserId: uid
+        },
+        this.fetcher
+      );
+    }
+
+    let candidate: { encryptedBytes: Uint8Array; sha256Hex: string } | null =
+      null;
+    if (this.sqliteReplica) {
+      const dbHit = await this.sqliteReplica.getLocalStorageReplicaBlob(
+        uid,
+        vaultId,
+        attachmentId
+      );
+      if (dbHit) {
+        candidate = {
+          encryptedBytes: dbHit.encryptedBytes,
+          sha256Hex: dbHit.ciphertextSha256
+        };
+      }
+    }
+    if (!candidate) {
+      candidate =
+        this.simulatedBlobStore.get(`${uid}:${vaultId}:${attachmentId}`) ??
+        null;
+    }
+    if (!candidate) return null;
+
+    const actualSha = await sha256Hex(candidate.encryptedBytes);
+    if (!constantTimeHexEquals(actualSha, expectedSha256Hex)) {
+      throw new Error(
+        'Firebase Storage replica SHA-256 integrity check failed'
+      );
+    }
+    return candidate.encryptedBytes.slice();
+  }
 }
 
 /**
- * Optional Cloud Service: Zero-Knowledge Google Drive Adapter (Hidden `spaces=appDataFolder` Delta Log)
+ * Optional Cloud Service: Zero-Knowledge Google Drive Adapter (Hidden `spaces=appDataFolder` Delta Log & `.enc` Blobs)
  */
 export class GoogleDriveAppDataAdapter implements CloudSyncProviderAdapter {
   readonly id: CloudServiceId = 'GDRIVE_APPDATA';
   private appDataDeltaLog: EncryptedVaultRow[] = [];
+  private appDataBlobStore = new Map<string, Uint8Array>();
   private liveConfig: LiveCloudEndpointConfig = {};
+
+  constructor(private readonly fetcher: typeof fetch = fetch) {}
 
   setLiveEndpointConfig(config: LiveCloudEndpointConfig): void {
     this.liveConfig = { ...config };
@@ -321,7 +503,8 @@ export class GoogleDriveAppDataAdapter implements CloudSyncProviderAdapter {
       return pushRowsToGoogleDriveAppDataRest(
         vaultId,
         rows,
-        this.liveConfig.bearerToken
+        this.liveConfig.bearerToken,
+        this.fetcher
       );
     }
     return { pushedCount: rows.length, cursorHlc: maxHlc };
@@ -335,12 +518,60 @@ export class GoogleDriveAppDataAdapter implements CloudSyncProviderAdapter {
       return pullRowsFromGoogleDriveAppDataRest(
         vaultId,
         sinceCursorHlc,
-        this.liveConfig.bearerToken
+        this.liveConfig.bearerToken,
+        this.fetcher
       );
     }
     return this.appDataDeltaLog.filter(
       (r) => !sinceCursorHlc || r.hlcPacked > sinceCursorHlc
     );
+  }
+
+  async uploadEncryptedBlob(
+    vaultId: string,
+    blob: EncryptedBlobEnvelope
+  ): Promise<{ storageObjectPath: string }> {
+    await assertStrictZeroKnowledgeBlobUpload(blob);
+    if (this.liveConfig.bearerToken) {
+      return uploadEncryptedBlobToGoogleDriveAppDataRest(
+        vaultId,
+        blob,
+        this.liveConfig.bearerToken,
+        this.fetcher
+      );
+    }
+    this.appDataBlobStore.set(
+      `${vaultId}:${blob.attachmentId}`,
+      blob.encryptedBytes.slice()
+    );
+    return {
+      storageObjectPath: `appDataFolder/sp-blob-${vaultId}-${blob.attachmentId}.enc`
+    };
+  }
+
+  async downloadEncryptedBlob(
+    vaultId: string,
+    attachmentId: string,
+    expectedSha256Hex: string
+  ): Promise<Uint8Array | null> {
+    if (this.liveConfig.bearerToken) {
+      return downloadEncryptedBlobFromGoogleDriveAppDataRest(
+        vaultId,
+        attachmentId,
+        expectedSha256Hex,
+        this.liveConfig.bearerToken,
+        this.fetcher
+      );
+    }
+    const bytes = this.appDataBlobStore.get(`${vaultId}:${attachmentId}`);
+    if (!bytes) return null;
+    const actualSha = await sha256Hex(bytes);
+    if (!constantTimeHexEquals(actualSha, expectedSha256Hex)) {
+      throw new Error(
+        'Google Drive appDataFolder .enc SHA-256 integrity check failed'
+      );
+    }
+    return bytes.slice();
   }
 }
 

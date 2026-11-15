@@ -47,6 +47,14 @@ export interface EncryptedAttachmentMeta {
   sha256Hex: string;
   ivHex: string;
   ciphertextBase64?: string;
+  blobSynced?: boolean;
+  storageObjectPath?: string;
+}
+
+export interface EncryptedBlobEnvelope {
+  attachmentId: string;
+  sha256Hex: string;
+  encryptedBytes: Uint8Array;
 }
 
 export interface VaultHeaderMetadata {

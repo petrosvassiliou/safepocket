@@ -347,6 +347,13 @@ export class SafePocketAppShell {
           side
         );
         await this.opfsStore.writeEncryptedBlob(att.id, enc.encryptedBytes);
+        await this.sqliteDb.saveLocalEncryptedBlob(
+          'default-vault',
+          att.id,
+          enc.encryptedBytes,
+          enc.sha256Hex,
+          false
+        );
         updatedAttachments.push({
           id: enc.id,
           fileName: enc.fileName,
@@ -355,7 +362,8 @@ export class SafePocketAppShell {
           sizeBytes: enc.sizeBytes,
           sha256Hex: enc.sha256Hex,
           ivHex: enc.ivHex,
-          ciphertextBase64: enc.ciphertextBase64
+          ciphertextBase64: enc.ciphertextBase64,
+          blobSynced: false
         });
       }
       item.attachments = updatedAttachments;
@@ -365,8 +373,18 @@ export class SafePocketAppShell {
   private async ensureSampleBlobsAvailable(items: VaultItem[]): Promise<void> {
     for (const item of items) {
       for (const att of item.attachments) {
-        const existing = await this.opfsStore.readEncryptedBlob(att.id);
-        if (!existing && !att.ciphertextBase64 && item.category === 'OFFICIAL_DOCUMENT') {
+        const existingOpfs = await this.opfsStore.readEncryptedBlob(att.id);
+        const existingSql = existingOpfs
+          ? null
+          : await this.sqliteDb.loadLocalEncryptedBlob(att.id);
+        if (
+          !existingOpfs &&
+          !existingSql &&
+          !att.ciphertextBase64 &&
+          !att.blobSynced &&
+          att.id.startsWith('sample-') &&
+          item.category === 'OFFICIAL_DOCUMENT'
+        ) {
           await this.encryptSampleDocumentScans([item]);
           await this.persistSingleItemEncrypted(item);
           break;
@@ -588,12 +606,56 @@ export class SafePocketAppShell {
     await this.localDb.saveEncryptedRow(tombstone);
     for (const att of target.attachments) {
       await this.opfsStore.deleteEncryptedBlob(att.id);
+      await this.sqliteDb.deleteLocalEncryptedBlob(att.id);
     }
 
     this.items = this.items.filter((i) => i.id !== itemId);
     this.selectedItemId = this.items[0]?.id ?? null;
     this.mobileDetailOpen = false;
     this.showToast(`Deleted "${target.title}" (CRDT tombstone recorded)`);
+  }
+
+  private async resolveEncryptedAttachmentBytes(
+    item: VaultItem,
+    att: EncryptedAttachmentMeta
+  ): Promise<Uint8Array | undefined> {
+    const opfsBytes = await this.opfsStore.readEncryptedBlob(att.id);
+    if (opfsBytes) return opfsBytes;
+
+    const sqlHit = await this.sqliteDb.loadLocalEncryptedBlob(att.id);
+    if (sqlHit) {
+      await this.opfsStore.writeEncryptedBlob(att.id, sqlHit.encryptedBytes);
+      return sqlHit.encryptedBytes;
+    }
+
+    if (!att.ciphertextBase64 && this.syncCoordinator.isCloudSyncEnabled) {
+      this.liveCloudConfig = this.firebaseService.toEndpointConfig(
+        this.liveCloudConfig.bearerToken
+      );
+      this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+      this.gdriveAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+
+      const downloaded =
+        await this.syncCoordinator.downloadMissingAttachmentBlobIfEnabled(
+          'default-vault',
+          att.id,
+          att.sha256Hex
+        );
+      if (downloaded) {
+        await this.opfsStore.writeEncryptedBlob(att.id, downloaded);
+        await this.sqliteDb.saveLocalEncryptedBlob(
+          'default-vault',
+          att.id,
+          downloaded,
+          att.sha256Hex,
+          true
+        );
+        att.blobSynced = true;
+        await this.persistSingleItemEncrypted(item);
+        return downloaded;
+      }
+    }
+    return undefined;
   }
 
   private async openDecryptedAttachmentPreview(
@@ -603,12 +665,15 @@ export class SafePocketAppShell {
     const att = item.attachments.find((a) => a.id === attachmentId);
     if (!att) return;
     try {
-      const opfsBytes = await this.opfsStore.readEncryptedBlob(att.id);
+      const resolvedCipherBytes = await this.resolveEncryptedAttachmentBytes(
+        item,
+        att
+      );
       const decryptedBytes = await this.crypto.decryptBinaryAttachment({
         attachmentId: att.id,
         ivHex: att.ivHex,
         expectedSha256Hex: att.sha256Hex,
-        encryptedBytes: opfsBytes ?? undefined,
+        encryptedBytes: resolvedCipherBytes,
         ciphertextBase64: att.ciphertextBase64
       });
       this.closeScanPreview();
@@ -1474,6 +1539,9 @@ export class SafePocketAppShell {
               att.side === 'back'
                 ? this.i18n.t('scan_side_back')
                 : this.i18n.t('scan_side_front');
+            const syncPill = att.blobSynced
+              ? `<span class="sp-badge" style="background:rgba(16,185,129,0.14);color:#059669;">☁️ EU .enc</span>`
+              : `<span class="sp-badge" style="background:var(--bg-subtle);color:var(--text-secondary);">🔒 Local .enc</span>`;
             return `
               <div class="sp-field-card" style="padding:10px 14px;">
                 <div class="sp-field-meta">
@@ -1484,9 +1552,10 @@ export class SafePocketAppShell {
                     <span class="sp-badge" style="background:var(--accent-tonal);color:var(--accent-primary);">
                       ${this.escape(sideBadge)}
                     </span>
+                    ${syncPill}
                   </div>
                   <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);">
-                    ${this.escape(this.i18n.formatBytes(att.sizeBytes))} • OPFS AES-256-GCM • SHA-256 ${this.escape(
+                    ${this.escape(this.i18n.formatBytes(att.sizeBytes))} • OPFS + SQLite AES-256-GCM • SHA-256 ${this.escape(
                       att.sha256Hex.slice(0, 16)
                     )}…
                   </span>
@@ -1510,7 +1579,7 @@ export class SafePocketAppShell {
           .join('')}
 
         <label class="sp-dropzone" id="sp-scan-dropzone">
-          <input type="file" id="sp-scan-file-input" accept="image/*,application/pdf" style="display:none;" />
+          <input type="file" id="sp-scan-file-input" accept="image/*,application/pdf" multiple style="display:none;" />
           <div>📎 ${this.escape(this.i18n.t('dropzone_hint'))}</div>
         </label>
       </div>
@@ -1539,9 +1608,17 @@ export class SafePocketAppShell {
                 )}…) • Ephemeral RAM Blob
               </div>
             </div>
-            <button type="button" id="sp-close-preview-btn" class="sp-btn sp-btn-primary">
-              ✕ ${this.escape(this.i18n.t('action_close_preview'))}
-            </button>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <a
+                href="${this.escape(this.activePreview.objectUrl)}"
+                download="${this.escape(this.activePreview.fileName)}"
+                class="sp-btn sp-btn-tonal"
+                style="text-decoration:none;"
+              >⬇ Download</a>
+              <button type="button" id="sp-close-preview-btn" class="sp-btn sp-btn-primary">
+                ✕ ${this.escape(this.i18n.t('action_close_preview'))}
+              </button>
+            </div>
           </div>
           <div class="sp-preview-frame">
             ${
@@ -2909,6 +2986,7 @@ export class SafePocketAppShell {
           const attId = btn.dataset.deleteAtt;
           if (!target || !attId) return;
           await this.opfsStore.deleteEncryptedBlob(attId);
+          await this.sqliteDb.deleteLocalEncryptedBlob(attId);
           target.attachments = target.attachments.filter((a) => a.id !== attId);
           target.updatedAtEpochMs = Date.now();
           await this.persistSingleItemEncrypted(target);
@@ -2939,30 +3017,114 @@ export class SafePocketAppShell {
       if (!files || files.length === 0) return;
       const target = this.items.find((i) => i.id === this.selectedItemId);
       if (!target) return;
-      const f = files[0];
-      const raw = new Uint8Array(await f.arrayBuffer());
-      const attId = `att-${Date.now()}`;
-      const encryptedAtt = await this.crypto.encryptBinaryAttachment(
-        attId,
-        f.name,
-        f.type || 'application/octet-stream',
-        raw,
-        this.uploadScanSide
-      );
-      await this.opfsStore.writeEncryptedBlob(attId, encryptedAtt.encryptedBytes);
-      target.attachments.push({
-        id: encryptedAtt.id,
-        fileName: encryptedAtt.fileName,
-        mimeType: encryptedAtt.mimeType,
-        side: encryptedAtt.side,
-        sizeBytes: encryptedAtt.sizeBytes,
-        sha256Hex: encryptedAtt.sha256Hex,
-        ivHex: encryptedAtt.ivHex,
-        ciphertextBase64: encryptedAtt.ciphertextBase64
-      });
+
+      const selectedFiles = Array.from(files);
+      const pendingUploadBlobs: Array<{
+        attachmentId: string;
+        sha256Hex: string;
+        encryptedBytes: Uint8Array;
+      }> = [];
+
+      for (let idx = 0; idx < selectedFiles.length; idx++) {
+        const f = selectedFiles[idx];
+        const raw = new Uint8Array(await f.arrayBuffer());
+        const attId = `att_${Date.now()}_${idx}`;
+        const encryptedAtt = await this.crypto.encryptBinaryAttachment(
+          attId,
+          f.name,
+          f.type || 'application/octet-stream',
+          raw,
+          this.uploadScanSide
+        );
+        await this.opfsStore.writeEncryptedBlob(
+          attId,
+          encryptedAtt.encryptedBytes
+        );
+        await this.sqliteDb.saveLocalEncryptedBlob(
+          'default-vault',
+          attId,
+          encryptedAtt.encryptedBytes,
+          encryptedAtt.sha256Hex,
+          false
+        );
+        pendingUploadBlobs.push({
+          attachmentId: attId,
+          sha256Hex: encryptedAtt.sha256Hex,
+          encryptedBytes: encryptedAtt.encryptedBytes
+        });
+        // Omit inline base64 above 16 KiB so Firestore CRDT rows never hit the 1 MiB document cap
+        target.attachments.push({
+          id: encryptedAtt.id,
+          fileName: encryptedAtt.fileName,
+          mimeType: encryptedAtt.mimeType,
+          side: encryptedAtt.side,
+          sizeBytes: encryptedAtt.sizeBytes,
+          sha256Hex: encryptedAtt.sha256Hex,
+          ivHex: encryptedAtt.ivHex,
+          ciphertextBase64:
+            encryptedAtt.encryptedBytes.byteLength <= 16_384
+              ? encryptedAtt.ciphertextBase64
+              : undefined,
+          blobSynced: false
+        });
+      }
+
+      if (this.syncCoordinator.isCloudSyncEnabled) {
+        try {
+          this.liveCloudConfig = this.firebaseService.toEndpointConfig(
+            this.liveCloudConfig.bearerToken
+          );
+          this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+          this.gdriveAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+
+          const uploadRes =
+            await this.syncCoordinator.uploadAttachmentBlobsIfEnabled(
+              'default-vault',
+              pendingUploadBlobs
+            );
+          if (uploadRes) {
+            for (const b of pendingUploadBlobs) {
+              await this.sqliteDb.markLocalBlobSynced(b.attachmentId);
+              const meta = target.attachments.find(
+                (a) => a.id === b.attachmentId
+              );
+              if (meta) {
+                meta.blobSynced = true;
+                meta.storageObjectPath = uploadRes.paths[b.attachmentId];
+              }
+            }
+          }
+        } catch (err) {
+          this.showToast(
+            err instanceof Error
+              ? `Saved locally (.enc queued for retry): ${err.message}`
+              : 'Saved locally (.enc queued for retry)'
+          );
+        }
+      }
+
       target.updatedAtEpochMs = Date.now();
       await this.persistSingleItemEncrypted(target);
-      this.showToast(`Encrypted ${f.name} → OPFS (AES-256-GCM)`);
+      if (this.syncCoordinator.isCloudSyncEnabled) {
+        try {
+          const allRows = await this.localDb.loadAllRowsIncludingTombstones();
+          await this.syncCoordinator.syncEncryptedRowsIfEnabled(
+            'default-vault',
+            allRows.filter((r) => r.id === target.id)
+          );
+        } catch {
+          // Offline-first: CRDT delta remains queued locally
+        }
+      }
+      this.render();
+      const syncedAll = pendingUploadBlobs.every((b) =>
+        target.attachments.find((a) => a.id === b.attachmentId)?.blobSynced
+      );
+      this.showToast(
+        syncedAll && this.syncCoordinator.isCloudSyncEnabled
+          ? `Encrypted & synced ${selectedFiles.length} .enc scan(s) → EU Storage`
+          : `Encrypted ${selectedFiles.length} scan(s) → Local OPFS + SQLite (AES-256-GCM)`
+      );
     };
     dropzone?.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -3136,13 +3298,20 @@ export class SafePocketAppShell {
             this.firebaseService.currentUser?.uid ?? 'local-default-uid'
           }`;
           const sinceCursor = await this.sqliteDb.getSyncCursor(providerKey);
+          const pendingBlobs =
+            await this.sqliteDb.listPendingUnsyncedBlobs('default-vault');
           const rows = await this.localDb.loadAllRowsIncludingTombstones();
           const res = await this.syncCoordinator.syncBidirectionalIfEnabled(
             'default-vault',
             rows,
-            sinceCursor
+            sinceCursor,
+            pendingBlobs
           );
           if (!res) return;
+
+          for (const uploadedId of Object.keys(res.uploadedBlobPaths)) {
+            await this.sqliteDb.markLocalBlobSynced(uploadedId);
+          }
 
           for (const merged of res.mergedRows) {
             await this.localDb.saveEncryptedRow(merged);
@@ -3158,15 +3327,60 @@ export class SafePocketAppShell {
               // Skip rows encrypted with a different vault key
             }
           }
-          if (activeHydrated.length > 0 || res.mergedRows.some((r) => r.isTombstone)) {
+
+          let downloadedBlobs = 0;
+          for (const item of activeHydrated) {
+            let itemMetaUpdated = false;
+            for (const att of item.attachments) {
+              if (res.uploadedBlobPaths[att.id]) {
+                att.blobSynced = true;
+                att.storageObjectPath = res.uploadedBlobPaths[att.id];
+                itemMetaUpdated = true;
+              }
+              const localOpfs = await this.opfsStore.readEncryptedBlob(att.id);
+              const localSql = localOpfs
+                ? null
+                : await this.sqliteDb.loadLocalEncryptedBlob(att.id);
+              if (!localOpfs && !localSql && !att.ciphertextBase64) {
+                const remoteBlob =
+                  await this.syncCoordinator.downloadMissingAttachmentBlobIfEnabled(
+                    'default-vault',
+                    att.id,
+                    att.sha256Hex
+                  );
+                if (remoteBlob) {
+                  await this.opfsStore.writeEncryptedBlob(att.id, remoteBlob);
+                  await this.sqliteDb.saveLocalEncryptedBlob(
+                    'default-vault',
+                    att.id,
+                    remoteBlob,
+                    att.sha256Hex,
+                    true
+                  );
+                  att.blobSynced = true;
+                  itemMetaUpdated = true;
+                  downloadedBlobs += 1;
+                }
+              }
+            }
+            if (itemMetaUpdated) {
+              await this.persistSingleItemEncrypted(item);
+            }
+          }
+
+          if (
+            activeHydrated.length > 0 ||
+            res.mergedRows.some((r) => r.isTombstone)
+          ) {
             this.items = activeHydrated;
             this.selectedItemId = this.selectedItemId ?? this.items[0]?.id ?? null;
           }
 
           this.lastSyncedCount = res.pushedCount;
           this.lastPulledCount = res.pulledCount;
+          this.render();
           this.showToast(
-            `Two-Way CRDT Sync (${res.service}): ↑${res.pushedCount} pushed • ↓${res.pulledCount} pulled`
+            `Two-Way Sync (${res.service}): ↑${res.pushedCount} items • ↓${res.pulledCount} items • 📎↑${res.uploadedBlobCount}/↓${downloadedBlobs} .enc blobs`
           );
         } catch (err) {
           this.showToast(
@@ -3178,8 +3392,26 @@ export class SafePocketAppShell {
     this.root
       .querySelector('#sp-export-safepocket')
       ?.addEventListener('click', async () => {
+        const snapshotItems = structuredClone(this.items);
+        for (const item of snapshotItems) {
+          for (const att of item.attachments) {
+            if (!att.ciphertextBase64) {
+              const bytes = await this.resolveEncryptedAttachmentBytes(
+                item,
+                att
+              );
+              if (bytes) {
+                let bin = '';
+                for (let i = 0; i < bytes.length; i++) {
+                  bin += String.fromCharCode(bytes[i]);
+                }
+                att.ciphertextBase64 = btoa(bin);
+              }
+            }
+          }
+        }
         const containerJson = await this.crypto.exportSafePocketContainer(
-          this.items,
+          snapshotItems,
           this.activeMasterPassword,
           this.demoSecretKey
         );
@@ -3188,7 +3420,7 @@ export class SafePocketAppShell {
           `vault-backup-${new Date().toISOString().slice(0, 10)}.safepocket`,
           'application/vnd.safepocket.container+json'
         );
-        this.showToast('Exported encrypted .safepocket backup');
+        this.showToast('Exported encrypted .safepocket backup (with .enc blobs)');
       });
 
     this.root
@@ -3202,9 +3434,32 @@ export class SafePocketAppShell {
           this.activeMasterPassword,
           this.demoSecretKey
         );
+        for (const item of restored) {
+          for (const att of item.attachments) {
+            if (att.ciphertextBase64) {
+              const binStr = atob(att.ciphertextBase64);
+              const bytes = new Uint8Array(binStr.length);
+              for (let i = 0; i < binStr.length; i++) {
+                bytes[i] = binStr.charCodeAt(i);
+              }
+              await this.opfsStore.writeEncryptedBlob(att.id, bytes);
+              await this.sqliteDb.saveLocalEncryptedBlob(
+                'default-vault',
+                att.id,
+                bytes,
+                att.sha256Hex,
+                false
+              );
+              if (bytes.byteLength > 16_384) {
+                att.ciphertextBase64 = undefined;
+              }
+            }
+          }
+        }
         this.items = restored;
         await this.persistAllItemsEncrypted();
-        this.showToast(`Restored ${restored.length} encrypted vault items`);
+        this.render();
+        this.showToast(`Restored ${restored.length} encrypted vault items & blobs`);
       });
 
     this.root

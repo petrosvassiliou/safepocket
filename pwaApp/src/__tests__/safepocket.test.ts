@@ -32,9 +32,12 @@ import {
 } from '../search/searchEngine';
 import { IdleAutoLockMonitor } from '../security/autoLockMonitor';
 import {
+  assertStrictZeroKnowledgeBlobUpload,
   assertStrictZeroKnowledgeEnvelope,
+  downloadEncryptedBlobFromFirebaseStorageRest,
   pushRowsToFirestoreRest,
-  pushRowsToGoogleDriveAppDataRest
+  pushRowsToGoogleDriveAppDataRest,
+  uploadEncryptedBlobToFirebaseStorageRest
 } from '../sync/liveCloudConnectors';
 import {
   EncryptedLocalVaultDb,
@@ -728,6 +731,272 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     const endpoint = liveService.toEndpointConfig();
     expect(endpoint.firebaseProjectId).toBe('safepocket-vault-eu');
     expect(endpoint.firebaseUserId).toBe('live-uid-eur3-001');
+  });
+
+  it('16. EU Firebase Storage .enc Multipart Sync: enforces storage.rules schema, zero filename/MIME leak & SHA-256 tamper rejection', async () => {
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto();
+    await cryptoEngine.initializeOrUnlock(
+      'MasterPass#2026!',
+      generateFormattedSecretKey()
+    );
+
+    const rawScan = new TextEncoder().encode(
+      'HIGH-RES-PASSPORT-FRONT-JPEG-BYTES-1234567890'
+    );
+    const encrypted = await cryptoEngine.encryptBinaryAttachment(
+      'att_passport_front_01',
+      'Reisepass_Max_Mustermann.jpg',
+      'image/jpeg',
+      rawScan,
+      'front'
+    );
+
+    // Reject path-traversal or filename leaks in attachmentId
+    await expect(
+      assertStrictZeroKnowledgeBlobUpload({
+        attachmentId: '../Reisepass.jpg',
+        sha256Hex: encrypted.sha256Hex,
+        encryptedBytes: encrypted.encryptedBytes
+      })
+    ).rejects.toThrow(/invalid attachmentId/);
+
+    let capturedUrl = '';
+    let capturedContentType = '';
+    let capturedBodyBytes = new Uint8Array(0);
+    const storageMemory = new Map<string, Uint8Array>();
+
+    const mockStorageFetch = (async (
+      url: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      capturedUrl = String(url);
+      if (init?.method === 'POST') {
+        capturedContentType = String(
+          (init.headers as Record<string, string>)['Content-Type'] ?? ''
+        );
+        capturedBodyBytes = init.body as Uint8Array;
+        storageMemory.set(
+          'users/uid_eu_1/vaults/default-vault/blobs/att_passport_front_01.enc',
+          encrypted.encryptedBytes.slice()
+        );
+        return new Response(JSON.stringify({ name: 'ok' }), { status: 200 });
+      }
+      const stored = storageMemory.get(
+        'users/uid_eu_1/vaults/default-vault/blobs/att_passport_front_01.enc'
+      );
+      if (!stored) return new Response('Not found', { status: 404 });
+      return new Response(stored as BodyInit, { status: 200 });
+    }) as typeof fetch;
+
+    const uploadRes = await uploadEncryptedBlobToFirebaseStorageRest(
+      'default-vault',
+      {
+        attachmentId: encrypted.id,
+        sha256Hex: encrypted.sha256Hex,
+        encryptedBytes: encrypted.encryptedBytes
+      },
+      {
+        firebaseStorageBucket: 'safepocket-vault-eu.firebasestorage.app',
+        bearerToken: 'jwt-eu-token',
+        firebaseUserId: 'uid_eu_1'
+      },
+      mockStorageFetch
+    );
+
+    expect(uploadRes.storageObjectPath).toBe(
+      'users/uid_eu_1/vaults/default-vault/blobs/att_passport_front_01.enc'
+    );
+    expect(capturedUrl).toContain(
+      'https://firebasestorage.googleapis.com/v0/b/safepocket-vault-eu.firebasestorage.app/o?uploadType=multipart'
+    );
+    expect(capturedContentType).toContain('multipart/related; boundary=');
+
+    const multipartPreview = new TextDecoder().decode(capturedBodyBytes);
+    expect(multipartPreview).toContain('"contentType":"application/octet-stream"');
+    expect(multipartPreview).toContain(
+      `"ciphertextSha256":"${encrypted.sha256Hex}"`
+    );
+    // Original filename & MIME type MUST NEVER appear in Storage multipart envelope
+    expect(multipartPreview).not.toContain('Reisepass_Max_Mustermann.jpg');
+    expect(multipartPreview).not.toContain('image/jpeg');
+
+    const downloaded = await downloadEncryptedBlobFromFirebaseStorageRest(
+      'default-vault',
+      'att_passport_front_01',
+      encrypted.sha256Hex,
+      {
+        firebaseStorageBucket: 'safepocket-vault-eu.firebasestorage.app',
+        bearerToken: 'jwt-eu-token',
+        firebaseUserId: 'uid_eu_1'
+      },
+      mockStorageFetch
+    );
+    expect(downloaded).not.toBeNull();
+    const decrypted = await cryptoEngine.decryptBinaryAttachment({
+      attachmentId: encrypted.id,
+      ivHex: encrypted.ivHex,
+      expectedSha256Hex: encrypted.sha256Hex,
+      encryptedBytes: downloaded!
+    });
+    expect(new TextDecoder().decode(decrypted)).toBe(
+      'HIGH-RES-PASSPORT-FRONT-JPEG-BYTES-1234567890'
+    );
+
+    // Flip 1 bit in cloud storage -> SHA-256 constant-time integrity guard MUST reject
+    const corrupted = encrypted.encryptedBytes.slice();
+    corrupted[0] ^= 0xff;
+    storageMemory.set(
+      'users/uid_eu_1/vaults/default-vault/blobs/att_passport_front_01.enc',
+      corrupted
+    );
+    await expect(
+      downloadEncryptedBlobFromFirebaseStorageRest(
+        'default-vault',
+        'att_passport_front_01',
+        encrypted.sha256Hex,
+        {
+          firebaseStorageBucket: 'safepocket-vault-eu.firebasestorage.app',
+          bearerToken: 'jwt-eu-token',
+          firebaseUserId: 'uid_eu_1'
+        },
+        mockStorageFetch
+      )
+    ).rejects.toThrow(/SHA-256 integrity check failed/);
+  });
+
+  it('17. Two-Device End-to-End Attachment Sync & Offline SQLite Queue: syncs large scan without Firestore base64 bloat and caches offline on Device B', async () => {
+    const sharedSecretKey = generateFormattedSecretKey();
+    const sharedCloudReplica = new SqliteWasmVaultDb(false);
+
+    // Device A: encrypts vault item + 32 KB binary scan locally while offline
+    const cryptoA = new ZeroKnowledgeVaultCrypto();
+    await cryptoA.initializeOrUnlock('SharedMaster!2026', sharedSecretKey);
+    const kdfConfig = cryptoA.currentKdfConfig;
+
+    const dbA = new SqliteWasmVaultDb(false);
+    const fbAdapterA = new FirebaseZeroKnowledgeAdapter(sharedCloudReplica);
+    fbAdapterA.setLiveEndpointConfig({ firebaseUserId: 'uid-shared-user' });
+    const syncA = new VaultSyncCoordinator(
+      fbAdapterA,
+      new GoogleDriveAppDataAdapter()
+    );
+
+    const largePdfBytes = new Uint8Array(24_576);
+    for (let i = 0; i < largePdfBytes.length; i++) {
+      largePdfBytes[i] = (i * 31 + 7) & 0xff;
+    }
+
+    const encBlob = await cryptoA.encryptBinaryAttachment(
+      'att_large_pdf_01',
+      'Residence_Permit_2026.pdf',
+      'application/pdf',
+      largePdfBytes,
+      'front'
+    );
+    await dbA.saveLocalEncryptedBlob(
+      'default-vault',
+      encBlob.id,
+      encBlob.encryptedBytes,
+      encBlob.sha256Hex,
+      false
+    );
+
+    const pendingBefore = await dbA.listPendingUnsyncedBlobs('default-vault');
+    expect(pendingBefore).toHaveLength(1);
+
+    const docItem = createInitialSampleVaultItems()[2];
+    docItem.id = 'doc-sync-pdf-1';
+    docItem.attachments = [
+      {
+        id: encBlob.id,
+        fileName: encBlob.fileName,
+        mimeType: encBlob.mimeType,
+        side: 'front',
+        sizeBytes: encBlob.sizeBytes,
+        sha256Hex: encBlob.sha256Hex,
+        ivHex: encBlob.ivHex,
+        // Notice: NO inline ciphertextBase64 in Firestore CRDT item!
+        ciphertextBase64: undefined,
+        blobSynced: false
+      }
+    ];
+
+    const hlcA = new HybridClock('device-a').nowPacked();
+    const encRowA = await cryptoA.encryptVaultItem(docItem, hlcA, {
+      'device-a': 1
+    });
+    await dbA.saveEncryptedRow(encRowA);
+
+    // Enable Cloud Sync on Device A -> pushes CRDT delta + pending .enc blob
+    syncA.setCloudSyncEnabled(true);
+    const syncResA = await syncA.syncBidirectionalIfEnabled(
+      'default-vault',
+      await dbA.loadAllRowsIncludingTombstones(),
+      null,
+      pendingBefore
+    );
+    expect(syncResA?.uploadedBlobCount).toBe(1);
+    await dbA.markLocalBlobSynced(encBlob.id);
+    expect(await dbA.listPendingUnsyncedBlobs('default-vault')).toHaveLength(0);
+
+    // Device B: fresh SQLite vault unlocked with same Master Password + Secret Key + Salt
+    const cryptoB = new ZeroKnowledgeVaultCrypto(kdfConfig);
+    await cryptoB.initializeOrUnlock(
+      'SharedMaster!2026',
+      sharedSecretKey,
+      kdfConfig
+    );
+    const dbB = new SqliteWasmVaultDb(false);
+    const fbAdapterB = new FirebaseZeroKnowledgeAdapter(sharedCloudReplica);
+    fbAdapterB.setLiveEndpointConfig({ firebaseUserId: 'uid-shared-user' });
+    const syncB = new VaultSyncCoordinator(
+      fbAdapterB,
+      new GoogleDriveAppDataAdapter()
+    );
+    syncB.setCloudSyncEnabled(true);
+
+    const syncResB = await syncB.syncBidirectionalIfEnabled(
+      'default-vault',
+      [],
+      null
+    );
+    expect(syncResB?.pulledCount).toBe(1);
+
+    const hydratedOnB = await cryptoB.decryptVaultRow(syncResB!.mergedRows[0]);
+    expect(hydratedOnB.attachments[0].fileName).toBe(
+      'Residence_Permit_2026.pdf'
+    );
+    expect(hydratedOnB.attachments[0].ciphertextBase64).toBeUndefined();
+
+    // Device B fetches .enc blob from Firebase Storage and caches it offline in SQLite WASM
+    const fetchedEncBytes =
+      await syncB.downloadMissingAttachmentBlobIfEnabled(
+        'default-vault',
+        hydratedOnB.attachments[0].id,
+        hydratedOnB.attachments[0].sha256Hex
+      );
+    expect(fetchedEncBytes).not.toBeNull();
+    await dbB.saveLocalEncryptedBlob(
+      'default-vault',
+      hydratedOnB.attachments[0].id,
+      fetchedEncBytes!,
+      hydratedOnB.attachments[0].sha256Hex,
+      true
+    );
+
+    // Go offline on Device B -> still decrypts exact 24 KiB PDF from local SQLite WASM cache!
+    syncB.setCloudSyncEnabled(false);
+    const offlineCached = await dbB.loadLocalEncryptedBlob(
+      hydratedOnB.attachments[0].id
+    );
+    expect(offlineCached?.cloudSynced).toBe(true);
+    const decryptedPdfOnB = await cryptoB.decryptBinaryAttachment({
+      attachmentId: hydratedOnB.attachments[0].id,
+      ivHex: hydratedOnB.attachments[0].ivHex,
+      expectedSha256Hex: hydratedOnB.attachments[0].sha256Hex,
+      encryptedBytes: offlineCached!.encryptedBytes
+    });
+    expect(decryptedPdfOnB).toEqual(largePdfBytes);
   });
 });
 

@@ -3,7 +3,7 @@ import {
   constantTimeHexEquals,
   sha256Hex
 } from '../crypto/vaultCrypto';
-import type { EncryptedVaultRow } from '../types';
+import type { EncryptedBlobEnvelope, EncryptedVaultRow } from '../types';
 
 export interface LiveCloudEndpointConfig {
   firebaseApiKey?: string;
@@ -466,4 +466,259 @@ export async function pullRowsFromGoogleDriveAppDataRest(
     }
   }
   return out;
+}
+
+const MAX_ATTACHMENT_BLOB_BYTES = 25 * 1024 * 1024; // Matches firebase/storage.rules (< 25 MiB)
+const SAFE_ATTACHMENT_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+const SHA256_HEX_REGEX = /^[a-fA-F0-9]{64}$/;
+
+function concatByteChunks(...chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return combined;
+}
+
+/**
+ * Client-side Zero-Knowledge Outbound Guard mirroring `firebase/storage.rules`:
+ * - Enforces alphanumeric/dash/underscore attachment ID (`<id>.enc`) so original filenames NEVER leak.
+ * - Enforces `< 25 MiB` ciphertext size and 64-char hex `ciphertextSha256` matching the exact payload bytes.
+ */
+export async function assertStrictZeroKnowledgeBlobUpload(
+  blob: EncryptedBlobEnvelope
+): Promise<void> {
+  if (!SAFE_ATTACHMENT_ID_REGEX.test(blob.attachmentId)) {
+    throw new Error(
+      `Zero-knowledge blob violation: invalid attachmentId "${blob.attachmentId}"`
+    );
+  }
+  if (
+    blob.encryptedBytes.byteLength === 0 ||
+    blob.encryptedBytes.byteLength >= MAX_ATTACHMENT_BLOB_BYTES
+  ) {
+    throw new Error(
+      `Zero-knowledge blob violation: encrypted blob size (${blob.encryptedBytes.byteLength} B) exceeds 25 MiB limit`
+    );
+  }
+  if (!SHA256_HEX_REGEX.test(blob.sha256Hex)) {
+    throw new Error(
+      'Zero-knowledge blob violation: invalid SHA-256 hex digest format'
+    );
+  }
+  const actualSha = await sha256Hex(blob.encryptedBytes);
+  if (!constantTimeHexEquals(actualSha, blob.sha256Hex)) {
+    throw new Error(
+      'Zero-knowledge blob violation: pre-upload SHA-256 digest mismatch'
+    );
+  }
+}
+
+/**
+ * Uploads an AES-256-GCM `.enc` binary attachment to EU Firebase Cloud Storage
+ * (`users/{uid}/vaults/{vaultId}/blobs/{attachmentId}.enc`) via `multipart/related`
+ * with `contentType: 'application/octet-stream'` and `metadata.ciphertextSha256`,
+ * matching `firebase/storage.rules` 1:1 with zero base64 inflation and zero filename/MIME leakage.
+ */
+export async function uploadEncryptedBlobToFirebaseStorageRest(
+  vaultId: string,
+  blob: EncryptedBlobEnvelope,
+  config: Required<
+    Pick<LiveCloudEndpointConfig, 'firebaseStorageBucket' | 'bearerToken'>
+  > & {
+    firebaseUserId?: string;
+  },
+  fetcher: typeof fetch = fetch
+): Promise<{ storageObjectPath: string }> {
+  await assertStrictZeroKnowledgeBlobUpload(blob);
+  const uid = config.firebaseUserId || 'authenticated-user';
+  const objectPath = `users/${uid}/vaults/${vaultId}/blobs/${blob.attachmentId}.enc`;
+  const boundary = 'safepocket_zk_storage_blob_v1';
+  const enc = new TextEncoder();
+
+  const metaJson = JSON.stringify({
+    name: objectPath,
+    contentType: 'application/octet-stream',
+    metadata: {
+      ciphertextSha256: blob.sha256Hex.toLowerCase()
+    }
+  });
+
+  const prefixBytes = enc.encode(
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metaJson}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`
+  );
+  const suffixBytes = enc.encode(`\r\n--${boundary}--\r\n`);
+  const multipartBytes = concatByteChunks(
+    prefixBytes,
+    blob.encryptedBytes,
+    suffixBytes
+  );
+
+  const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(
+    config.firebaseStorageBucket
+  )}/o?uploadType=multipart&name=${encodeURIComponent(objectPath)}`;
+
+  const res = await fetcher(uploadUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.bearerToken}`,
+      'Content-Type': `multipart/related; boundary=${boundary}`
+    },
+    body: multipartBytes as BodyInit
+  });
+
+  if (!res.ok) {
+    throw new Error(`Firebase Storage .enc upload failed with HTTP ${res.status}`);
+  }
+  return { storageObjectPath: objectPath };
+}
+
+/**
+ * Downloads an AES-256-GCM `.enc` binary attachment from EU Firebase Cloud Storage
+ * (`?alt=media`) and verifies its `SHA-256` digest in constant time before returning.
+ */
+export async function downloadEncryptedBlobFromFirebaseStorageRest(
+  vaultId: string,
+  attachmentId: string,
+  expectedSha256Hex: string,
+  config: Required<
+    Pick<LiveCloudEndpointConfig, 'firebaseStorageBucket' | 'bearerToken'>
+  > & {
+    firebaseUserId?: string;
+  },
+  fetcher: typeof fetch = fetch
+): Promise<Uint8Array | null> {
+  if (!SAFE_ATTACHMENT_ID_REGEX.test(attachmentId)) {
+    throw new Error(`Invalid attachmentId "${attachmentId}"`);
+  }
+  const uid = config.firebaseUserId || 'authenticated-user';
+  const objectPath = `users/${uid}/vaults/${vaultId}/blobs/${attachmentId}.enc`;
+  const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(
+    config.firebaseStorageBucket
+  )}/o/${encodeURIComponent(objectPath)}?alt=media`;
+
+  const res = await fetcher(downloadUrl, {
+    headers: {
+      Authorization: `Bearer ${config.bearerToken}`
+    }
+  });
+  if (res.status === 404) {
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error(
+      `Firebase Storage .enc download failed with HTTP ${res.status}`
+    );
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const actualSha = await sha256Hex(bytes);
+  if (!constantTimeHexEquals(actualSha, expectedSha256Hex)) {
+    throw new Error(
+      'Firebase Storage .enc SHA-256 integrity check failed — tampering detected'
+    );
+  }
+  return bytes;
+}
+
+/**
+ * Uploads an encrypted `.enc` attachment blob into Google Drive hidden `appDataFolder`
+ * (`sp-blob-${vaultId}-${attachmentId}.enc`) for Optional Cloud Service (`GDRIVE_APPDATA`).
+ */
+export async function uploadEncryptedBlobToGoogleDriveAppDataRest(
+  vaultId: string,
+  blob: EncryptedBlobEnvelope,
+  bearerToken: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ storageObjectPath: string }> {
+  await assertStrictZeroKnowledgeBlobUpload(blob);
+  const fileName = `sp-blob-${vaultId}-${blob.attachmentId}.enc`;
+  const boundary = 'safepocket_appdata_blob_v1';
+  const enc = new TextEncoder();
+  const metadata = JSON.stringify({
+    name: fileName,
+    parents: ['appDataFolder'],
+    appProperties: {
+      ciphertextSha256: blob.sha256Hex.toLowerCase()
+    }
+  });
+  const bodyBytes = concatByteChunks(
+    enc.encode(
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`
+    ),
+    blob.encryptedBytes,
+    enc.encode(`\r\n--${boundary}--\r\n`)
+  );
+
+  const res = await fetcher(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body: bodyBytes as BodyInit
+    }
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Google Drive appDataFolder .enc upload failed with HTTP ${res.status}`
+    );
+  }
+  return { storageObjectPath: `appDataFolder/${fileName}` };
+}
+
+/**
+ * Downloads and SHA-256-verifies an encrypted `.enc` attachment blob from Google Drive `appDataFolder`.
+ */
+export async function downloadEncryptedBlobFromGoogleDriveAppDataRest(
+  vaultId: string,
+  attachmentId: string,
+  expectedSha256Hex: string,
+  bearerToken: string,
+  fetcher: typeof fetch = fetch
+): Promise<Uint8Array | null> {
+  const fileName = `sp-blob-${vaultId}-${attachmentId}.enc`;
+  const q = encodeURIComponent(`name = '${fileName}' and trashed = false`);
+  const listRes = await fetcher(
+    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id,name)`,
+    {
+      headers: { Authorization: `Bearer ${bearerToken}` }
+    }
+  );
+  if (!listRes.ok) {
+    throw new Error(
+      `Google Drive appDataFolder blob list failed with HTTP ${listRes.status}`
+    );
+  }
+  const listData = (await listRes.json()) as {
+    files?: Array<{ id: string; name: string }>;
+  };
+  const latest = listData.files?.[0];
+  if (!latest) return null;
+
+  const dlRes = await fetcher(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+      latest.id
+    )}?alt=media`,
+    {
+      headers: { Authorization: `Bearer ${bearerToken}` }
+    }
+  );
+  if (!dlRes.ok) {
+    throw new Error(
+      `Google Drive appDataFolder blob download failed with HTTP ${dlRes.status}`
+    );
+  }
+  const bytes = new Uint8Array(await dlRes.arrayBuffer());
+  const actualSha = await sha256Hex(bytes);
+  if (!constantTimeHexEquals(actualSha, expectedSha256Hex)) {
+    throw new Error(
+      'Google Drive appDataFolder .enc SHA-256 integrity check failed'
+    );
+  }
+  return bytes;
 }
