@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1028417352953",
+    "project_id": "safepocket-vault-eu",
+    "storage_bucket": "safepocket-vault-eu.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1028417352953:android:68a6559ae1686faf9b1e28",
+        "android_client_info": {
+          "package_name": "com.safepocket.vault"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA893hgKTE-2vQQ6NW_s1sfvf4qQSaEDyg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

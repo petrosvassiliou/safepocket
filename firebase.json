@@ -1,19 +1,22 @@
 {
   "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
+    "rules": "firebase/firestore.rules",
+    "indexes": "firebase/firestore.indexes.json"
   },
   "storage": {
-    "rules": "storage.rules"
+    "rules": "firebase/storage.rules"
   },
   "hosting": {
-    "public": "../pwaApp/dist",
+    "public": "pwaApp/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "headers": [
       {
         "source": "/version.json",
         "headers": [
-          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
         ]
       }
     ]

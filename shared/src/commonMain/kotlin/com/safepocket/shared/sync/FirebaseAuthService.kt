@@ -33,6 +33,15 @@ private data class IdentityToolkitAuthResponse(
     val refreshToken: String? = null
 )
 
+object ProvisionedFirebaseProject {
+    const val PROJECT_ID = "safepocket-vault-eu"
+    const val FIRESTORE_REGION = "eur3"
+    const val STORAGE_BUCKET = "safepocket-vault-eu.firebasestorage.app"
+    const val WEB_API_KEY = "AIzaSyBCeyZx121Eq5xxyWZD4k3w1-9vyr0yIsw"
+    const val ANDROID_APP_ID = "1:1028417352953:android:68a6559ae1686faf9b1e28"
+    const val WEB_APP_ID = "1:1028417352953:web:30b5698c6a4fd1db9b1e28"
+}
+
 /**
  * Shared KMP Zero-Knowledge Firebase Auth Client (Default Cloud Sync Account Creation & Sign-In).
  *
@@ -43,7 +52,7 @@ private data class IdentityToolkitAuthResponse(
 class FirebaseZeroKnowledgeAuthService(
     private val httpClient: HttpClient,
     private val primitives: CryptoPrimitives,
-    private val firebaseWebApiKey: String
+    private val firebaseWebApiKey: String = ProvisionedFirebaseProject.WEB_API_KEY
 ) {
     private var activeSession: CloudSyncUserSession? = null
 

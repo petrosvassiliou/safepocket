@@ -14,7 +14,10 @@ import {
   VaultHeaderStore
 } from '../db/opfsAttachmentStore';
 import { SqliteWasmVaultDb } from '../db/sqliteWasmVaultDb';
-import { FirebaseVaultService } from '../firebase/firebaseVaultService';
+import {
+  DEFAULT_PROVISIONED_FIREBASE_CONFIG,
+  FirebaseVaultService
+} from '../firebase/firebaseVaultService';
 import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
 import {
   buildSampleTd3PassportMrz,
@@ -685,5 +688,47 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     expect(validateIsoIban('DE89 3704 0044 0532 0130 00')).toBe(true);
     expect(validateIsoIban('DE00 3704 0044 0532 0130 00')).toBe(false);
   });
+
+  it('15. Provisioned Live Firebase Project (safepocket-vault-eu • eur3): pre-loads Web SDK config & sends HKDF-derived password to Identity Toolkit', async () => {
+    const sqlite = new SqliteWasmVaultDb(false);
+    const liveService = new FirebaseVaultService(sqlite, true);
+    await liveService.initializeDormant();
+
+    expect(liveService.isLiveProjectLinked).toBe(true);
+    expect(liveService.webConfig.projectId).toBe('safepocket-vault-eu');
+    expect(liveService.webConfig.apiKey).toBe(
+      DEFAULT_PROVISIONED_FIREBASE_CONFIG.apiKey
+    );
+
+    let capturedBody = '';
+    const mockLiveAuthFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      capturedBody = String(init?.body ?? '');
+      return new Response(
+        JSON.stringify({
+          localId: 'live-uid-eur3-001',
+          email: 'petros@pvamail.de',
+          idToken: 'eyJhbGciOiJSUzI1NiIsImtpZCI6ImxpdmUifQ.test',
+          refreshToken: 'refresh-eur3'
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const session = await liveService.createCloudUser(
+      'petros@pvamail.de',
+      'UserChosenSyncPass!99',
+      mockLiveAuthFetch
+    );
+    expect(session.mode).toBe('live-firebase');
+    expect(session.uid).toBe('live-uid-eur3-001');
+    // Verify raw user password was NEVER sent — only spzk_<64-hex> HKDF verifier
+    expect(capturedBody).not.toContain('UserChosenSyncPass!99');
+    expect(capturedBody).toContain('"spzk_');
+
+    const endpoint = liveService.toEndpointConfig();
+    expect(endpoint.firebaseProjectId).toBe('safepocket-vault-eu');
+    expect(endpoint.firebaseUserId).toBe('live-uid-eur3-001');
+  });
 });
+
 

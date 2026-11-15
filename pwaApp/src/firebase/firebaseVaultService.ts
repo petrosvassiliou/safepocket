@@ -17,36 +17,67 @@ export interface FirebaseWebConfig {
   apiKey: string;
   projectId: string;
   storageBucket: string;
+  authDomain?: string;
   appId?: string;
 }
+
+/**
+ * Provisioned Live Firebase Project (`safepocket-vault-eu`, Cloud Firestore `eur3` EU Multi-Region).
+ * Public Firebase Web SDK identifiers; zero-knowledge security is enforced client-side via
+ * Argon2id + Secret Key -> AES-256-GCM and server-side via `firebase/firestore.rules`.
+ */
+export const DEFAULT_PROVISIONED_FIREBASE_CONFIG: Readonly<FirebaseWebConfig> = {
+  apiKey: 'AIzaSyBCeyZx121Eq5xxyWZD4k3w1-9vyr0yIsw',
+  projectId: 'safepocket-vault-eu',
+  storageBucket: 'safepocket-vault-eu.firebasestorage.app',
+  authDomain: 'safepocket-vault-eu.firebaseapp.com',
+  appId: '1:1028417352953:web:30b5698c6a4fd1db9b1e28'
+};
 
 /**
  * Pre-Initialized Firebase Zero-Knowledge Database & User Authentication Service.
  *
  * Present and initialized from v0.1 app boot (even while Cloud Sync is disabled by default).
  * - Zero outbound network calls occur while `cloudSyncEnabled === false`.
- * - Supports full Cloud Sync User Creation (`createCloudUser`), Sign-In (`signInCloudUser`),
- *   and Sign-Out (`signOutCloudUser`) using HKDF-derived zero-knowledge credentials.
- * - Seamlessly routes to live Firebase Identity Toolkit + Firestore REST when `apiKey` + `projectId`
- *   are configured (via `.env.local` from `scripts/setup-firebase.sh` or Settings UI), or to the
- *   embedded SQLite WASM Firebase replica out-of-the-box.
+ * - Pre-wired to live `safepocket-vault-eu` (`eur3`) in production/browser builds while remaining
+ *   100% hermetic in unit tests (`MODE === 'test'`) unless explicitly configured.
  */
 export class FirebaseVaultService {
   private initialized = false;
   private config: FirebaseWebConfig;
   private activeSession: FirebaseAuthResult | null = null;
 
-  constructor(private readonly sqliteDb: SqliteWasmVaultDb) {
+  constructor(
+    private readonly sqliteDb: SqliteWasmVaultDb,
+    useProvisionedDefaults?: boolean
+  ) {
     const envMeta = (import.meta as unknown as { env?: Record<string, string> })
       .env;
-    const defaultCfg: FirebaseWebConfig = {
-      apiKey: envMeta?.VITE_FIREBASE_API_KEY ?? '',
-      projectId: envMeta?.VITE_FIREBASE_PROJECT_ID ?? 'safepocket-local-zk',
-      storageBucket:
-        envMeta?.VITE_FIREBASE_STORAGE_BUCKET ??
-        'safepocket-local-zk.firebasestorage.app',
-      appId: envMeta?.VITE_FIREBASE_APP_ID ?? ''
-    };
+    const isTestEnv = envMeta?.MODE === 'test';
+    const loadProvisioned = useProvisionedDefaults ?? !isTestEnv;
+
+    const defaultCfg: FirebaseWebConfig = loadProvisioned
+      ? {
+          apiKey:
+            envMeta?.VITE_FIREBASE_API_KEY ||
+            DEFAULT_PROVISIONED_FIREBASE_CONFIG.apiKey,
+          projectId:
+            envMeta?.VITE_FIREBASE_PROJECT_ID ||
+            DEFAULT_PROVISIONED_FIREBASE_CONFIG.projectId,
+          storageBucket:
+            envMeta?.VITE_FIREBASE_STORAGE_BUCKET ||
+            DEFAULT_PROVISIONED_FIREBASE_CONFIG.storageBucket,
+          authDomain: DEFAULT_PROVISIONED_FIREBASE_CONFIG.authDomain,
+          appId:
+            envMeta?.VITE_FIREBASE_APP_ID ||
+            DEFAULT_PROVISIONED_FIREBASE_CONFIG.appId
+        }
+      : {
+          apiKey: '',
+          projectId: 'safepocket-local-zk',
+          storageBucket: 'safepocket-local-zk.firebasestorage.app',
+          appId: ''
+        };
 
     if (typeof localStorage !== 'undefined') {
       const rawCfg = localStorage.getItem(FIREBASE_CONFIG_STORAGE_KEY);
@@ -151,14 +182,27 @@ export class FirebaseVaultService {
     }
 
     if (this.isLiveProjectLinked) {
-      const liveUser = await firebaseAuthSignUpRest(
-        this.config.apiKey,
-        cleanEmail,
-        syncPassword,
-        fetcher
-      );
-      this.persistSession(liveUser);
-      return liveUser;
+      try {
+        const liveUser = await firebaseAuthSignUpRest(
+          this.config.apiKey,
+          cleanEmail,
+          syncPassword,
+          fetcher
+        );
+        this.persistSession(liveUser);
+        return liveUser;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          msg.includes('CONFIGURATION_NOT_FOUND') ||
+          msg.includes('OPERATION_NOT_ALLOWED')
+        ) {
+          throw new Error(
+            `Enable Email/Password Sign-In once in Firebase Console (Authentication → Sign-in method) for ${this.config.projectId}`
+          );
+        }
+        throw err;
+      }
     }
 
     const zkAuthPwd = await deriveZeroKnowledgeCloudAuthPassword(
@@ -196,14 +240,27 @@ export class FirebaseVaultService {
     const cleanEmail = email.trim().toLowerCase();
 
     if (this.isLiveProjectLinked) {
-      const liveUser = await firebaseAuthSignInRest(
-        this.config.apiKey,
-        cleanEmail,
-        syncPassword,
-        fetcher
-      );
-      this.persistSession(liveUser);
-      return liveUser;
+      try {
+        const liveUser = await firebaseAuthSignInRest(
+          this.config.apiKey,
+          cleanEmail,
+          syncPassword,
+          fetcher
+        );
+        this.persistSession(liveUser);
+        return liveUser;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          msg.includes('CONFIGURATION_NOT_FOUND') ||
+          msg.includes('OPERATION_NOT_ALLOWED')
+        ) {
+          throw new Error(
+            `Enable Email/Password Sign-In once in Firebase Console (Authentication → Sign-in method) for ${this.config.projectId}`
+          );
+        }
+        throw err;
+      }
     }
 
     const existing = await this.sqliteDb.findLocalFirebaseUserByEmail(

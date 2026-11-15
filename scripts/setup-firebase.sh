@@ -38,7 +38,7 @@ npx --yes firebase-tools projects:list >/dev/null 2>&1 || npx --yes firebase-too
 npx --yes firebase-tools projects:create "$PROJECT_ID" --display-name "SafePocket Vault" 2>/dev/null || \
   echo "    Project ${PROJECT_ID} already exists — attaching..."
 
-cat > "${REPO_ROOT}/firebase/.firebaserc" <<EOF
+cat > "${REPO_ROOT}/.firebaserc" <<EOF
 {
   "projects": {
     "default": "${PROJECT_ID}"
@@ -50,10 +50,10 @@ echo "==> [2/5] Provisioning Cloud Firestore database (${REGION})..."
 npx --yes firebase-tools firestore:databases:create "(default)" --location "${REGION}" --project "${PROJECT_ID}" 2>/dev/null || \
   echo "    Firestore (default) database already provisioned."
 
-echo "==> [3/5] Deploying Zero-Knowledge Firestore & Cloud Storage Security Rules..."
+echo "==> [3/5] Deploying Zero-Knowledge Firestore Rules & Indexes..."
 (
-  cd "${REPO_ROOT}/firebase"
-  npx --yes firebase-tools deploy --only firestore:rules,firestore:indexes,storage --project "${PROJECT_ID}"
+  cd "${REPO_ROOT}"
+  npx --yes firebase-tools deploy --only firestore:rules,firestore:indexes --project "${PROJECT_ID}"
 )
 
 echo "==> [4/5] Registering SafePocket Web App & fetching SDK config..."
