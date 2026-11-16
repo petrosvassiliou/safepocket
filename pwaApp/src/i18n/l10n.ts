@@ -178,6 +178,12 @@ export class SafePocketI18n {
     switch (category) {
       case 'PAYMENT_CARD':
         return this.t('category_payment_card');
+      case 'BANK_ACCOUNT':
+        return this.t('category_bank_account');
+      case 'INSURANCE_CARD':
+        return this.t('category_insurance_card');
+      case 'MEMBERSHIP_CARD':
+        return this.t('category_membership_card');
       case 'IDENTITY':
         return this.t('category_identity');
       case 'OFFICIAL_DOCUMENT':

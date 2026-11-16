@@ -51,6 +51,9 @@ class MultilingualSearchEngine(
     private fun buildIndexableCorpus(item: VaultItemPayload): List<String> {
         val localizedCategory = when (item.category) {
             VaultCategory.PAYMENT_CARD -> i18n.t("category_payment_card")
+            VaultCategory.BANK_ACCOUNT -> i18n.t("category_bank_account")
+            VaultCategory.INSURANCE_CARD -> i18n.t("category_insurance_card")
+            VaultCategory.MEMBERSHIP_CARD -> i18n.t("category_membership_card")
             VaultCategory.IDENTITY -> i18n.t("category_identity")
             VaultCategory.OFFICIAL_DOCUMENT -> i18n.t("category_official_document")
             VaultCategory.SECURE_NOTE -> i18n.t("category_secure_note")

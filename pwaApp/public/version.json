@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-15T12:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:27a6f825bc13acc4ce611ebffd932ee8f85bcd87ebe98d8a500511dd39ddc4e154b3815fa280354ab2b2d90d48ad803a44732026296bd4fead14f8c3b1463c02",
+  "manifestSignature": "ed25519:fa5b35cfd3ab3a2c430accee33cc9286ce47389ae0a232d97ddcbaefe593eaf28e33f1082e778472d79011f5781a054bd5c1f648d2a05b14469e41550c25180e",
   "releaseNotes": {
     "en": "• Enhanced Material Design 3 Expressive 3-column inspector for Googlebook OS freeform windows.\n• Upgraded ChromeOS PWA local storage to SQLite WASM + OPFS with pre-initialized Firebase Cloud Sync.\n• Added offline ICAO Doc 9303 MRZ document scanner and 90-day expiry warnings across all 6 languages.",
     "de": "• Verbesserter dreispaltiger Material Design 3 Expressive Inspektor für freie Fenstergrößen unter Googlebook OS.\n• Lokaler Speicher der ChromeOS-PWA auf SQLite WASM + OPFS mit vorkonfiguriertem Firebase Cloud Sync aktualisiert.\n• Offline-ICAO-MRZ-Dokumentenscanner und 90-Tage-Ablaufwarnungen hinzugefügt.",
@@ -44,7 +44,7 @@
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "9b4cfa8f9899821d122b490365fc6cb906c0de771be2e41a9db0f2a53529cf81",
+      "sha256": "8a68196d2191fa108d0a68d4f653f9abada7e367878eb740eca8af2546ed5379",
       "sizeBytes": 2657
     }
   }

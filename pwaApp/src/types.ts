@@ -1,10 +1,25 @@
 export type SupportedLocale = 'en' | 'de' | 'it' | 'fr' | 'es' | 'el';
 
+export type ThemeMode = 'light' | 'dark' | 'system';
+
 export type VaultCategory =
   | 'PAYMENT_CARD'
+  | 'BANK_ACCOUNT'
+  | 'INSURANCE_CARD'
+  | 'MEMBERSHIP_CARD'
   | 'IDENTITY'
   | 'OFFICIAL_DOCUMENT'
   | 'SECURE_NOTE';
+
+export const VAULT_CATEGORIES: ReadonlyArray<VaultCategory> = [
+  'PAYMENT_CARD',
+  'BANK_ACCOUNT',
+  'INSURANCE_CARD',
+  'MEMBERSHIP_CARD',
+  'IDENTITY',
+  'OFFICIAL_DOCUMENT',
+  'SECURE_NOTE'
+];
 
 export type DocumentSubtype =
   | 'PASSPORT'
@@ -126,6 +141,8 @@ export const SENSITIVE_FIELD_KEYS = new Set<string>([
   'field_cvv',
   'field_pin',
   'field_iban',
+  'field_account_number',
+  'field_insurance_number',
   'field_tax_id',
   'field_ssn',
   'field_health_insurance',

@@ -47,7 +47,12 @@ import {
   reconcileEncryptedRows,
   VaultSyncCoordinator
 } from '../sync/syncAdapters';
-import { APP_BUILD_INFO, type RemoteUpdateManifest } from '../types';
+import {
+  APP_BUILD_INFO,
+  type RemoteUpdateManifest,
+  VAULT_CATEGORIES
+} from '../types';
+import { resolveEffectiveTheme } from '../ui/appShell';
 import {
   buildEmergencyKitHtml,
   estimateMasterPasswordEntropy
@@ -998,6 +1003,124 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     });
     expect(decryptedPdfOnB).toEqual(largePdfBytes);
   });
+
+  it('18. Light Theme Default + Dark Option & Bank Accounts / Insurance Cards / Membership Cards across all 6 ARB locales', async () => {
+    // 1) Light Theme is strictly the default out-of-the-box, even if OS prefers dark
+    expect(resolveEffectiveTheme('light', false)).toBe('light');
+    expect(resolveEffectiveTheme('light', true)).toBe('light');
+    // Dark Theme option & System Theme option
+    expect(resolveEffectiveTheme('dark', false)).toBe('dark');
+    expect(resolveEffectiveTheme('dark', true)).toBe('dark');
+    expect(resolveEffectiveTheme('system', false)).toBe('light');
+    expect(resolveEffectiveTheme('system', true)).toBe('dark');
+
+    const indexHtml = fs.readFileSync(
+      path.resolve(__dirname, '../../index.html'),
+      'utf-8'
+    );
+    expect(indexHtml).toContain('data-theme="light"');
+    expect(indexHtml).toContain('content="#F5F7FA"');
+
+    // 2) All 7 first-class categories are present in VAULT_CATEGORIES & sample vault
+    expect(VAULT_CATEGORIES).toEqual([
+      'PAYMENT_CARD',
+      'BANK_ACCOUNT',
+      'INSURANCE_CARD',
+      'MEMBERSHIP_CARD',
+      'IDENTITY',
+      'OFFICIAL_DOCUMENT',
+      'SECURE_NOTE'
+    ]);
+
+    const items = createInitialSampleVaultItems();
+    const bankItem = items.find((i) => i.category === 'BANK_ACCOUNT');
+    const insuranceItem = items.find((i) => i.category === 'INSURANCE_CARD');
+    const membershipItem = items.find((i) => i.category === 'MEMBERSHIP_CARD');
+    expect(bankItem).toBeDefined();
+    expect(insuranceItem).toBeDefined();
+    expect(membershipItem).toBeDefined();
+
+    // Validate SEPA IBAN on sample Bank Account
+    const bankIban = bankItem!.fields.find((f) => f.labelKey === 'field_iban')?.value ?? '';
+    expect(validateIsoIban(bankIban)).toBe(true);
+
+    // Encrypt & decrypt all 3 new categories via ZeroKnowledgeVaultCrypto with category-bound AAD
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    await cryptoEngine.initializeOrUnlock(
+      'ThemeAndCardsPass#2026',
+      generateFormattedSecretKey()
+    );
+    const hlc = new HybridClock('test-node-18').nowPacked();
+
+    for (const newItem of [bankItem!, insuranceItem!, membershipItem!]) {
+      const encRow = await cryptoEngine.encryptVaultItem(newItem, hlc, {
+        'test-node-18': 1
+      });
+      expect(encRow.aadContext).toContain(newItem.category);
+      expect(encRow.ciphertextHex).not.toContain(
+        Buffer.from(newItem.title, 'utf-8').toString('hex')
+      );
+      const decItem = await cryptoEngine.decryptVaultRow(encRow);
+      expect(decItem.category).toBe(newItem.category);
+      expect(decItem.title).toBe(newItem.title);
+      expect(decItem.fields).toEqual(newItem.fields);
+    }
+
+    // 3) Instant multilingual search across German, Italian, and Greek category & field names
+    const i18nDe = new SafePocketI18n('de-DE');
+    expect(searchVaultItems(items, 'Bankkonto', i18nDe).map((i) => i.id)).toContain(
+      'item-bank-ing-giro'
+    );
+    expect(
+      searchVaultItems(items, 'Versichertenkarte', i18nDe).map((i) => i.id)
+    ).toContain('item-ins-tk-egk');
+    expect(
+      searchVaultItems(items, 'Mitgliedschaftskarte', i18nDe).map((i) => i.id)
+    ).toContain('item-mem-adac-plus');
+
+    const i18nIt = new SafePocketI18n('it-IT');
+    expect(
+      searchVaultItems(items, 'Conto bancario', i18nIt).map((i) => i.id)
+    ).toContain('item-bank-ing-giro');
+    expect(
+      searchVaultItems(items, 'Tessera sanitaria', i18nIt).map((i) => i.id)
+    ).toContain('item-ins-tk-egk');
+
+    const i18nEl = new SafePocketI18n('el-GR');
+    expect(
+      searchVaultItems(items, 'τραπεζικος λογαριασμος', i18nEl).map((i) => i.id)
+    ).toContain('item-bank-ing-giro');
+    expect(
+      searchVaultItems(items, 'καρτα ασφαλισης', i18nEl).map((i) => i.id)
+    ).toContain('item-ins-tk-egk');
+    expect(
+      searchVaultItems(items, 'καρτα μελους', i18nEl).map((i) => i.id)
+    ).toContain('item-mem-adac-plus');
+
+    // 4) Enforce 100% ARB key parity across all 6 locales (en, de, it, fr, es, el)
+    const i18nDir = path.resolve(__dirname, '../../../i18n');
+    const enKeys = Object.keys(
+      JSON.parse(fs.readFileSync(path.join(i18nDir, 'en.arb.json'), 'utf-8'))
+    )
+      .filter((k) => !k.startsWith('@'))
+      .sort();
+
+    for (const locale of ['de', 'it', 'fr', 'es', 'el']) {
+      const localeKeys = Object.keys(
+        JSON.parse(
+          fs.readFileSync(path.join(i18nDir, `${locale}.arb.json`), 'utf-8')
+        )
+      )
+        .filter((k) => !k.startsWith('@'))
+        .sort();
+      expect(localeKeys).toEqual(enKeys);
+    }
+  });
 });
+
 
 

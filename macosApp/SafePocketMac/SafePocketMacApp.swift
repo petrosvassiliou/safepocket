@@ -9,11 +9,24 @@ import AppKit
 struct SafePocketMacApp: App {
     @StateObject private var vaultState = MacVaultViewModel()
     @StateObject private var updater = MacSparkleUpdateController()
+    @AppStorage("safepocket.theme_mode") private var themeMode: String = "light"
+
+    private var resolvedColorScheme: ColorScheme? {
+        switch themeMode {
+        case "dark":
+            return .dark
+        case "system":
+            return nil
+        default:
+            return .light
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
             MacVaultSplitView(vaultState: vaultState, updater: updater)
                 .frame(minWidth: 980, minHeight: 640)
+                .preferredColorScheme(resolvedColorScheme)
         }
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands {
@@ -48,7 +61,8 @@ struct SafePocketMacApp: App {
 
         Settings {
             MacSettingsAndAboutView(vaultState: vaultState, updater: updater)
-                .frame(width: 560, height: 480)
+                .frame(width: 560, height: 520)
+                .preferredColorScheme(resolvedColorScheme)
         }
     }
 }

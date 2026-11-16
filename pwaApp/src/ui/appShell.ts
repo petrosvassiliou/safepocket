@@ -47,6 +47,8 @@ import {
   type EncryptedAttachmentMeta,
   SENSITIVE_FIELD_KEYS,
   type SupportedLocale,
+  type ThemeMode,
+  VAULT_CATEGORIES,
   type VaultCategory,
   type VaultField,
   type VaultItem
@@ -56,6 +58,17 @@ import {
   buildEmergencyKitHtml,
   estimateMasterPasswordEntropy
 } from './onboardingWizard';
+
+const THEME_STORAGE_KEY = 'safepocket.theme_mode';
+
+export function resolveEffectiveTheme(
+  mode: ThemeMode,
+  prefersDark = false
+): 'light' | 'dark' {
+  if (mode === 'dark') return 'dark';
+  if (mode === 'system') return prefersDark ? 'dark' : 'light';
+  return 'light';
+}
 
 type NavSelection =
   | 'ALL'
@@ -114,6 +127,7 @@ export class SafePocketAppShell {
   private readonly clipboard: ClipboardHygieneController;
   private readonly autoLockMonitor: IdleAutoLockMonitor;
 
+  private themeMode: ThemeMode = 'light';
   private items: VaultItem[] = [];
   private selectedNav: NavSelection = 'ALL';
   private selectedItemId: string | null = null;
@@ -152,6 +166,9 @@ export class SafePocketAppShell {
   } | null = null;
 
   constructor(private readonly root: HTMLElement) {
+    this.themeMode = this.loadSavedThemeMode();
+    this.applyThemeToDocument();
+
     this.clipboard = new ClipboardHygieneController((seconds, cleared) => {
       this.clipboardSecondsLeft = seconds;
       this.clipboardJustCleared = cleared;
@@ -171,7 +188,67 @@ export class SafePocketAppShell {
     });
   }
 
+  private loadSavedThemeMode(): ThemeMode {
+    if (typeof localStorage === 'undefined') return 'light';
+    const raw = localStorage.getItem(THEME_STORAGE_KEY);
+    if (raw === 'light' || raw === 'dark' || raw === 'system') {
+      return raw;
+    }
+    return 'light';
+  }
+
+  get currentThemeMode(): ThemeMode {
+    return this.themeMode;
+  }
+
+  get effectiveTheme(): 'light' | 'dark' {
+    const prefersDark =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return resolveEffectiveTheme(this.themeMode, prefersDark);
+  }
+
+  setThemeMode(mode: ThemeMode): void {
+    this.themeMode = mode;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(THEME_STORAGE_KEY, mode);
+    }
+    this.applyThemeToDocument();
+    this.render();
+  }
+
+  private toggleQuickTheme(): void {
+    const next: ThemeMode = this.effectiveTheme === 'dark' ? 'light' : 'dark';
+    this.setThemeMode(next);
+  }
+
+  private applyThemeToDocument(): void {
+    if (typeof document === 'undefined') return;
+    const effective = this.effectiveTheme;
+    document.documentElement.setAttribute('data-theme', effective);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute('content', effective === 'dark' ? '#0E1315' : '#F5F7FA');
+    }
+  }
+
   async bootstrap(): Promise<void> {
+    this.applyThemeToDocument();
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function'
+    ) {
+      window
+        .matchMedia('(prefers-color-scheme: dark)')
+        .addEventListener?.('change', () => {
+          if (this.themeMode === 'system') {
+            this.applyThemeToDocument();
+            this.render();
+          }
+        });
+    }
+
     this.demoSecretKey =
       localStorage.getItem('safepocket.demo_secret_key') ??
       generateFormattedSecretKey();
@@ -485,13 +562,11 @@ export class SafePocketAppShell {
   }
 
   private openCreateItemModal(): void {
-    const defaultCat: VaultCategory =
-      this.selectedNav === 'PAYMENT_CARD' ||
-      this.selectedNav === 'IDENTITY' ||
-      this.selectedNav === 'OFFICIAL_DOCUMENT' ||
-      this.selectedNav === 'SECURE_NOTE'
-        ? this.selectedNav
-        : 'PAYMENT_CARD';
+    const defaultCat: VaultCategory = VAULT_CATEGORIES.includes(
+      this.selectedNav as VaultCategory
+    )
+      ? (this.selectedNav as VaultCategory)
+      : 'PAYMENT_CARD';
 
     this.editorDraft = {
       editingItemId: null,
@@ -733,13 +808,8 @@ export class SafePocketAppShell {
     } = {};
     if (this.selectedNav === 'FAVORITES') filter.favoritesOnly = true;
     else if (this.selectedNav === 'EXPIRING') filter.expiringOnly = true;
-    else if (
-      this.selectedNav === 'PAYMENT_CARD' ||
-      this.selectedNav === 'IDENTITY' ||
-      this.selectedNav === 'OFFICIAL_DOCUMENT' ||
-      this.selectedNav === 'SECURE_NOTE'
-    ) {
-      filter.category = this.selectedNav;
+    else if (VAULT_CATEGORIES.includes(this.selectedNav as VaultCategory)) {
+      filter.category = this.selectedNav as VaultCategory;
     }
     return searchVaultItems(this.items, this.searchQuery, this.i18n, filter);
   }
@@ -756,6 +826,7 @@ export class SafePocketAppShell {
   }
 
   render(): void {
+    this.applyThemeToDocument();
     const activeSearchInput =
       document.activeElement?.id === 'sp-global-search'
         ? (document.activeElement as HTMLInputElement)
@@ -787,6 +858,7 @@ export class SafePocketAppShell {
       version: APP_BUILD_INFO.versionName,
       build: APP_BUILD_INFO.versionCode
     });
+    const isDark = this.effectiveTheme === 'dark';
 
     this.root.innerHTML = `
       ${this.renderClipboardBanner()}
@@ -804,7 +876,20 @@ export class SafePocketAppShell {
                 </div>
                 <h1 class="sp-brand-title">${this.escape(this.i18n.t('app_name'))}</h1>
               </div>
-              <span class="sp-zk-chip">AES-256</span>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <button
+                  type="button"
+                  id="sp-quick-theme-toggle"
+                  class="sp-theme-toggle-btn"
+                  title="${this.escape(
+                    isDark
+                      ? this.i18n.t('theme_light')
+                      : this.i18n.t('theme_dark')
+                  )}"
+                  aria-label="${this.escape(this.i18n.t('settings_theme_title'))}"
+                >${isDark ? '☀' : '☾'}</button>
+                <span class="sp-zk-chip">AES-256</span>
+              </div>
             </div>
 
             <nav class="sp-nav-group">
@@ -829,6 +914,21 @@ export class SafePocketAppShell {
                 'PAYMENT_CARD',
                 this.i18n.t('nav_payment_cards'),
                 this.items.filter((i) => i.category === 'PAYMENT_CARD').length
+              )}
+              ${this.renderNavBtn(
+                'BANK_ACCOUNT',
+                this.i18n.t('nav_bank_accounts'),
+                this.items.filter((i) => i.category === 'BANK_ACCOUNT').length
+              )}
+              ${this.renderNavBtn(
+                'INSURANCE_CARD',
+                this.i18n.t('nav_insurance_cards'),
+                this.items.filter((i) => i.category === 'INSURANCE_CARD').length
+              )}
+              ${this.renderNavBtn(
+                'MEMBERSHIP_CARD',
+                this.i18n.t('nav_membership_cards'),
+                this.items.filter((i) => i.category === 'MEMBERSHIP_CARD').length
               )}
               ${this.renderNavBtn(
                 'IDENTITY',
@@ -965,6 +1065,7 @@ export class SafePocketAppShell {
   private renderOnboardingWizardModal(): string {
     const entropy = estimateMasterPasswordEntropy(this.onboardingPassword);
     const pct = Math.min(100, Math.max(12, Math.round((entropy.bits / 110) * 100)));
+    const isDark = this.effectiveTheme === 'dark';
 
     return `
       <div class="sp-overlay">
@@ -981,18 +1082,28 @@ export class SafePocketAppShell {
                 )}</div>
               </div>
             </div>
-            <div class="sp-lang-quick">
-              ${SUPPORTED_LOCALES.map(
-                (loc) => `
-                <button
-                  type="button"
-                  class="sp-lang-pill ${
-                    this.i18n.activeLocale === loc.code ? 'is-active' : ''
-                  }"
-                  data-onboard-locale="${loc.code}"
-                >${loc.code.toUpperCase()}</button>
-              `
-              ).join('')}
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <button
+                type="button"
+                id="sp-onboard-theme-toggle"
+                class="sp-theme-toggle-btn"
+                title="${this.escape(
+                  isDark ? this.i18n.t('theme_light') : this.i18n.t('theme_dark')
+                )}"
+              >${isDark ? '☀' : '☾'}</button>
+              <div class="sp-lang-quick">
+                ${SUPPORTED_LOCALES.map(
+                  (loc) => `
+                  <button
+                    type="button"
+                    class="sp-lang-pill ${
+                      this.i18n.activeLocale === loc.code ? 'is-active' : ''
+                    }"
+                    data-onboard-locale="${loc.code}"
+                  >${loc.code.toUpperCase()}</button>
+                `
+                ).join('')}
+              </div>
             </div>
           </div>
 
@@ -1056,6 +1167,12 @@ export class SafePocketAppShell {
   }
 
   private wireOnboardingEvents(): void {
+    this.root
+      .querySelector('#sp-onboard-theme-toggle')
+      ?.addEventListener('click', () => {
+        this.toggleQuickTheme();
+      });
+
     this.root
       .querySelectorAll<HTMLElement>('[data-onboard-locale]')
       .forEach((btn) => {
@@ -1223,7 +1340,11 @@ export class SafePocketAppShell {
     }
 
     const showVisualCard =
-      item.category === 'PAYMENT_CARD' || item.category === 'OFFICIAL_DOCUMENT';
+      item.category === 'PAYMENT_CARD' ||
+      item.category === 'BANK_ACCOUNT' ||
+      item.category === 'INSURANCE_CARD' ||
+      item.category === 'MEMBERSHIP_CARD' ||
+      item.category === 'OFFICIAL_DOCUMENT';
 
     return `
       <div>
@@ -1286,6 +1407,22 @@ export class SafePocketAppShell {
     `;
   }
 
+  private renderMembershipBarcodeSvg(codeValue: string): string {
+    const seed = codeValue || 'SAFEPOCKET-MEMBER';
+    const bars: string[] = [];
+    let x = 6;
+    for (let i = 0; i < 42; i++) {
+      const code = seed.charCodeAt(i % seed.length) + i * 17;
+      const w = (code % 3) + 1.4;
+      const gap = ((code >> 2) % 3) + 1.8;
+      bars.push(
+        `<rect x="${x.toFixed(1)}" y="4" width="${w.toFixed(1)}" height="28" rx="0.6" fill="#0f172a" />`
+      );
+      x += w + gap;
+    }
+    return `<svg viewBox="0 0 ${Math.ceil(x + 6)} 36" width="100%" height="32" style="max-width:340px;" aria-hidden="true">${bars.join('')}</svg>`;
+  }
+
   private renderVisualCardHero(item: VaultItem): string {
     const palette = item.cardTheme?.paletteId ?? 'obsidian_slate';
     if (item.category === 'PAYMENT_CARD') {
@@ -1317,7 +1454,7 @@ export class SafePocketAppShell {
             <button
               type="button"
               class="sp-btn"
-              style="background:hsla(0,0%,100%,0.14);border-color:hsla(0,0%,100%,0.22);color:#fff;padding:4px 10px;min-height:28px;"
+              style="padding:4px 10px;min-height:28px;"
               data-copy-value="${this.escape(pan.replace(/\s+/g, ''))}"
               data-copy-sensitive="true"
             >${this.escape(this.i18n.t('action_copy'))}</button>
@@ -1337,6 +1474,220 @@ export class SafePocketAppShell {
               )}</div>
               <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
                 this.i18n.formatDate(expiry)
+              )}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    if (item.category === 'BANK_ACCOUNT') {
+      const ibanField = item.fields.find((f) => f.labelKey === 'field_iban');
+      const rawIban = ibanField?.value ?? '';
+      const compactIban = rawIban.replace(/\s+/g, '');
+      const revealed = ibanField
+        ? this.revealedFieldIds.has(ibanField.id)
+        : false;
+      const maskedIban = revealed
+        ? rawIban
+        : compactIban.length >= 8
+          ? `${compactIban.slice(0, 4)} •••• •••• ${compactIban.slice(-4)}`
+          : '•••• ••••';
+      const holder =
+        item.fields.find((f) => f.labelKey === 'field_account_holder')?.value ??
+        '';
+      const bic =
+        item.fields.find((f) => f.labelKey === 'field_bic')?.value ?? '';
+      const bank =
+        item.fields.find((f) => f.labelKey === 'field_issuing_bank')?.value ??
+        item.title;
+      const acctType =
+        item.fields.find((f) => f.labelKey === 'field_account_type')?.value ??
+        this.i18n.t('category_bank_account');
+
+      return `
+        <div class="sp-visual-card" data-palette="${palette}">
+          <div class="sp-card-top-row">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="sp-card-emblem" aria-hidden="true">🏦</div>
+              <span style="font-weight:650;font-size:14px;">${this.escape(
+                bank
+              )}</span>
+            </div>
+            <span class="sp-card-pill">${this.escape(acctType)}</span>
+          </div>
+          <div class="sp-card-pan" style="font-size:17px;letter-spacing:0.08em;">
+            <span>${this.escape(maskedIban)}</span>
+            ${
+              compactIban
+                ? `<button
+                     type="button"
+                     class="sp-btn"
+                     style="padding:4px 10px;min-height:28px;"
+                     data-copy-value="${this.escape(compactIban)}"
+                     data-copy-sensitive="true"
+                   >${this.escape(this.i18n.t('action_copy'))}</button>`
+                : ''
+            }
+          </div>
+          <div class="sp-card-bottom-row">
+            <div>
+              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+                this.i18n.t('field_account_holder')
+              )}</div>
+              <div style="font-weight:600;letter-spacing:0.03em;">${this.escape(
+                holder
+              )}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+                this.i18n.t('field_bic')
+              )}</div>
+              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+                bic || 'SEPA'
+              )}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    if (item.category === 'INSURANCE_CARD') {
+      const numField = item.fields.find(
+        (f) => f.labelKey === 'field_insurance_number'
+      );
+      const rawNum = numField?.value ?? '';
+      const revealed = numField
+        ? this.revealedFieldIds.has(numField.id)
+        : false;
+      const maskedNum = revealed
+        ? rawNum
+        : rawNum.length > 4
+          ? `${rawNum.slice(0, 1)}•••••${rawNum.slice(-3)}`
+          : '••••••';
+      const insurer =
+        item.fields.find((f) => f.labelKey === 'field_insurer_name')?.value ??
+        item.title;
+      const holder =
+        item.fields.find((f) => f.labelKey === 'field_full_name')?.value ?? '';
+      const ik =
+        item.fields.find((f) => f.labelKey === 'field_insurer_id')?.value ?? '';
+      const plan =
+        item.fields.find((f) => f.labelKey === 'field_coverage_plan')?.value ??
+        'eGK / EHIC';
+      const expiry =
+        item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
+
+      return `
+        <div class="sp-visual-card" data-palette="${palette}">
+          <div class="sp-card-top-row">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="sp-card-emblem" aria-hidden="true">🩺</div>
+              <div>
+                <div style="font-weight:650;font-size:14px;">${this.escape(
+                  insurer
+                )}</div>
+                ${
+                  ik
+                    ? `<div style="font-size:10.5px;font-family:var(--font-mono);opacity:0.78;">IK / ID: ${this.escape(
+                        ik
+                      )}</div>`
+                    : ''
+                }
+              </div>
+            </div>
+            <span class="sp-card-pill">${this.escape(plan)}</span>
+          </div>
+          <div class="sp-card-pan">
+            <span>${this.escape(maskedNum)}</span>
+            ${
+              rawNum
+                ? `<button
+                     type="button"
+                     class="sp-btn"
+                     style="padding:4px 10px;min-height:28px;"
+                     data-copy-value="${this.escape(rawNum)}"
+                     data-copy-sensitive="true"
+                   >${this.escape(this.i18n.t('action_copy'))}</button>`
+                : ''
+            }
+          </div>
+          <div class="sp-card-bottom-row">
+            <div>
+              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+                this.i18n.t('field_full_name')
+              )}</div>
+              <div style="font-weight:600;">${this.escape(holder)}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+                this.i18n.t('field_expiry_date')
+              )}</div>
+              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+                expiry ? this.i18n.formatDate(expiry) : '—'
+              )}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    if (item.category === 'MEMBERSHIP_CARD') {
+      const org =
+        item.fields.find((f) => f.labelKey === 'field_organization')?.value ??
+        item.title;
+      const memberName =
+        item.fields.find((f) => f.labelKey === 'field_member_name')?.value ?? '';
+      const memberId =
+        item.fields.find((f) => f.labelKey === 'field_membership_id')?.value ??
+        '';
+      const tier =
+        item.fields.find((f) => f.labelKey === 'field_membership_tier')?.value ??
+        this.i18n.t('category_membership_card');
+      const expiry =
+        item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
+
+      return `
+        <div class="sp-visual-card" data-palette="${palette}">
+          <div class="sp-card-top-row">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="sp-card-emblem" aria-hidden="true">🎫</div>
+              <span style="font-weight:650;font-size:14px;">${this.escape(
+                org
+              )}</span>
+            </div>
+            <span class="sp-card-pill">${this.escape(tier)}</span>
+          </div>
+          <div class="sp-card-pan" style="font-size:17.5px;">
+            <span>${this.escape(memberId)}</span>
+            ${
+              memberId
+                ? `<button
+                     type="button"
+                     class="sp-btn"
+                     style="padding:4px 10px;min-height:28px;"
+                     data-copy-value="${this.escape(memberId)}"
+                     data-copy-sensitive="false"
+                   >${this.escape(this.i18n.t('action_copy'))}</button>`
+                : ''
+            }
+          </div>
+          <div class="sp-barcode-strip">
+            ${this.renderMembershipBarcodeSvg(memberId || item.id)}
+          </div>
+          <div class="sp-card-bottom-row">
+            <div>
+              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+                this.i18n.t('field_member_name')
+              )}</div>
+              <div style="font-weight:600;">${this.escape(memberName)}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+                this.i18n.t('field_expiry_date')
+              )}</div>
+              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+                expiry ? this.i18n.formatDate(expiry) : '—'
               )}</div>
             </div>
           </div>
@@ -1376,7 +1727,7 @@ export class SafePocketAppShell {
               ? `<button
                    type="button"
                    class="sp-btn"
-                   style="background:hsla(0,0%,100%,0.14);border-color:hsla(0,0%,100%,0.22);color:#fff;padding:4px 10px;min-height:28px;"
+                   style="padding:4px 10px;min-height:28px;"
                    data-copy-value="${this.escape(docNumField.value)}"
                    data-copy-sensitive="true"
                  >${this.escape(this.i18n.t('action_copy'))}</button>`
@@ -1420,6 +1771,12 @@ export class SafePocketAppShell {
     } else if (isSensitive && !isRevealed) {
       if (field.valueType === 'CARD_NUMBER') {
         displayValue = `•••• •••• •••• ${field.value.replace(/\s+/g, '').slice(-4)}`;
+      } else if (field.valueType === 'IBAN') {
+        const compact = field.value.replace(/\s+/g, '');
+        displayValue =
+          compact.length >= 8
+            ? `${compact.slice(0, 4)} •••• •••• ${compact.slice(-4)}`
+            : '•••• ••••';
       } else if (field.value.length > 4) {
         displayValue = `${'•'.repeat(8)}${field.value.slice(-3)}`;
       } else {
@@ -1555,7 +1912,7 @@ export class SafePocketAppShell {
                 : this.i18n.t('scan_side_front');
             const syncPill = att.blobSynced
               ? `<span class="sp-badge" style="background:rgba(16,185,129,0.14);color:#059669;">☁️ EU .enc</span>`
-              : `<span class="sp-badge" style="background:var(--bg-subtle);color:var(--text-secondary);">🔒 Local .enc</span>`;
+              : `<span class="sp-badge" style="background:var(--bg-canvas);border:1px solid var(--border-subtle);color:var(--text-secondary);">🔒 Local .enc</span>`;
             return `
               <div class="sp-field-card" style="padding:10px 14px;">
                 <div class="sp-field-meta">
@@ -1671,6 +2028,39 @@ export class SafePocketAppShell {
           ${this.escape(versionDisplay)}
         </span>
       </div>
+
+      <!-- 0. Appearance & Theme (Light Default / Dark Option / System) -->
+      <section class="sp-settings-section">
+        <h2>${this.escape(this.i18n.t('settings_theme_title'))}</h2>
+        <div class="sp-theme-segmented" role="group" aria-label="${this.escape(
+          this.i18n.t('settings_theme_title')
+        )}">
+          <button
+            type="button"
+            id="sp-theme-light-btn"
+            class="sp-btn ${
+              this.themeMode === 'light' ? 'sp-btn-primary' : ''
+            }"
+            data-set-theme="light"
+          >☀ ${this.escape(this.i18n.t('theme_light'))}</button>
+          <button
+            type="button"
+            id="sp-theme-dark-btn"
+            class="sp-btn ${
+              this.themeMode === 'dark' ? 'sp-btn-primary' : ''
+            }"
+            data-set-theme="dark"
+          >☾ ${this.escape(this.i18n.t('theme_dark'))}</button>
+          <button
+            type="button"
+            id="sp-theme-system-btn"
+            class="sp-btn ${
+              this.themeMode === 'system' ? 'sp-btn-primary' : ''
+            }"
+            data-set-theme="system"
+          >◐ ${this.escape(this.i18n.t('theme_system'))}</button>
+        </div>
+      </section>
 
       <!-- 1. Self-Update & Version Management -->
       <section class="sp-settings-section">
@@ -2132,6 +2522,9 @@ export class SafePocketAppShell {
     const templateFields = this.defaultTemplateFields(draft.category);
     const showPalette =
       draft.category === 'PAYMENT_CARD' ||
+      draft.category === 'BANK_ACCOUNT' ||
+      draft.category === 'INSURANCE_CARD' ||
+      draft.category === 'MEMBERSHIP_CARD' ||
       draft.category === 'OFFICIAL_DOCUMENT';
     const palettes: Array<{ id: CardThemePalette; key: string }> = [
       { id: 'obsidian_slate', key: 'palette_obsidian_slate' },
@@ -2155,6 +2548,15 @@ export class SafePocketAppShell {
               <option value="PAYMENT_CARD" ${
                 draft.category === 'PAYMENT_CARD' ? 'selected' : ''
               }>${this.escape(this.i18n.t('category_payment_card'))}</option>
+              <option value="BANK_ACCOUNT" ${
+                draft.category === 'BANK_ACCOUNT' ? 'selected' : ''
+              }>${this.escape(this.i18n.t('category_bank_account'))}</option>
+              <option value="INSURANCE_CARD" ${
+                draft.category === 'INSURANCE_CARD' ? 'selected' : ''
+              }>${this.escape(this.i18n.t('category_insurance_card'))}</option>
+              <option value="MEMBERSHIP_CARD" ${
+                draft.category === 'MEMBERSHIP_CARD' ? 'selected' : ''
+              }>${this.escape(this.i18n.t('category_membership_card'))}</option>
               <option value="IDENTITY" ${
                 draft.category === 'IDENTITY' ? 'selected' : ''
               }>${this.escape(this.i18n.t('category_identity'))}</option>
@@ -2175,7 +2577,7 @@ export class SafePocketAppShell {
                 class="sp-input"
                 required
                 value="${this.escape(draft.title)}"
-                placeholder="e.g. Bundesdruckerei Reisepass"
+                placeholder="e.g. ING Girokonto / TK Gesundheitskarte / ADAC"
                 style="margin-top:4px;"
               />
             </label>
@@ -2387,6 +2789,120 @@ export class SafePocketAppShell {
             placeholder: '+49 30 ...'
           }
         ];
+      case 'BANK_ACCOUNT':
+        return [
+          {
+            key: 'field_account_holder',
+            valueType: 'TEXT',
+            placeholder: 'CLARA SOFIA MÜLLER'
+          },
+          {
+            key: 'field_iban',
+            valueType: 'IBAN',
+            placeholder: 'DE89 3704 0044 0532 0130 00'
+          },
+          {
+            key: 'field_bic',
+            valueType: 'TEXT',
+            placeholder: 'INGDDEFFXXX'
+          },
+          {
+            key: 'field_account_number',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: '0532013000'
+          },
+          {
+            key: 'field_routing_code',
+            valueType: 'TEXT',
+            placeholder: '37040044'
+          },
+          {
+            key: 'field_account_type',
+            valueType: 'TEXT',
+            placeholder: 'Girokonto / Tagesgeld'
+          },
+          {
+            key: 'field_issuing_bank',
+            valueType: 'TEXT',
+            placeholder: 'ING-DiBa AG'
+          },
+          {
+            key: 'field_support_phone',
+            valueType: 'PHONE',
+            placeholder: '+49 69 ...'
+          }
+        ];
+      case 'INSURANCE_CARD':
+        return [
+          {
+            key: 'field_full_name',
+            valueType: 'TEXT',
+            placeholder: 'Clara Sofia Müller'
+          },
+          {
+            key: 'field_insurer_name',
+            valueType: 'TEXT',
+            placeholder: 'Techniker Krankenkasse (TK)'
+          },
+          {
+            key: 'field_insurance_number',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: 'A109482751'
+          },
+          {
+            key: 'field_insurer_id',
+            valueType: 'TEXT',
+            placeholder: '101575519'
+          },
+          {
+            key: 'field_coverage_plan',
+            valueType: 'TEXT',
+            placeholder: 'GKV / EHIC / PKV'
+          },
+          {
+            key: 'field_expiry_date',
+            valueType: 'DATE_ISO',
+            placeholder: '2029-12-31'
+          },
+          {
+            key: 'field_support_phone',
+            valueType: 'PHONE',
+            placeholder: '+49 800 ...'
+          }
+        ];
+      case 'MEMBERSHIP_CARD':
+        return [
+          {
+            key: 'field_member_name',
+            valueType: 'TEXT',
+            placeholder: 'CLARA SOFIA MÜLLER'
+          },
+          {
+            key: 'field_organization',
+            valueType: 'TEXT',
+            placeholder: 'ADAC / BahnCard / Fitnessclub'
+          },
+          {
+            key: 'field_membership_id',
+            valueType: 'TEXT',
+            placeholder: '7081 4920 1184'
+          },
+          {
+            key: 'field_membership_tier',
+            valueType: 'TEXT',
+            placeholder: 'Plus / Gold'
+          },
+          {
+            key: 'field_expiry_date',
+            valueType: 'DATE_ISO',
+            placeholder: '2027-09-30'
+          },
+          {
+            key: 'field_support_phone',
+            valueType: 'PHONE',
+            placeholder: '+49 89 ...'
+          }
+        ];
       case 'IDENTITY':
         return [
           { key: 'field_full_name', valueType: 'TEXT', placeholder: 'Full Name' },
@@ -2482,19 +2998,30 @@ export class SafePocketAppShell {
 
   private renderLockScreen(): string {
     const isDemo = localStorage.getItem('safepocket.demo_mode') === 'true';
+    const isDark = this.effectiveTheme === 'dark';
     return `
       <div class="sp-overlay">
         <form class="sp-modal-card" id="sp-unlock-form">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div class="sp-logo-mark">🔒</div>
-            <div>
-              <h1 style="margin:0;font-size:18px;">${this.escape(
-                this.i18n.t('app_name')
-              )}</h1>
-              <div style="font-size:12px;color:var(--text-secondary);">${this.escape(
-                this.i18n.t('security_kdf_badge')
-              )}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="sp-logo-mark">🔒</div>
+              <div>
+                <h1 style="margin:0;font-size:18px;">${this.escape(
+                  this.i18n.t('app_name')
+                )}</h1>
+                <div style="font-size:12px;color:var(--text-secondary);">${this.escape(
+                  this.i18n.t('security_kdf_badge')
+                )}</div>
+              </div>
             </div>
+            <button
+              type="button"
+              id="sp-lock-theme-toggle"
+              class="sp-theme-toggle-btn"
+              title="${this.escape(
+                isDark ? this.i18n.t('theme_light') : this.i18n.t('theme_dark')
+              )}"
+            >${isDark ? '☀' : '☾'}</button>
           </div>
 
           ${
@@ -2555,6 +3082,12 @@ export class SafePocketAppShell {
   }
 
   private wireLockScreenEvents(): void {
+    this.root
+      .querySelector('#sp-lock-theme-toggle')
+      ?.addEventListener('click', () => {
+        this.toggleQuickTheme();
+      });
+
     const form = this.root.querySelector<HTMLFormElement>('#sp-unlock-form');
     form?.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -2584,6 +3117,23 @@ export class SafePocketAppShell {
   }
 
   private wireShellEvents(): void {
+    // Quick theme toggle & Settings theme segmented selector
+    this.root
+      .querySelector('#sp-quick-theme-toggle')
+      ?.addEventListener('click', () => {
+        this.toggleQuickTheme();
+      });
+    this.root
+      .querySelectorAll<HTMLElement>('[data-set-theme]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.setTheme as ThemeMode;
+          if (mode === 'light' || mode === 'dark' || mode === 'system') {
+            this.setThemeMode(mode);
+          }
+        });
+      });
+
     // Navigation buttons
     this.root.querySelectorAll<HTMLElement>('[data-nav]').forEach((btn) => {
       btn.addEventListener('click', () => {

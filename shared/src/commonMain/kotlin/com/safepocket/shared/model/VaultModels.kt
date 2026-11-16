@@ -9,9 +9,19 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class VaultCategory {
     PAYMENT_CARD,
+    BANK_ACCOUNT,
+    INSURANCE_CARD,
+    MEMBERSHIP_CARD,
     IDENTITY,
     OFFICIAL_DOCUMENT,
     SECURE_NOTE
+}
+
+@Serializable
+enum class ThemePreference {
+    LIGHT,  // Default out-of-the-box design
+    DARK,   // Optional dark mode
+    SYSTEM
 }
 
 @Serializable
@@ -40,7 +50,7 @@ enum class FieldValueType {
  * Switching the app language dynamically translates all standard field labels without mutating data.
  */
 object CanonicalFieldKeys {
-    // Payment Cards
+    // Payment Cards & Bank Accounts
     const val CARDHOLDER = "field_cardholder"
     const val CARD_NUMBER = "field_card_number"
     const val EXPIRY_DATE = "field_expiry_date"
@@ -50,6 +60,22 @@ object CanonicalFieldKeys {
     const val IBAN = "field_iban"
     const val BIC = "field_bic"
     const val SUPPORT_PHONE = "field_support_phone"
+    const val ACCOUNT_HOLDER = "field_account_holder"
+    const val ACCOUNT_NUMBER = "field_account_number"
+    const val ROUTING_CODE = "field_routing_code"
+    const val ACCOUNT_TYPE = "field_account_type"
+
+    // Insurance Cards (eGK / EHIC / PKV)
+    const val INSURER_NAME = "field_insurer_name"
+    const val INSURANCE_NUMBER = "field_insurance_number"
+    const val INSURER_ID = "field_insurer_id"
+    const val COVERAGE_PLAN = "field_coverage_plan"
+
+    // Membership & Loyalty Cards
+    const val MEMBER_NAME = "field_member_name"
+    const val ORGANIZATION = "field_organization"
+    const val MEMBERSHIP_ID = "field_membership_id"
+    const val MEMBERSHIP_TIER = "field_membership_tier"
 
     // Identities (rendered with locale-aware regional labels, e.g., Steuer-ID / Codice Fiscale / ΑΦΜ)
     const val FULL_NAME = "field_full_name"
@@ -72,7 +98,8 @@ object CanonicalFieldKeys {
     const val MARKDOWN_NOTE = "field_markdown_note"
 
     val SENSITIVE_CLIPBOARD_KEYS = setOf(
-        CARD_NUMBER, CVV, PIN, IBAN, TAX_ID, SSN, HEALTH_INSURANCE, DOCUMENT_NUMBER
+        CARD_NUMBER, CVV, PIN, IBAN, ACCOUNT_NUMBER, INSURANCE_NUMBER,
+        TAX_ID, SSN, HEALTH_INSURANCE, DOCUMENT_NUMBER
     )
 }
 

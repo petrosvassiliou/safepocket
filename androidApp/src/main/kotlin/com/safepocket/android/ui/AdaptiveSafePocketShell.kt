@@ -9,6 +9,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,6 +22,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.safepocket.shared.i18n.LocalizationEngine
+import com.safepocket.shared.model.ThemePreference
 import com.safepocket.shared.model.VaultCategory
 import com.safepocket.shared.model.VaultItemPayload
 import com.safepocket.shared.update.AppBuildInfo
@@ -35,7 +37,7 @@ import kotlinx.coroutines.launch
  * 3. Googlebook OS Desktop (>= 840dp): 3-Column Freeform Desktop Layout
  *    (Navigation Sidebar -> Item List -> Detail Inspector) with hardware keyboard shortcuts
  *    (`Ctrl+F`, `Ctrl+N`, `Ctrl+L`), hover states, right-click quick copy, drag-and-drop scans,
- *    and subtle version badge (`SafePocket v0.1 (Build 1)`) at the bottom of the sidebar.
+ *    Light Theme default + Dark Theme option, and subtle version badge (`SafePocket v0.1 (Build 1)`).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -44,6 +46,8 @@ fun AdaptiveSafePocketShell(
     items: List<VaultItemPayload>,
     selectedCategory: VaultCategory?,
     selectedItem: VaultItemPayload?,
+    themePreference: ThemePreference = ThemePreference.LIGHT,
+    onSelectThemePreference: (ThemePreference) -> Unit = {},
     isFoldableSeparating: Boolean = false,
     onSelectCategory: (VaultCategory?) -> Unit,
     onSelectItem: (VaultItemPayload) -> Unit,
@@ -60,8 +64,17 @@ fun AdaptiveSafePocketShell(
     val coroutineScope = rememberCoroutineScope()
     var clipboardJob by remember { mutableStateOf<Job?>(null) }
 
-    // Dynamic Color support for Android 17+ & Googlebook OS
-    val colorScheme = dynamicDarkColorScheme(context)
+    // Material 3 Expressive Dynamic Color: Light Theme by default, Dark Theme as an option
+    val useDarkTheme = when (themePreference) {
+        ThemePreference.LIGHT -> false
+        ThemePreference.DARK -> true
+        ThemePreference.SYSTEM -> isSystemInDarkTheme()
+    }
+    val colorScheme = if (useDarkTheme) {
+        dynamicDarkColorScheme(context)
+    } else {
+        dynamicLightColorScheme(context)
+    }
 
     val copyWith30sHygiene: (String, String, Boolean) -> Unit = { label, secretValue, isSensitive ->
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -114,10 +127,25 @@ fun AdaptiveSafePocketShell(
                                 verticalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(
-                                        text = i18n.t("app_name"),
-                                        style = MaterialTheme.typography.titleLarge
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = i18n.t("app_name"),
+                                            style = MaterialTheme.typography.titleLarge
+                                        )
+                                        TextButton(
+                                            onClick = {
+                                                onSelectThemePreference(
+                                                    if (useDarkTheme) ThemePreference.LIGHT else ThemePreference.DARK
+                                                )
+                                            }
+                                        ) {
+                                            Text(if (useDarkTheme) "☀" else "☾")
+                                        }
+                                    }
                                     Spacer(Modifier.height(8.dp))
                                     CategoryDrawerDestinations(
                                         i18n = i18n,
@@ -206,12 +234,12 @@ fun AdaptiveSafePocketShell(
                     }
                 }
 
-                // Smartphone Compact: Bottom NavigationBar
+                // Smartphone Compact: Bottom NavigationBar (Top 5 categories; full list in drawer/filter)
                 else -> {
                     Scaffold(
                         bottomBar = {
                             NavigationBar {
-                                VaultCategory.entries.forEach { cat ->
+                                VaultCategory.entries.take(5).forEach { cat ->
                                     NavigationBarItem(
                                         selected = selectedCategory == cat,
                                         onClick = { onSelectCategory(cat) },
@@ -262,6 +290,9 @@ private fun CategoryDrawerDestinations(
 private fun categoryLabel(i18n: LocalizationEngine, category: VaultCategory): String =
     when (category) {
         VaultCategory.PAYMENT_CARD -> i18n.t("nav_payment_cards")
+        VaultCategory.BANK_ACCOUNT -> i18n.t("nav_bank_accounts")
+        VaultCategory.INSURANCE_CARD -> i18n.t("nav_insurance_cards")
+        VaultCategory.MEMBERSHIP_CARD -> i18n.t("nav_membership_cards")
         VaultCategory.IDENTITY -> i18n.t("nav_identities")
         VaultCategory.OFFICIAL_DOCUMENT -> i18n.t("nav_official_documents")
         VaultCategory.SECURE_NOTE -> i18n.t("nav_secure_notes")

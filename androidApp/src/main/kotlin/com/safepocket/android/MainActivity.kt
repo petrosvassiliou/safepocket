@@ -12,6 +12,7 @@ import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import com.safepocket.android.ui.AdaptiveSafePocketShell
 import com.safepocket.shared.i18n.LocalizationEngine
+import com.safepocket.shared.model.ThemePreference
 import com.safepocket.shared.model.VaultCategory
 import com.safepocket.shared.model.VaultItemPayload
 import kotlinx.coroutines.launch
@@ -28,6 +29,7 @@ data class FoldablePostureState(
  *
  * - Sets `FLAG_SECURE` to protect sensitive card numbers/passports from task-switcher screenshots.
  * - Observes `WindowInfoTracker` `FoldingFeature` transitions seamlessly without activity recreation.
+ * - Uses Light Theme (`ThemePreference.LIGHT`) by default with Dark/System option.
  */
 class MainActivity : ComponentActivity() {
 
@@ -71,12 +73,15 @@ class MainActivity : ComponentActivity() {
         setContent {
             var selectedCategory by remember { mutableStateOf<VaultCategory?>(null) }
             var selectedItem by remember { mutableStateOf<VaultItemPayload?>(null) }
+            var themePreference by remember { mutableStateOf(ThemePreference.LIGHT) }
 
             AdaptiveSafePocketShell(
                 i18n = i18n,
                 items = emptyList(),
                 selectedCategory = selectedCategory,
                 selectedItem = selectedItem,
+                themePreference = themePreference,
+                onSelectThemePreference = { themePreference = it },
                 isFoldableSeparating = postureState.isSeparatingHinge,
                 onSelectCategory = { selectedCategory = it },
                 onSelectItem = { selectedItem = it },

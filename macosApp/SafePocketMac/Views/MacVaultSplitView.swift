@@ -21,6 +21,12 @@ struct MacVaultSplitView: View {
                     Section("Categories") {
                         Label("Payment Cards", systemImage: "creditcard")
                             .tag("PAYMENT_CARD")
+                        Label("Bank Accounts", systemImage: "building.columns")
+                            .tag("BANK_ACCOUNT")
+                        Label("Insurance Cards", systemImage: "cross.case")
+                            .tag("INSURANCE_CARD")
+                        Label("Membership Cards", systemImage: "person.crop.rectangle.stack")
+                            .tag("MEMBERSHIP_CARD")
                         Label("Identities", systemImage: "person.text.rectangle")
                             .tag("IDENTITY")
                         Label("Official Documents", systemImage: "doc.badge.gearshape")
@@ -87,9 +93,18 @@ struct MacVaultSplitView: View {
 struct MacSettingsAndAboutView: View {
     @ObservedObject var vaultState: MacVaultViewModel
     @ObservedObject var updater: MacSparkleUpdateController
+    @AppStorage("safepocket.theme_mode") private var themeMode: String = "light"
 
     var body: some View {
         Form {
+            Section("Appearance & Theme") {
+                Picker("Theme", selection: $themeMode) {
+                    Text("Light (Default)").tag("light")
+                    Text("Dark").tag("dark")
+                    Text("System").tag("system")
+                }
+                .pickerStyle(.segmented)
+            }
             Section("About SafePocket") {
                 LabeledContent("Version", value: updater.currentVersionDisplay)
                 LabeledContent("Encryption", value: "Argon2id + Secret Key → AES-256-GCM (SQLCipher)")

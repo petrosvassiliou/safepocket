@@ -315,6 +315,189 @@ Home Insurance Policy: ALLIANZ-DE-9940218
       attachments: [],
       createdAtEpochMs: now - 86_400_000 * 15,
       updatedAtEpochMs: now - 3_600_000 * 2
+    },
+    {
+      schemaVersion: 1,
+      id: 'item-bank-ing-giro',
+      category: 'BANK_ACCOUNT',
+      title: 'ING Girokonto (Gehalt & Alltag)',
+      subtitle: 'ING-DiBa AG • Frankfurt am Main',
+      favorite: true,
+      tags: ['bank', 'girokonto', 'sepa', 'gehalt'],
+      cardTheme: {
+        paletteId: 'terracotta_gold',
+        networkBrand: 'SEPA IBAN'
+      },
+      fields: [
+        {
+          id: 'ba-holder',
+          labelKey: 'field_account_holder',
+          value: 'CLARA SOFIA MÜLLER',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ba-iban',
+          labelKey: 'field_iban',
+          value: 'DE89 3704 0044 0532 0130 00',
+          valueType: 'IBAN',
+          isSensitive: true
+        },
+        {
+          id: 'ba-bic',
+          labelKey: 'field_bic',
+          value: 'INGDDEFFXXX',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ba-acct',
+          labelKey: 'field_account_number',
+          value: '0532013000',
+          valueType: 'SENSITIVE_SECRET',
+          isSensitive: true
+        },
+        {
+          id: 'ba-blz',
+          labelKey: 'field_routing_code',
+          value: '37040044',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ba-type',
+          labelKey: 'field_account_type',
+          value: 'Girokonto (Einzelkonto)',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ba-bank',
+          labelKey: 'field_issuing_bank',
+          value: 'ING-DiBa AG',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ba-phone',
+          labelKey: 'field_support_phone',
+          value: '+49 69 34 22 24',
+          valueType: 'PHONE'
+        }
+      ],
+      attachments: [],
+      createdAtEpochMs: now - 86_400_000 * 28,
+      updatedAtEpochMs: now - 3_600_000 * 8
+    },
+    {
+      schemaVersion: 1,
+      id: 'item-ins-tk-egk',
+      category: 'INSURANCE_CARD',
+      title: 'Techniker Krankenkasse — Gesundheitskarte (eGK)',
+      subtitle: 'Gesetzliche Krankenversicherung • EHIC Europa',
+      favorite: true,
+      tags: ['krankenkasse', 'egk', 'ehic', 'gesundheit', 'versicherung'],
+      cardTheme: {
+        paletteId: 'aegean_cobalt',
+        networkBrand: 'eGK G2.1'
+      },
+      fields: [
+        {
+          id: 'ins-holder',
+          labelKey: 'field_full_name',
+          value: 'Clara Sofia Müller',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ins-prov',
+          labelKey: 'field_insurer_name',
+          value: 'Techniker Krankenkasse (TK)',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ins-num',
+          labelKey: 'field_insurance_number',
+          value: 'A109482751',
+          valueType: 'SENSITIVE_SECRET',
+          isSensitive: true
+        },
+        {
+          id: 'ins-ik',
+          labelKey: 'field_insurer_id',
+          value: '101575519',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ins-plan',
+          labelKey: 'field_coverage_plan',
+          value: 'GKV Vollversicherung + Auslands-EHIC',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'ins-exp',
+          labelKey: 'field_expiry_date',
+          value: '2029-12-31',
+          valueType: 'DATE_ISO'
+        },
+        {
+          id: 'ins-phone',
+          labelKey: 'field_support_phone',
+          value: '+49 800 285 85 85',
+          valueType: 'PHONE'
+        }
+      ],
+      attachments: [],
+      createdAtEpochMs: now - 86_400_000 * 22,
+      updatedAtEpochMs: now - 3_600_000 * 6
+    },
+    {
+      schemaVersion: 1,
+      id: 'item-mem-adac-plus',
+      category: 'MEMBERSHIP_CARD',
+      title: 'ADAC Plus-Mitgliedschaft',
+      subtitle: 'Europaweiter Pannenschutz & Krankenrücktransport',
+      favorite: false,
+      tags: ['mitgliedschaft', 'adac', 'mobilitaet', 'club'],
+      cardTheme: {
+        paletteId: 'alpine_emerald',
+        networkBrand: 'PLUS MEMBER'
+      },
+      fields: [
+        {
+          id: 'mem-name',
+          labelKey: 'field_member_name',
+          value: 'CLARA SOFIA MÜLLER',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'mem-org',
+          labelKey: 'field_organization',
+          value: 'ADAC e.V. München',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'mem-id',
+          labelKey: 'field_membership_id',
+          value: '7081 4920 1184',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'mem-tier',
+          labelKey: 'field_membership_tier',
+          value: 'ADAC Plus (Europa & Welt)',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'mem-exp',
+          labelKey: 'field_expiry_date',
+          value: '2027-09-30',
+          valueType: 'DATE_ISO'
+        },
+        {
+          id: 'mem-phone',
+          labelKey: 'field_support_phone',
+          value: '+49 89 22 22 22',
+          valueType: 'PHONE'
+        }
+      ],
+      attachments: [],
+      createdAtEpochMs: now - 86_400_000 * 18,
+      updatedAtEpochMs: now - 3_600_000 * 4
     }
   ];
 }

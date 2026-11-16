@@ -1,16 +1,34 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="SafePocket — Zero-knowledge encrypted personal identity, payment card, official document, and secure note vault."
+      content="SafePocket — Zero-knowledge encrypted personal vault for payment cards, bank accounts, insurance cards, membership cards, identities, official documents, and secure notes."
     />
-    <meta name="theme-color" content="#101417" />
+    <meta name="theme-color" content="#F5F7FA" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <title>SafePocket — Personal Identity &amp; Document Vault</title>
+    <script>
+      (function () {
+        try {
+          var mode = localStorage.getItem('safepocket.theme_mode') || 'light';
+          var dark =
+            mode === 'dark' ||
+            (mode === 'system' &&
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var effective = dark ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', effective);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute('content', dark ? '#0E1315' : '#F5F7FA');
+        } catch (_e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="safepocket-app"></div>
