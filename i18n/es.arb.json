@@ -228,5 +228,7 @@
   "restore_mode_replace": "Reemplazar la bóveda actual",
   "export_plain_modal_title": "Confirmar contraseña maestra para exportación sin cifrar",
   "emergency_kit_print_btn": "Imprimir kit de emergencia",
-  "emergency_kit_hint_placeholder": "Pista de memoria opcional para la hoja impresa (nunca escriba la contraseña real)"
+  "emergency_kit_hint_placeholder": "Pista de memoria opcional para la hoja impresa (nunca escriba la contraseña real)",
+  "security_allow_screenshots_toggle": "Permitir capturas y grabación de pantalla",
+  "security_allow_screenshots_desc": "Activado de forma predeterminada. Desactívelo para bloquear capturas de pantalla y ocultar la vista previa en aplicaciones recientes (FLAG_SECURE)."
 }

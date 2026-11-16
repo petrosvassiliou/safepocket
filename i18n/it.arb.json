@@ -228,5 +228,7 @@
   "restore_mode_replace": "Sostituisci cassaforte attuale",
   "export_plain_modal_title": "Conferma Master Password per esportazione in chiaro",
   "emergency_kit_print_btn": "Stampa kit di emergenza",
-  "emergency_kit_hint_placeholder": "Suggerimento facoltativo per il foglio stampato (mai la password reale)"
+  "emergency_kit_hint_placeholder": "Suggerimento facoltativo per il foglio stampato (mai la password reale)",
+  "security_allow_screenshots_toggle": "Consenti screenshot e registrazione schermo",
+  "security_allow_screenshots_desc": "Attivo per impostazione predefinita. Disattiva per bloccare gli screenshot e oscurare l'anteprima nelle app recenti (FLAG_SECURE)."
 }

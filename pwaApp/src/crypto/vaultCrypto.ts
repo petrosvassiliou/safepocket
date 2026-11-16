@@ -1,5 +1,5 @@
 import { argon2id } from 'hash-wasm';
-import type { EncryptedVaultRow, VaultItem } from '../types';
+import { APP_BUILD_INFO, type EncryptedVaultRow, type VaultItem } from '../types';
 
 export interface Argon2idKdfConfig {
   memorySizeKiB: number;
@@ -433,7 +433,7 @@ export class ZeroKnowledgeVaultCrypto {
 
     const container: SafePocketEncryptedContainer = {
       magic: 'SAFEPOCKET-CONTAINER-V1',
-      appVersion: '0.1',
+      appVersion: APP_BUILD_INFO.versionName,
       exportedAtIso,
       itemCount: items.length,
       attachmentCount,
@@ -598,7 +598,7 @@ export function formatUnencryptedVaultExport(
     return {
       content: JSON.stringify(
         {
-          exportedFrom: 'SafePocket v0.1',
+          exportedFrom: `SafePocket v${APP_BUILD_INFO.versionName}`,
           exportedAtIso: new Date().toISOString(),
           warning: 'UNENCRYPTED PLAINTEXT EXPORT — HANDLE WITH EXTREME CARE',
           items: sanitized

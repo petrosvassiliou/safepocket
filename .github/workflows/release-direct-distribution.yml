@@ -29,7 +29,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Resolve release version (0.1 Build 1 baseline)
+      - name: Resolve release version
         id: meta
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
@@ -37,12 +37,14 @@ jobs:
             echo "version_name=${RAW_TAG}" >> "${GITHUB_OUTPUT}"
             if [[ "${RAW_TAG}" == "0.1" ]]; then
               echo "version_code=1" >> "${GITHUB_OUTPUT}"
+            elif [[ "${RAW_TAG}" == "0.1.1" ]]; then
+              echo "version_code=2" >> "${GITHUB_OUTPUT}"
             else
-              echo "version_code=${GITHUB_RUN_NUMBER:-1}" >> "${GITHUB_OUTPUT}"
+              echo "version_code=${GITHUB_RUN_NUMBER:-2}" >> "${GITHUB_OUTPUT}"
             fi
           else
-            echo "version_name=${{ inputs.version_name || '0.1' }}" >> "${GITHUB_OUTPUT}"
-            echo "version_code=${{ inputs.version_code || '1' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_name=${{ inputs.version_name || '0.1.1' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_code=${{ inputs.version_code || '2' }}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Setup Node.js 24 LTS

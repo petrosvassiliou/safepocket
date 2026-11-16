@@ -77,11 +77,11 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var verifiedSha256: String?
     @Published var isChecking: Bool = false
 
-    let currentVersionName = "0.1"
-    let currentVersionCode = 1
-    let currentVersionDisplay = "SafePocket v0.1 (Build 1)"
+    let currentVersionName = "0.1.1"
+    let currentVersionCode = 2
+    let currentVersionDisplay = "SafePocket v0.1.1 (Build 2)"
 
-    func checkForUpdatesInitiatedByUser(remoteVersionName: String = "0.1", remoteVersionCode: Int = 1) {
+    func checkForUpdatesInitiatedByUser(remoteVersionName: String = "0.1.1", remoteVersionCode: Int = 2) {
         isChecking = true
         // Triggers Sparkle SPUStandardUpdaterController.checkForUpdates(nil)
         // and verifies Ed25519 signature + SHA-256 checksum from manifest/version.json
@@ -111,7 +111,44 @@ final class MacVaultViewModel: ObservableObject {
     @Published var searchQuery: String = ""
     private var clipboardClearTask: Task<Void, Never>?
 
-    func t(_ key: String) -> String { key }
+    func t(_ key: String) -> String {
+        let lang = Locale.current.language.languageCode?.identifier ?? "en"
+        let table: [String: [String: String]] = [
+            "update_check_btn": [
+                "en": "Check for Updates",
+                "de": "Nach Updates suchen",
+                "it": "Controlla aggiornamenti",
+                "fr": "Rechercher des mises à jour",
+                "es": "Buscar actualizaciones",
+                "el": "Έλεγχος για ενημερώσεις"
+            ],
+            "action_lock_vault": [
+                "en": "Lock Vault",
+                "de": "Tresor sperren",
+                "it": "Blocca cassaforte",
+                "fr": "Verrouiller le coffre",
+                "es": "Bloquear bóveda",
+                "el": "Κλείδωμα θησαυροφυλακίου"
+            ],
+            "action_new_item": [
+                "en": "New Item",
+                "de": "Neuer Eintrag",
+                "it": "Nuovo elemento",
+                "fr": "Nouvel élément",
+                "es": "Nuevo elemento",
+                "el": "Νέο στοιχείο"
+            ],
+            "shortcut_hint_search": [
+                "en": "Search",
+                "de": "Suchen",
+                "it": "Cerca",
+                "fr": "Rechercher",
+                "es": "Buscar",
+                "el": "Αναζήτηση"
+            ]
+        ]
+        return table[key]?[lang] ?? table[key]?["en"] ?? key
+    }
 
     func unlockWithTouchID() async -> Bool {
         let context = LAContext()

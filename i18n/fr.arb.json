@@ -228,5 +228,7 @@
   "restore_mode_replace": "Remplacer le coffre actuel",
   "export_plain_modal_title": "Confirmer le mot de passe maître pour l'export non chiffré",
   "emergency_kit_print_btn": "Imprimer le kit de secours",
-  "emergency_kit_hint_placeholder": "Indice mémoire optionnel sur la feuille imprimée (ne saisissez jamais le mot de passe)"
+  "emergency_kit_hint_placeholder": "Indice mémoire optionnel sur la feuille imprimée (ne saisissez jamais le mot de passe)",
+  "security_allow_screenshots_toggle": "Autoriser les captures et l’enregistrement d’écran",
+  "security_allow_screenshots_desc": "Activé par défaut. Désactivez pour bloquer les captures d’écran et masquer l’aperçu dans le sélecteur d’applications (FLAG_SECURE)."
 }

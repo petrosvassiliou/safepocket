@@ -513,11 +513,11 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     expect(baselineStatus.phase).toBe('up_to_date');
     expect(baselineStatus.ed25519Verified).toBe(true);
 
-    // 2) Dynamically sign a v0.2 (Build 2) manifest fixture to verify staged update & SHA-256 tamper rejection
+    // 2) Dynamically sign a v0.2 (next build) manifest fixture to verify staged update & SHA-256 tamper rejection
     const nextManifest: RemoteUpdateManifest = {
       ...(JSON.parse(shippedManifestJson) as RemoteUpdateManifest),
       latestVersion: '0.2',
-      versionCode: 2
+      versionCode: APP_BUILD_INFO.versionCode + 1
     };
     const pkcs8Prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
     const seedBytes = nodeCrypto
@@ -570,17 +570,17 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     expect(rejected.errorMessage).toContain('SHA-256 tampering detected');
   });
 
-  it('11. Starting Version v0.1 & Real Ed25519 Manifest Signing: verifies v0.1 (Build 1) baseline and rejects forged/mutated version.json signatures', async () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.1');
-    expect(APP_BUILD_INFO.versionCode).toBe(1);
+  it('11. Version v0.1.1 (Build 2) & Real Ed25519 Manifest Signing: verifies v0.1.1 baseline and rejects forged/mutated version.json signatures', async () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.1.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(2);
 
     const publicDir = path.resolve(__dirname, '../../public');
     const signedManifest = JSON.parse(
       fs.readFileSync(path.join(publicDir, 'version.json'), 'utf-8')
     ) as RemoteUpdateManifest;
 
-    expect(signedManifest.latestVersion).toBe('0.1');
-    expect(signedManifest.versionCode).toBe(1);
+    expect(signedManifest.latestVersion).toBe('0.1.1');
+    expect(signedManifest.versionCode).toBe(2);
     expect(await verifyManifestEd25519Signature(signedManifest)).toBe(true);
 
     // Mutate latestVersion without re-signing -> Ed25519 verification must fail
@@ -1426,7 +1426,7 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     );
 
     const headerSummary = await inspectSafePocketContainerHeader(containerJson);
-    expect(headerSummary.appVersion).toBe('0.1');
+    expect(headerSummary.appVersion).toBe(APP_BUILD_INFO.versionName);
     expect(headerSummary.itemCount).toBe(2);
     expect(headerSummary.sha256Hex).toHaveLength(64);
 
@@ -1458,7 +1458,9 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     // Plaintext JSON & CSV export formatter
     const jsonExport = formatUnencryptedVaultExport(mergeReport.merged, 'json');
     expect(jsonExport.extension).toBe('json');
-    expect(JSON.parse(jsonExport.content).exportedFrom).toBe('SafePocket v0.1');
+    expect(JSON.parse(jsonExport.content).exportedFrom).toBe(
+      `SafePocket v${APP_BUILD_INFO.versionName}`
+    );
     const csvExport = formatUnencryptedVaultExport(mergeReport.merged, 'csv');
     expect(csvExport.extension).toBe('csv');
     expect(csvExport.content).toContain('Updated N26 Metal');
@@ -1508,7 +1510,7 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     expect(css).toContain('.sp-scanner-pad');
   });
 
-  it('24. Strict Initial Version 0.1 (Build 1) Alignment Across PWA, Manifests, Android, macOS & Modal-Only UX', () => {
+  it('24. Cross-Platform Version 0.1.1 (Build 2) Alignment Across PWA, Manifests, Android, macOS & Modal-Only UX', () => {
     const repoRoot = path.resolve(__dirname, '../../..');
     const rootManifest = JSON.parse(
       fs.readFileSync(path.join(repoRoot, 'manifest/version.json'), 'utf-8')
@@ -1517,25 +1519,24 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
       fs.readFileSync(path.join(repoRoot, 'pwaApp/public/version.json'), 'utf-8')
     ) as RemoteUpdateManifest;
 
-    expect(APP_BUILD_INFO.versionName).toBe('0.1');
-    expect(APP_BUILD_INFO.versionCode).toBe(1);
-    expect(rootManifest.latestVersion).toBe('0.1');
-    expect(rootManifest.versionCode).toBe(1);
-    expect(pwaManifest.latestVersion).toBe('0.1');
-    expect(pwaManifest.versionCode).toBe(1);
+    expect(APP_BUILD_INFO.versionName).toBe('0.1.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(2);
+    expect(rootManifest.latestVersion).toBe('0.1.1');
+    expect(rootManifest.versionCode).toBe(2);
+    expect(pwaManifest.latestVersion).toBe('0.1.1');
+    expect(pwaManifest.versionCode).toBe(2);
 
     const androidGradle = fs.readFileSync(
       path.join(repoRoot, 'androidApp/build.gradle.kts'),
       'utf-8'
     );
-    expect(androidGradle).toContain('?: "0.1"');
+    expect(androidGradle).toContain('?: "0.1.1"');
 
     const macAppSwift = fs.readFileSync(
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macAppSwift).toContain('SafePocket v0.1 (Build 1)');
-    expect(macAppSwift).not.toContain('0.1.1');
+    expect(macAppSwift).toContain('SafePocket v0.1.1 (Build 2)');
 
     // Verify legacy browser prompt dialog was eliminated in favor of Master-Password modal
     const appShellSource = fs.readFileSync(
@@ -1543,6 +1544,57 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
       'utf-8'
     );
     expect(appShellSource).not.toContain('window.prompt');
+  });
+
+  it('25. Android ARB Localization Bundling & Default-Enabled Screenshot Toggle (Live FLAG_SECURE Option)', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+
+    // 1) Verify Android Gradle bundles ../i18n ARB catalogs into APK assets
+    const androidGradle = fs.readFileSync(
+      path.join(repoRoot, 'androidApp/build.gradle.kts'),
+      'utf-8'
+    );
+    expect(androidGradle).toContain('assets.srcDirs("src/main/assets", "../i18n")');
+
+    // 2) Verify MainActivity loads bundled .arb.json catalogs (not emptyMap) and enables screenshots by default
+    const mainActivityKt = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/MainActivity.kt'
+      ),
+      'utf-8'
+    );
+    expect(mainActivityKt).not.toContain('catalogsByCode = emptyMap()');
+    expect(mainActivityKt).toContain('loadBundledArbCatalogs()');
+    expect(mainActivityKt).toContain('${locale.code}.arb.json');
+    expect(mainActivityKt).toContain('prefs.getBoolean(KEY_ALLOW_SCREENSHOTS, true)');
+    expect(mainActivityKt).toContain('window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)');
+    expect(mainActivityKt).toContain('WindowManager.LayoutParams.FLAG_SECURE');
+
+    // 3) Verify AdaptiveSafePocketShell renders Settings dialog with Allow Screenshots Switch & no raw 2-letter category codes
+    const shellKt = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+    expect(shellKt).toContain('security_allow_screenshots_toggle');
+    expect(shellKt).toContain('security_allow_screenshots_desc');
+    expect(shellKt).toContain('onToggleAllowScreenshots');
+    expect(shellKt).not.toContain('cat.name.take(2)');
+
+    // 4) Verify all 6 locales translate the screenshot setting
+    const i18n = new SafePocketI18n('en-US');
+    for (const locale of SUPPORTED_LOCALES) {
+      i18n.setLocaleOverride(locale.code);
+      expect(i18n.t('security_allow_screenshots_toggle')).not.toBe(
+        'security_allow_screenshots_toggle'
+      );
+      expect(i18n.t('security_allow_screenshots_desc')).not.toBe(
+        'security_allow_screenshots_desc'
+      );
+    }
   });
 });
 

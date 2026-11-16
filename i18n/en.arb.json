@@ -228,5 +228,7 @@
   "restore_mode_replace": "Replace Current Vault",
   "export_plain_modal_title": "Confirm Master Password for Unencrypted Export",
   "emergency_kit_print_btn": "Print Recovery Kit",
-  "emergency_kit_hint_placeholder": "Optional memory hint for printed sheet (never type actual password)"
+  "emergency_kit_hint_placeholder": "Optional memory hint for printed sheet (never type actual password)",
+  "security_allow_screenshots_toggle": "Allow Screenshots & Screen Recording",
+  "security_allow_screenshots_desc": "Enabled by default. Turn off to block screenshots and hide vault previews in the app switcher (FLAG_SECURE)."
 }

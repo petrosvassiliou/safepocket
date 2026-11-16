@@ -228,5 +228,7 @@
   "restore_mode_replace": "Aktuellen Tresor ersetzen",
   "export_plain_modal_title": "Master-Passwort für unverschlüsselten Export bestätigen",
   "emergency_kit_print_btn": "Notfall-Dokument drucken",
-  "emergency_kit_hint_placeholder": "Optionaler Merkhinweis für Ausdruck (niemals das echte Passwort eingeben)"
+  "emergency_kit_hint_placeholder": "Optionaler Merkhinweis für Ausdruck (niemals das echte Passwort eingeben)",
+  "security_allow_screenshots_toggle": "Screenshots & Bildschirmaufnahme erlauben",
+  "security_allow_screenshots_desc": "Standardmäßig aktiviert. Deaktivieren, um Screenshots und die Vorschau im App-Umschalter zu blockieren (FLAG_SECURE)."
 }

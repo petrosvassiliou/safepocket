@@ -84,6 +84,7 @@ import {
 const THEME_STORAGE_KEY = 'safepocket.theme_mode';
 const MATERIAL_ACCENT_STORAGE_KEY = 'safepocket.material_accent';
 const EXPIRY_WINDOW_STORAGE_KEY = 'safepocket.expiry_window_days';
+const ALLOW_SCREENSHOTS_STORAGE_KEY = 'safepocket.allow_screenshots';
 
 export function resolveEffectiveTheme(
   mode: ThemeMode,
@@ -164,6 +165,7 @@ export class SafePocketAppShell {
   private themeMode: ThemeMode = 'light';
   private materialAccent: MaterialColorScheme = 'emerald';
   private expiryWindowDays: ExpiryWindowDays = 90;
+  private allowScreenshots = true;
   private sortMode: VaultSortMode = 'pinned_recent';
   private activeTagFilter: string | null = null;
   private items: VaultItem[] = [];
@@ -233,6 +235,7 @@ export class SafePocketAppShell {
     this.themeMode = this.loadSavedThemeMode();
     this.materialAccent = this.loadSavedMaterialAccent();
     this.expiryWindowDays = this.loadSavedExpiryWindowDays();
+    this.allowScreenshots = this.loadSavedAllowScreenshots();
     this.applyThemeToDocument();
 
     this.clipboard = new ClipboardHygieneController((seconds, cleared) => {
@@ -252,6 +255,21 @@ export class SafePocketAppShell {
         this.lockVault(true);
       }
     });
+  }
+
+  private loadSavedAllowScreenshots(): boolean {
+    if (typeof localStorage === 'undefined') return true;
+    const raw = localStorage.getItem(ALLOW_SCREENSHOTS_STORAGE_KEY);
+    if (raw === 'false') return false;
+    return true;
+  }
+
+  setAllowScreenshots(enabled: boolean): void {
+    this.allowScreenshots = enabled;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(ALLOW_SCREENSHOTS_STORAGE_KEY, String(enabled));
+    }
+    this.render();
   }
 
   private loadSavedExpiryWindowDays(): ExpiryWindowDays {
@@ -3298,6 +3316,23 @@ export class SafePocketAppShell {
           )}
         </div>
 
+        <label style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;cursor:pointer;padding:8px 0;border-top:1px solid var(--border-subtle);">
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+              ${this.escape(this.i18n.t('security_allow_screenshots_toggle'))}
+            </span>
+            <span style="font-size:11.5px;color:var(--text-secondary);">
+              ${this.escape(this.i18n.t('security_allow_screenshots_desc'))}
+            </span>
+          </div>
+          <input
+            id="sp-toggle-allow-screenshots"
+            type="checkbox"
+            ${this.allowScreenshots ? 'checked' : ''}
+            style="margin-top:4px;width:18px;height:18px;accent-color:var(--accent-primary);"
+          />
+        </label>
+
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <span style="font-size:12.5px;font-weight:600;color:var(--text-secondary);">
             ${this.escape(this.i18n.t('expiry_window_setting_title'))}
@@ -5545,7 +5580,13 @@ export class SafePocketAppShell {
         );
       });
 
-    // Settings: Expiry Warning Horizon, Auto-Lock Timeout, Biometrics & Emergency Kit v2
+    // Settings: Allow Screenshots, Expiry Warning Horizon, Auto-Lock Timeout, Biometrics & Emergency Kit v2
+    this.root
+      .querySelector<HTMLInputElement>('#sp-toggle-allow-screenshots')
+      ?.addEventListener('change', (e) => {
+        this.setAllowScreenshots((e.target as HTMLInputElement).checked);
+      });
+
     this.root
       .querySelectorAll<HTMLElement>('[data-expiry-window]')
       .forEach((btn) => {

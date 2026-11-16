@@ -45,7 +45,14 @@ class LocalizationEngine(
     private val parsedCatalogs: Map<SupportedLocale, Map<String, String>> =
         SupportedLocale.entries.associateWith { locale ->
             val raw = catalogsByCode[locale.code] ?: "{}"
-            json.parseToJsonElement(raw).jsonObject.mapValues { it.value.jsonPrimitive.content }
+            runCatching {
+                json.parseToJsonElement(raw).jsonObject
+                    .filterKeys { !it.startsWith("@") }
+                    .mapNotNull { (k, v) ->
+                        runCatching { v.jsonPrimitive.content }.getOrNull()?.let { k to it }
+                    }
+                    .toMap()
+            }.getOrDefault(emptyMap())
         }
 
     private var systemLocale: SupportedLocale = SupportedLocale.fromLanguageTag(initialSystemLanguageTag)
@@ -53,6 +60,8 @@ class LocalizationEngine(
     private val _activeLocale = MutableStateFlow(systemLocale)
 
     val activeLocale: StateFlow<SupportedLocale> = _activeLocale.asStateFlow()
+    val manualOverride: StateFlow<SupportedLocale?> = _manualOverride.asStateFlow()
+    val detectedSystemLocale: SupportedLocale get() = systemLocale
     val isFollowingSystem: Boolean get() = _manualOverride.value == null
 
     fun setManualLocaleOverride(locale: SupportedLocale?) {

@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.kotlinAndroid)
+    alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.composeCompiler)
 }
 
@@ -8,15 +9,21 @@ val targetAndroidSdk = (System.getenv("SAFEPOCKET_COMPILE_SDK") ?: "35").toInt()
 val minAndroidSdk = (System.getenv("SAFEPOCKET_MIN_SDK") ?: "29").toInt()
 val releaseVersionName = (project.findProperty("versionName") as String?)
     ?: System.getenv("SAFEPOCKET_RELEASE_VERSION")?.removePrefix("v")
-    ?: "0.1"
+    ?: "0.1.1"
 val releaseVersionCode = ((project.findProperty("versionCode") as String?)
     ?: System.getenv("SAFEPOCKET_VERSION_CODE")
-    ?: "1").toInt()
+    ?: "2").toInt()
 val configuredKeystoreFile = file(System.getenv("SAFEPOCKET_KEYSTORE_PATH") ?: "keystore/release.jks")
 
 android {
     namespace = "com.safepocket.android"
     compileSdk = targetAndroidSdk
+
+    sourceSets {
+        getByName("main") {
+            assets.srcDirs("src/main/assets", "../i18n")
+        }
+    }
 
     defaultConfig {
         applicationId = "com.safepocket.vault"
@@ -99,4 +106,5 @@ dependencies {
     implementation(libs.androidx.compose.material3.navigation.suite)
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.window)
+    implementation(libs.kotlinx.serialization.json)
 }
