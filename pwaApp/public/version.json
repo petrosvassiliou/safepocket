@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-16T20:30:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:e1c4246b772b55990a945382875ddc981f693dc6bbdac8a334274971820bb9d75fc768c2b986566d171fd487926196a49e3fc3619071799bca7881eef658f10d",
+  "manifestSignature": "ed25519:50bd802d4905eadc0936da537c42e4343cb41aa2ed0b73025a3db621af24a8f7d9a86439494acf9b0beda366991cbc0809e1dae0d6b2c924df37e0feb4d25502",
   "releaseNotes": {
     "en": "• SafePocket v0.2 adds automatic Institution + Card Network/Type dual logos & brand colors (e.g. Deutsche Bank + VISA) with optional HTTPS icon download.\n• Complete category-specific field templates across all 7 categories, full item editing, bottom-left theme toggle, and smooth seam-free button hover.\n• Local encrypted SQLCipher / SQLite WASM DB + Firebase Cloud Sync account creation, encrypted .safepocket backup/restore, and 1Password (.1pux / CSV) & CSV import/export.",
     "de": "• SafePocket v0.2 bietet automatische Dual-Logos (Institut + Kartentyp, z. B. Deutsche Bank + VISA) und Markenfarben inkl. optionalem HTTPS-Logo-Download.\n• Vollständige kategoriebezogene Felder für alle 7 Kategorien, vollständiges Bearbeiten bestehender Einträge, Theme-Icon unten links & weicher Button-Hover ohne graue Linie.\n• Lokale verschlüsselte SQLCipher-/SQLite-Datenbank + Firebase-Konto & Cloud-Sync, verschlüsseltes .safepocket-Backup sowie Import/Export für 1Password (.1pux / CSV) & CSV.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.2/SafePocket-v0.2-b4-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "a61e6c9f58848cc9b6baeb101e9e219630875143ef13f650a8c781e3b1444da5",
+      "sizeBytes": 37451716,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
