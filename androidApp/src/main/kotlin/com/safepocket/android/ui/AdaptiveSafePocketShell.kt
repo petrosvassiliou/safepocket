@@ -47,7 +47,9 @@ fun AdaptiveSafePocketShell(
     selectedCategory: VaultCategory?,
     selectedItem: VaultItemPayload?,
     themePreference: ThemePreference = ThemePreference.LIGHT,
+    useDeviceDynamicColor: Boolean = true,
     onSelectThemePreference: (ThemePreference) -> Unit = {},
+    onToggleDeviceDynamicColor: (Boolean) -> Unit = {},
     isFoldableSeparating: Boolean = false,
     onSelectCategory: (VaultCategory?) -> Unit,
     onSelectItem: (VaultItemPayload) -> Unit,
@@ -64,16 +66,17 @@ fun AdaptiveSafePocketShell(
     val coroutineScope = rememberCoroutineScope()
     var clipboardJob by remember { mutableStateOf<Job?>(null) }
 
-    // Material 3 Expressive Dynamic Color: Light Theme by default, Dark Theme as an option
+    // Material 3 Expressive: Light Theme default, Dark or Use Device Theme (SYSTEM) + Dynamic Device Color
     val useDarkTheme = when (themePreference) {
         ThemePreference.LIGHT -> false
         ThemePreference.DARK -> true
         ThemePreference.SYSTEM -> isSystemInDarkTheme()
     }
-    val colorScheme = if (useDarkTheme) {
-        dynamicDarkColorScheme(context)
-    } else {
-        dynamicLightColorScheme(context)
+    val colorScheme = when {
+        useDeviceDynamicColor && useDarkTheme -> dynamicDarkColorScheme(context)
+        useDeviceDynamicColor && !useDarkTheme -> dynamicLightColorScheme(context)
+        useDarkTheme -> darkColorScheme()
+        else -> lightColorScheme()
     }
 
     val copyWith30sHygiene: (String, String, Boolean) -> Unit = { label, secretValue, isSensitive ->
@@ -138,12 +141,21 @@ fun AdaptiveSafePocketShell(
                                         )
                                         TextButton(
                                             onClick = {
-                                                onSelectThemePreference(
-                                                    if (useDarkTheme) ThemePreference.LIGHT else ThemePreference.DARK
-                                                )
+                                                val next = when (themePreference) {
+                                                    ThemePreference.LIGHT -> ThemePreference.DARK
+                                                    ThemePreference.DARK -> ThemePreference.SYSTEM
+                                                    ThemePreference.SYSTEM -> ThemePreference.LIGHT
+                                                }
+                                                onSelectThemePreference(next)
                                             }
                                         ) {
-                                            Text(if (useDarkTheme) "☀" else "☾")
+                                            Text(
+                                                when (themePreference) {
+                                                    ThemePreference.LIGHT -> "☀"
+                                                    ThemePreference.DARK -> "☾"
+                                                    ThemePreference.SYSTEM -> "◐"
+                                                }
+                                            )
                                         }
                                     }
                                     Spacer(Modifier.height(8.dp))

@@ -124,9 +124,26 @@ data class EncryptedAttachmentRef(
     val sha256Hex: String
 )
 
+object CardPalettes {
+    val ALL = listOf(
+        "obsidian_slate",
+        "alpine_emerald",
+        "aegean_cobalt",
+        "terracotta_gold",
+        "crimson_ruby",
+        "midnight_navy",
+        "arctic_cyan",
+        "forest_sage",
+        "sunset_coral",
+        "espresso_bronze",
+        "titanium_silver",
+        "pearl_ivory"
+    )
+}
+
 @Serializable
 data class CardVisualTheme(
-    val paletteId: String = "obsidian_slate", // obsidian_slate | alpine_emerald | aegean_cobalt | terracotta_gold
+    val paletteId: String = "obsidian_slate", // Any ID in CardPalettes.ALL
     val networkBrand: String? = null          // Visa | Mastercard | Amex | SEPA
 )
 

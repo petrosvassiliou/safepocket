@@ -49,10 +49,14 @@ import {
 } from '../sync/syncAdapters';
 import {
   APP_BUILD_INFO,
+  CARD_THEME_PALETTES,
   type RemoteUpdateManifest,
   VAULT_CATEGORIES
 } from '../types';
-import { resolveEffectiveTheme } from '../ui/appShell';
+import {
+  nextThemeModeInCycle,
+  resolveEffectiveTheme
+} from '../ui/appShell';
 import {
   buildEmergencyKitHtml,
   estimateMasterPasswordEntropy
@@ -1120,7 +1124,50 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
       expect(localeKeys).toEqual(enKeys);
     }
   });
+
+  it('19. 12 Curated Card Color Options, Material Design Device Theme / Dynamic Accent & Clean Brand Header', () => {
+    // 1) 12 card color options available and localized across all 6 languages
+    expect(CARD_THEME_PALETTES).toHaveLength(12);
+    const i18n = new SafePocketI18n('en-US');
+    for (const locale of SUPPORTED_LOCALES) {
+      i18n.setLocaleOverride(locale.code);
+      for (const paletteId of CARD_THEME_PALETTES) {
+        const key = `palette_${paletteId}`;
+        const label = i18n.t(key);
+        expect(label).not.toBe(key);
+        expect(label.length).toBeGreaterThan(2);
+      }
+      expect(i18n.t('material_color_device')).not.toBe('material_color_device');
+      expect(i18n.t('theme_system')).not.toBe('theme_system');
+    }
+
+    // 2) Quick theme switcher cycles Light -> Dark -> Device Theme ('system') -> Light
+    expect(nextThemeModeInCycle('light')).toBe('dark');
+    expect(nextThemeModeInCycle('dark')).toBe('system');
+    expect(nextThemeModeInCycle('system')).toBe('light');
+
+    // 3) CSS defines all 12 card palettes + Material Design Device Accent + non-overlapping .sp-brand grid
+    const css = fs.readFileSync(
+      path.resolve(__dirname, '../styles/m3-expressive.css'),
+      'utf-8'
+    );
+    for (const paletteId of CARD_THEME_PALETTES) {
+      expect(css).toContain(`.sp-visual-card[data-palette='${paletteId}']`);
+      expect(css).toContain(`.sp-palette-swatch[data-palette='${paletteId}']`);
+    }
+    expect(css).toContain("html[data-accent='device']");
+    expect(css).toContain('AccentColor');
+    expect(css).toContain('grid-template-columns: minmax(0, 1fr) auto');
+
+    // 4) Sidebar brand header must NOT display AES-256 encryption badge
+    const appShellSource = fs.readFileSync(
+      path.resolve(__dirname, '../ui/appShell.ts'),
+      'utf-8'
+    );
+    expect(appShellSource).not.toContain('<span class="sp-zk-chip">AES-256</span>');
+  });
 });
+
 
 
 

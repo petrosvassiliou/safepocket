@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
             var selectedCategory by remember { mutableStateOf<VaultCategory?>(null) }
             var selectedItem by remember { mutableStateOf<VaultItemPayload?>(null) }
             var themePreference by remember { mutableStateOf(ThemePreference.LIGHT) }
+            var useDeviceDynamicColor by remember { mutableStateOf(true) }
 
             AdaptiveSafePocketShell(
                 i18n = i18n,
@@ -81,7 +82,9 @@ class MainActivity : ComponentActivity() {
                 selectedCategory = selectedCategory,
                 selectedItem = selectedItem,
                 themePreference = themePreference,
+                useDeviceDynamicColor = useDeviceDynamicColor,
                 onSelectThemePreference = { themePreference = it },
+                onToggleDeviceDynamicColor = { useDeviceDynamicColor = it },
                 isFoldableSeparating = postureState.isSeparatingHinge,
                 onSelectCategory = { selectedCategory = it },
                 onSelectItem = { selectedItem = it },

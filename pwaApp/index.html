@@ -15,6 +15,7 @@
       (function () {
         try {
           var mode = localStorage.getItem('safepocket.theme_mode') || 'light';
+          var accent = localStorage.getItem('safepocket.material_accent') || 'emerald';
           var dark =
             mode === 'dark' ||
             (mode === 'system' &&
@@ -22,10 +23,12 @@
               window.matchMedia('(prefers-color-scheme: dark)').matches);
           var effective = dark ? 'dark' : 'light';
           document.documentElement.setAttribute('data-theme', effective);
+          document.documentElement.setAttribute('data-accent', accent);
           var meta = document.querySelector('meta[name="theme-color"]');
           if (meta) meta.setAttribute('content', dark ? '#0E1315' : '#F5F7FA');
         } catch (_e) {
           document.documentElement.setAttribute('data-theme', 'light');
+          document.documentElement.setAttribute('data-accent', 'emerald');
         }
       })();
     </script>

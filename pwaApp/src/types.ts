@@ -2,6 +2,13 @@ export type SupportedLocale = 'en' | 'de' | 'it' | 'fr' | 'es' | 'el';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 
+export type MaterialColorScheme =
+  | 'emerald'
+  | 'device'
+  | 'ocean'
+  | 'terracotta'
+  | 'slate';
+
 export type VaultCategory =
   | 'PAYMENT_CARD'
   | 'BANK_ACCOUNT'
@@ -42,7 +49,30 @@ export type CardThemePalette =
   | 'obsidian_slate'
   | 'alpine_emerald'
   | 'aegean_cobalt'
-  | 'terracotta_gold';
+  | 'terracotta_gold'
+  | 'crimson_ruby'
+  | 'midnight_navy'
+  | 'arctic_cyan'
+  | 'forest_sage'
+  | 'sunset_coral'
+  | 'espresso_bronze'
+  | 'titanium_silver'
+  | 'pearl_ivory';
+
+export const CARD_THEME_PALETTES: ReadonlyArray<CardThemePalette> = [
+  'obsidian_slate',
+  'alpine_emerald',
+  'aegean_cobalt',
+  'terracotta_gold',
+  'crimson_ruby',
+  'midnight_navy',
+  'arctic_cyan',
+  'forest_sage',
+  'sunset_coral',
+  'espresso_bronze',
+  'titanium_silver',
+  'pearl_ivory'
+];
 
 export interface VaultField {
   id: string;

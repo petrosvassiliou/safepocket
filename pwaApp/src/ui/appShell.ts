@@ -43,8 +43,10 @@ import {
 } from '../sync/syncAdapters';
 import {
   APP_BUILD_INFO,
+  CARD_THEME_PALETTES,
   type CardThemePalette,
   type EncryptedAttachmentMeta,
+  type MaterialColorScheme,
   SENSITIVE_FIELD_KEYS,
   type SupportedLocale,
   type ThemeMode,
@@ -60,6 +62,7 @@ import {
 } from './onboardingWizard';
 
 const THEME_STORAGE_KEY = 'safepocket.theme_mode';
+const MATERIAL_ACCENT_STORAGE_KEY = 'safepocket.material_accent';
 
 export function resolveEffectiveTheme(
   mode: ThemeMode,
@@ -67,6 +70,12 @@ export function resolveEffectiveTheme(
 ): 'light' | 'dark' {
   if (mode === 'dark') return 'dark';
   if (mode === 'system') return prefersDark ? 'dark' : 'light';
+  return 'light';
+}
+
+export function nextThemeModeInCycle(current: ThemeMode): ThemeMode {
+  if (current === 'light') return 'dark';
+  if (current === 'dark') return 'system';
   return 'light';
 }
 
@@ -128,6 +137,7 @@ export class SafePocketAppShell {
   private readonly autoLockMonitor: IdleAutoLockMonitor;
 
   private themeMode: ThemeMode = 'light';
+  private materialAccent: MaterialColorScheme = 'emerald';
   private items: VaultItem[] = [];
   private selectedNav: NavSelection = 'ALL';
   private selectedItemId: string | null = null;
@@ -167,6 +177,7 @@ export class SafePocketAppShell {
 
   constructor(private readonly root: HTMLElement) {
     this.themeMode = this.loadSavedThemeMode();
+    this.materialAccent = this.loadSavedMaterialAccent();
     this.applyThemeToDocument();
 
     this.clipboard = new ClipboardHygieneController((seconds, cleared) => {
@@ -197,8 +208,27 @@ export class SafePocketAppShell {
     return 'light';
   }
 
+  private loadSavedMaterialAccent(): MaterialColorScheme {
+    if (typeof localStorage === 'undefined') return 'emerald';
+    const raw = localStorage.getItem(MATERIAL_ACCENT_STORAGE_KEY);
+    if (
+      raw === 'emerald' ||
+      raw === 'device' ||
+      raw === 'ocean' ||
+      raw === 'terracotta' ||
+      raw === 'slate'
+    ) {
+      return raw;
+    }
+    return 'emerald';
+  }
+
   get currentThemeMode(): ThemeMode {
     return this.themeMode;
+  }
+
+  get currentMaterialAccent(): MaterialColorScheme {
+    return this.materialAccent;
   }
 
   get effectiveTheme(): 'light' | 'dark' {
@@ -218,15 +248,40 @@ export class SafePocketAppShell {
     this.render();
   }
 
+  setMaterialAccent(accent: MaterialColorScheme): void {
+    this.materialAccent = accent;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(MATERIAL_ACCENT_STORAGE_KEY, accent);
+    }
+    this.applyThemeToDocument();
+    this.render();
+  }
+
   private toggleQuickTheme(): void {
-    const next: ThemeMode = this.effectiveTheme === 'dark' ? 'light' : 'dark';
-    this.setThemeMode(next);
+    this.setThemeMode(nextThemeModeInCycle(this.themeMode));
+  }
+
+  private renderThemeToggleIconSvg(): string {
+    if (this.themeMode === 'dark') {
+      return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>`;
+    }
+    if (this.themeMode === 'system') {
+      return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 3v18"></path><path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" fill-opacity="0.28"></path></svg>`;
+    }
+    return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>`;
+  }
+
+  private themeToggleTooltip(): string {
+    if (this.themeMode === 'light') return this.i18n.t('theme_light');
+    if (this.themeMode === 'dark') return this.i18n.t('theme_dark');
+    return this.i18n.t('theme_system');
   }
 
   private applyThemeToDocument(): void {
     if (typeof document === 'undefined') return;
     const effective = this.effectiveTheme;
     document.documentElement.setAttribute('data-theme', effective);
+    document.documentElement.setAttribute('data-accent', this.materialAccent);
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) {
       meta.setAttribute('content', effective === 'dark' ? '#0E1315' : '#F5F7FA');
@@ -858,8 +913,6 @@ export class SafePocketAppShell {
       version: APP_BUILD_INFO.versionName,
       build: APP_BUILD_INFO.versionCode
     });
-    const isDark = this.effectiveTheme === 'dark';
-
     this.root.innerHTML = `
       ${this.renderClipboardBanner()}
       <div class="sp-shell ${this.mobileDetailOpen ? 'mobile-detail-open' : ''}">
@@ -876,20 +929,13 @@ export class SafePocketAppShell {
                 </div>
                 <h1 class="sp-brand-title">${this.escape(this.i18n.t('app_name'))}</h1>
               </div>
-              <div style="display:flex;align-items:center;gap:6px;">
-                <button
-                  type="button"
-                  id="sp-quick-theme-toggle"
-                  class="sp-theme-toggle-btn"
-                  title="${this.escape(
-                    isDark
-                      ? this.i18n.t('theme_light')
-                      : this.i18n.t('theme_dark')
-                  )}"
-                  aria-label="${this.escape(this.i18n.t('settings_theme_title'))}"
-                >${isDark ? '☀' : '☾'}</button>
-                <span class="sp-zk-chip">AES-256</span>
-              </div>
+              <button
+                type="button"
+                id="sp-quick-theme-toggle"
+                class="sp-theme-toggle-btn"
+                title="${this.escape(this.themeToggleTooltip())}"
+                aria-label="${this.escape(this.i18n.t('settings_theme_title'))}"
+              >${this.renderThemeToggleIconSvg()}</button>
             </div>
 
             <nav class="sp-nav-group">
@@ -1065,20 +1111,19 @@ export class SafePocketAppShell {
   private renderOnboardingWizardModal(): string {
     const entropy = estimateMasterPasswordEntropy(this.onboardingPassword);
     const pct = Math.min(100, Math.max(12, Math.round((entropy.bits / 110) * 100)));
-    const isDark = this.effectiveTheme === 'dark';
 
     return `
       <div class="sp-overlay">
         <form class="sp-modal-card" id="sp-onboarding-form" style="max-width:540px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-            <div style="display:flex;align-items:center;gap:10px;">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
               <div class="sp-logo-mark">🛡</div>
               <div>
                 <h1 style="margin:0;font-size:18px;">${this.escape(
                   this.i18n.t('onboarding_welcome_title')
                 )}</h1>
                 <div style="font-size:12px;color:var(--text-secondary);">${this.escape(
-                  this.i18n.t('security_kdf_badge')
+                  this.i18n.t('app_tagline')
                 )}</div>
               </div>
             </div>
@@ -1087,10 +1132,8 @@ export class SafePocketAppShell {
                 type="button"
                 id="sp-onboard-theme-toggle"
                 class="sp-theme-toggle-btn"
-                title="${this.escape(
-                  isDark ? this.i18n.t('theme_light') : this.i18n.t('theme_dark')
-                )}"
-              >${isDark ? '☀' : '☾'}</button>
+                title="${this.escape(this.themeToggleTooltip())}"
+              >${this.renderThemeToggleIconSvg()}</button>
               <div class="sp-lang-quick">
                 ${SUPPORTED_LOCALES.map(
                   (loc) => `
@@ -2029,7 +2072,7 @@ export class SafePocketAppShell {
         </span>
       </div>
 
-      <!-- 0. Appearance & Theme (Light Default / Dark Option / System) -->
+      <!-- 0. Appearance & Material Theme (Light Default / Dark / Use Device Theme + Material Accent) -->
       <section class="sp-settings-section">
         <h2>${this.escape(this.i18n.t('settings_theme_title'))}</h2>
         <div class="sp-theme-segmented" role="group" aria-label="${this.escape(
@@ -2059,6 +2102,61 @@ export class SafePocketAppShell {
             }"
             data-set-theme="system"
           >◐ ${this.escape(this.i18n.t('theme_system'))}</button>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:4px;border-top:1px solid var(--border-subtle);">
+          <div style="font-size:12px;font-weight:600;color:var(--text-secondary);">
+            ${this.escape(this.i18n.t('settings_material_color_title'))}
+          </div>
+          <div class="sp-material-accent-grid" role="group" aria-label="${this.escape(
+            this.i18n.t('settings_material_color_title')
+          )}">
+            ${(
+              [
+                {
+                  id: 'device' as MaterialColorScheme,
+                  labelKey: 'material_color_device',
+                  dotBg: 'AccentColor'
+                },
+                {
+                  id: 'emerald' as MaterialColorScheme,
+                  labelKey: 'material_color_emerald',
+                  dotBg: 'hsl(168, 74%, 28%)'
+                },
+                {
+                  id: 'ocean' as MaterialColorScheme,
+                  labelKey: 'material_color_ocean',
+                  dotBg: 'hsl(208, 78%, 36%)'
+                },
+                {
+                  id: 'terracotta' as MaterialColorScheme,
+                  labelKey: 'material_color_terracotta',
+                  dotBg: 'hsl(20, 68%, 38%)'
+                },
+                {
+                  id: 'slate' as MaterialColorScheme,
+                  labelKey: 'material_color_slate',
+                  dotBg: 'hsl(212, 24%, 26%)'
+                }
+              ]
+            )
+              .map(
+                (acc) => `
+                <button
+                  type="button"
+                  id="sp-accent-${acc.id}-btn"
+                  class="sp-btn ${
+                    this.materialAccent === acc.id ? 'sp-btn-primary' : ''
+                  }"
+                  data-set-accent="${acc.id}"
+                >
+                  <span class="sp-accent-dot" style="background:${acc.dotBg};"></span>
+                  <span>${this.escape(this.i18n.t(acc.labelKey))}</span>
+                </button>
+              `
+              )
+              .join('')}
+          </div>
         </div>
       </section>
 
@@ -2526,12 +2624,11 @@ export class SafePocketAppShell {
       draft.category === 'INSURANCE_CARD' ||
       draft.category === 'MEMBERSHIP_CARD' ||
       draft.category === 'OFFICIAL_DOCUMENT';
-    const palettes: Array<{ id: CardThemePalette; key: string }> = [
-      { id: 'obsidian_slate', key: 'palette_obsidian_slate' },
-      { id: 'alpine_emerald', key: 'palette_alpine_emerald' },
-      { id: 'aegean_cobalt', key: 'palette_aegean_cobalt' },
-      { id: 'terracotta_gold', key: 'palette_terracotta_gold' }
-    ];
+    const palettes: Array<{ id: CardThemePalette; key: string }> =
+      CARD_THEME_PALETTES.map((id) => ({
+        id,
+        key: `palette_${id}`
+      }));
 
     return `
       <div class="sp-overlay" id="sp-modal-backdrop">
@@ -2998,19 +3095,18 @@ export class SafePocketAppShell {
 
   private renderLockScreen(): string {
     const isDemo = localStorage.getItem('safepocket.demo_mode') === 'true';
-    const isDark = this.effectiveTheme === 'dark';
     return `
       <div class="sp-overlay">
         <form class="sp-modal-card" id="sp-unlock-form">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-            <div style="display:flex;align-items:center;gap:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
               <div class="sp-logo-mark">🔒</div>
               <div>
                 <h1 style="margin:0;font-size:18px;">${this.escape(
                   this.i18n.t('app_name')
                 )}</h1>
                 <div style="font-size:12px;color:var(--text-secondary);">${this.escape(
-                  this.i18n.t('security_kdf_badge')
+                  this.i18n.t('app_tagline')
                 )}</div>
               </div>
             </div>
@@ -3018,10 +3114,8 @@ export class SafePocketAppShell {
               type="button"
               id="sp-lock-theme-toggle"
               class="sp-theme-toggle-btn"
-              title="${this.escape(
-                isDark ? this.i18n.t('theme_light') : this.i18n.t('theme_dark')
-              )}"
-            >${isDark ? '☀' : '☾'}</button>
+              title="${this.escape(this.themeToggleTooltip())}"
+            >${this.renderThemeToggleIconSvg()}</button>
           </div>
 
           ${
@@ -3117,7 +3211,7 @@ export class SafePocketAppShell {
   }
 
   private wireShellEvents(): void {
-    // Quick theme toggle & Settings theme segmented selector
+    // Quick theme toggle & Settings theme + Material Design accent selectors
     this.root
       .querySelector('#sp-quick-theme-toggle')
       ?.addEventListener('click', () => {
@@ -3130,6 +3224,22 @@ export class SafePocketAppShell {
           const mode = btn.dataset.setTheme as ThemeMode;
           if (mode === 'light' || mode === 'dark' || mode === 'system') {
             this.setThemeMode(mode);
+          }
+        });
+      });
+    this.root
+      .querySelectorAll<HTMLElement>('[data-set-accent]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const accent = btn.dataset.setAccent as MaterialColorScheme;
+          if (
+            accent === 'emerald' ||
+            accent === 'device' ||
+            accent === 'ocean' ||
+            accent === 'terracotta' ||
+            accent === 'slate'
+          ) {
+            this.setMaterialAccent(accent);
           }
         });
       });

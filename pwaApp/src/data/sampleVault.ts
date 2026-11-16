@@ -325,7 +325,7 @@ Home Insurance Policy: ALLIANZ-DE-9940218
       favorite: true,
       tags: ['bank', 'girokonto', 'sepa', 'gehalt'],
       cardTheme: {
-        paletteId: 'terracotta_gold',
+        paletteId: 'sunset_coral',
         networkBrand: 'SEPA IBAN'
       },
       fields: [
@@ -393,7 +393,7 @@ Home Insurance Policy: ALLIANZ-DE-9940218
       favorite: true,
       tags: ['krankenkasse', 'egk', 'ehic', 'gesundheit', 'versicherung'],
       cardTheme: {
-        paletteId: 'aegean_cobalt',
+        paletteId: 'arctic_cyan',
         networkBrand: 'eGK G2.1'
       },
       fields: [
@@ -454,7 +454,7 @@ Home Insurance Policy: ALLIANZ-DE-9940218
       favorite: false,
       tags: ['mitgliedschaft', 'adac', 'mobilitaet', 'club'],
       cardTheme: {
-        paletteId: 'alpine_emerald',
+        paletteId: 'pearl_ivory',
         networkBrand: 'PLUS MEMBER'
       },
       fields: [
