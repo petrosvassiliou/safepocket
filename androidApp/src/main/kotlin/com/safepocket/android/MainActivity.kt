@@ -13,6 +13,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import com.safepocket.android.data.AndroidSampleVault
+import com.safepocket.android.data.AndroidVaultRepository
 import com.safepocket.android.ui.AdaptiveSafePocketShell
 import com.safepocket.shared.i18n.LocalizationEngine
 import com.safepocket.shared.i18n.SupportedLocale
@@ -30,18 +31,13 @@ data class FoldablePostureState(
 
 /**
  * Single Adaptive Activity for Android 10+ / Android 17+ Smartphones, Unfolded Foldables,
- * and Googlebook OS / ChromeOS Desktop Windows.
- *
- * - Loads all 6 bundled `.arb.json` localization catalogs (`en`, `de`, `it`, `fr`, `es`, `el`)
- *   from APK assets so every menu item, category, field label, and dialog displays its localized name.
- * - Allows screenshots by default (`allowScreenshots = true`) and provides a real-time Settings option
- *   to enable or disable screenshots (`FLAG_SECURE`) without restarting the Activity.
- * - Uses Light Theme (`ThemePreference.LIGHT`) by default with Dark & Use Device Theme options.
+ * and Googlebook OS / ChromeOS Desktop Windows (`SafePocket v0.2`).
  */
 class MainActivity : ComponentActivity() {
 
     private var postureState by mutableStateOf(FoldablePostureState())
     private lateinit var i18nEngine: LocalizationEngine
+    private lateinit var vaultRepository: AndroidVaultRepository
 
     private fun loadBundledArbCatalogs(): Map<String, String> =
         SupportedLocale.entries.associate { locale ->
@@ -87,7 +83,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        val initialItems = AndroidSampleVault.decodeItemsOrDefault(prefs.getString(KEY_VAULT_ITEMS, null))
+        vaultRepository = AndroidVaultRepository(applicationContext, prefs)
+        val bootstrapFallbackItems = AndroidSampleVault.decodeItemsOrDefault(prefs.getString(KEY_VAULT_ITEMS, null))
 
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -111,21 +108,71 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            var vaultItems by remember { mutableStateOf(initialItems) }
+            val coroutineScope = rememberCoroutineScope()
+            var vaultItems by remember { mutableStateOf(bootstrapFallbackItems) }
             var selectedCategory by remember { mutableStateOf<VaultCategory?>(null) }
             var favoritesOnly by remember { mutableStateOf(false) }
-            var selectedItem by remember { mutableStateOf<VaultItemPayload?>(initialItems.firstOrNull()) }
+            var selectedItem by remember { mutableStateOf<VaultItemPayload?>(bootstrapFallbackItems.firstOrNull()) }
             var themePreference by remember { mutableStateOf(initialTheme) }
             var useDeviceDynamicColor by remember { mutableStateOf(initialDynamicColor) }
             var allowScreenshots by remember { mutableStateOf(initialAllowScreenshots) }
+            var autoDownloadLogos by remember { mutableStateOf(vaultRepository.autoDownloadLogos) }
             var showSettingsDialog by remember { mutableStateOf(false) }
-            var showNewItemDialog by remember { mutableStateOf(false) }
+            var showEditorDialog by remember { mutableStateOf(false) }
+            var editingItem by remember { mutableStateOf<VaultItemPayload?>(null) }
             var isVaultLocked by remember { mutableStateOf(false) }
             var focusSearchTrigger by remember { mutableIntStateOf(0) }
+            var statusTick by remember { mutableIntStateOf(0) }
+            var statusBannerMessage by remember { mutableStateOf<String?>(null) }
 
-            val persistItems: (List<VaultItemPayload>) -> Unit = { updated ->
-                vaultItems = updated
-                prefs.edit().putString(KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(updated)).apply()
+            // Initialize encrypted SQLCipher 4.6 local database on launch
+            LaunchedEffect(Unit) {
+                val loaded = vaultRepository.initializeAndLoadItems()
+                vaultItems = loaded
+                if (selectedItem == null || loaded.none { it.id == selectedItem?.id }) {
+                    selectedItem = loaded.firstOrNull()
+                } else {
+                    selectedItem = loaded.firstOrNull { it.id == selectedItem?.id }
+                }
+                statusTick++
+            }
+
+            val localDbStatus = remember(vaultItems, statusTick) {
+                vaultRepository.getLocalDbStatus(vaultItems)
+            }
+            val cloudSyncStatus = remember(statusTick) {
+                vaultRepository.getCloudSyncStatus()
+            }
+
+            val upsertAndEnrichItem: (VaultItemPayload) -> Unit = { candidate ->
+                val exists = vaultItems.any { it.id == candidate.id }
+                val updatedList = if (exists) {
+                    vaultItems.map { if (it.id == candidate.id) candidate else it }
+                } else {
+                    listOf(candidate) + vaultItems
+                }
+                vaultItems = updatedList
+                selectedItem = candidate
+                showEditorDialog = false
+                editingItem = null
+
+                coroutineScope.launch {
+                    vaultRepository.upsertItem(candidate, updatedList)
+                    statusTick++
+                    // Optionally download high-res institution logo & color in background if enabled
+                    if (autoDownloadLogos && candidate.cardTheme?.institutionLogoDataUri == null) {
+                        val enriched = vaultRepository.enrichItemBranding(candidate, forceOnlineFetch = false)
+                        if (enriched != candidate) {
+                            val afterLogoList = vaultItems.map { if (it.id == enriched.id) enriched else it }
+                            vaultItems = afterLogoList
+                            if (selectedItem?.id == enriched.id) {
+                                selectedItem = enriched
+                            }
+                            vaultRepository.upsertItem(enriched, afterLogoList)
+                            statusTick++
+                        }
+                    }
+                }
             }
 
             AdaptiveSafePocketShell(
@@ -137,10 +184,17 @@ class MainActivity : ComponentActivity() {
                 themePreference = themePreference,
                 useDeviceDynamicColor = useDeviceDynamicColor,
                 allowScreenshots = allowScreenshots,
+                autoDownloadLogos = autoDownloadLogos,
                 isVaultLocked = isVaultLocked,
+                hasCustomMasterPassword = localDbStatus.hasCustomMasterPassword,
+                localDbStatus = localDbStatus,
+                cloudSyncStatus = cloudSyncStatus,
                 showSettingsDialog = showSettingsDialog,
-                showNewItemDialog = showNewItemDialog,
+                showEditorDialog = showEditorDialog,
+                editingItem = editingItem,
                 focusSearchTrigger = focusSearchTrigger,
+                statusBannerMessage = statusBannerMessage,
+                onDismissStatusBanner = { statusBannerMessage = null },
                 onSelectThemePreference = { nextTheme ->
                     themePreference = nextTheme
                     prefs.edit().putString(KEY_THEME_PREFERENCE, nextTheme.name).apply()
@@ -153,6 +207,10 @@ class MainActivity : ComponentActivity() {
                     allowScreenshots = enabled
                     applyScreenshotWindowPolicy(enabled)
                     prefs.edit().putBoolean(KEY_ALLOW_SCREENSHOTS, enabled).apply()
+                },
+                onToggleAutoDownloadLogos = { enabled ->
+                    autoDownloadLogos = enabled
+                    vaultRepository.autoDownloadLogos = enabled
                 },
                 onSelectLocaleOverride = { localeOverride ->
                     i18nEngine.setManualLocaleOverride(localeOverride)
@@ -172,32 +230,128 @@ class MainActivity : ComponentActivity() {
                 },
                 onSelectItem = { selectedItem = it },
                 onToggleFavoriteItem = { target ->
-                    val nextList = vaultItems.map {
-                        if (it.id == target.id) it.copy(favorite = !it.favorite, updatedAtEpochMs = System.currentTimeMillis()) else it
-                    }
-                    persistItems(nextList)
-                    selectedItem = nextList.firstOrNull { it.id == target.id }
+                    val updated = target.copy(
+                        favorite = !target.favorite,
+                        updatedAtEpochMs = System.currentTimeMillis()
+                    )
+                    upsertAndEnrichItem(updated)
+                },
+                onTogglePinItem = { target ->
+                    val updated = target.copy(
+                        pinned = !target.pinned,
+                        updatedAtEpochMs = System.currentTimeMillis()
+                    )
+                    upsertAndEnrichItem(updated)
+                },
+                onDuplicateItem = { target ->
+                    val now = System.currentTimeMillis()
+                    val copyItem = target.copy(
+                        id = "item-$now",
+                        title = "${target.title} (Copy)",
+                        createdAtEpochMs = now,
+                        updatedAtEpochMs = now
+                    )
+                    upsertAndEnrichItem(copyItem)
+                },
+                onEditItem = { target ->
+                    editingItem = target
+                    showEditorDialog = true
                 },
                 onDeleteItem = { target ->
                     val nextList = vaultItems.filterNot { it.id == target.id }
-                    persistItems(nextList)
+                    vaultItems = nextList
                     if (selectedItem?.id == target.id) {
                         selectedItem = nextList.firstOrNull()
                     }
+                    coroutineScope.launch {
+                        vaultRepository.deleteItem(target, nextList)
+                        statusTick++
+                    }
                 },
-                onCreateItem = { created ->
-                    val nextList = listOf(created) + vaultItems
-                    persistItems(nextList)
-                    selectedItem = created
-                    showNewItemDialog = false
+                onSaveEditorItem = upsertAndEnrichItem,
+                onFetchBrandLogoPreview = { draft ->
+                    vaultRepository.enrichItemBranding(draft, forceOnlineFetch = true)
                 },
                 onFocusSearch = { focusSearchTrigger++ },
-                onNewItem = { showNewItemDialog = true },
-                onDismissNewItem = { showNewItemDialog = false },
+                onNewItem = {
+                    editingItem = null
+                    showEditorDialog = true
+                },
+                onDismissEditor = {
+                    showEditorDialog = false
+                    editingItem = null
+                },
                 onLockVault = { isVaultLocked = true },
-                onUnlockVault = { isVaultLocked = false },
+                onUnlockVaultWithPassword = { candidatePw ->
+                    val ok = vaultRepository.verifyMasterPassword(candidatePw)
+                    if (ok) isVaultLocked = false
+                    ok
+                },
                 onOpenSettings = { showSettingsDialog = true },
                 onDismissSettings = { showSettingsDialog = false },
+                onConfigureVaultCredentials = { masterPw, secretKeyOrUri ->
+                    vaultRepository.configureVaultCredentials(masterPw, secretKeyOrUri, vaultItems)
+                    statusTick++
+                },
+                onCreateFirebaseAccount = { email, pw ->
+                    vaultRepository.createFirebaseAccount(email, pw)
+                    statusTick++
+                },
+                onSignInFirebaseAccount = { email, pw ->
+                    vaultRepository.signInFirebaseAccount(email, pw)
+                    statusTick++
+                },
+                onSignOutFirebaseAccount = {
+                    vaultRepository.signOutFirebaseAccount()
+                    statusTick++
+                },
+                onSetCloudSyncEnabled = { enabled ->
+                    vaultRepository.cloudSyncEnabled = enabled
+                    statusTick++
+                },
+                onSyncNow = {
+                    val report = vaultRepository.syncNow(vaultItems)
+                    vaultItems = report.updatedItems
+                    if (selectedItem == null || report.updatedItems.none { it.id == selectedItem?.id }) {
+                        selectedItem = report.updatedItems.firstOrNull()
+                    } else {
+                        selectedItem = report.updatedItems.firstOrNull { it.id == selectedItem?.id }
+                    }
+                    statusTick++
+                    report
+                },
+                onExportEncryptedBackup = { backupPw ->
+                    vaultRepository.exportEncryptedContainer(vaultItems, backupPw).encodeToByteArray()
+                },
+                onRestoreEncryptedBackup = { rawJson, pw, sk, replace ->
+                    val updated = vaultRepository.restoreEncryptedContainer(
+                        rawJson = rawJson,
+                        backupPassword = pw,
+                        backupSecretKey = sk,
+                        existingItems = vaultItems,
+                        replaceExisting = replace
+                    )
+                    vaultItems = updated
+                    selectedItem = updated.firstOrNull()
+                    statusTick++
+                },
+                onImport1PasswordOrCsv = { fileName, rawBytes, includeLogins ->
+                    val (report, merged) = vaultRepository.importFromFileBytes(
+                        fileName = fileName,
+                        rawBytes = rawBytes,
+                        includeLoginsAsNotes = includeLogins,
+                        existingItems = vaultItems
+                    )
+                    vaultItems = merged
+                    selectedItem = report.importedItems.firstOrNull() ?: merged.firstOrNull()
+                    statusTick++
+                    report
+                },
+                onVerifyMasterPassword = { pw -> vaultRepository.verifyMasterPassword(pw) },
+                onExport1Password1Pux = { vaultRepository.export1Password1PuxBytes(vaultItems) },
+                onExport1PasswordCsv = { vaultRepository.export1PasswordCsvText(vaultItems).encodeToByteArray() },
+                onExportSafePocketCsv = { vaultRepository.exportSafePocketCsvText(vaultItems).encodeToByteArray() },
+                onExportEmergencyKitHtml = { vaultRepository.buildEmergencyKitHtml().encodeToByteArray() },
                 onDropDocumentAttachment = { true }
             )
         }

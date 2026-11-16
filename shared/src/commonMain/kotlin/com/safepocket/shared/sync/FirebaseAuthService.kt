@@ -1,6 +1,7 @@
 package com.safepocket.shared.sync
 
 import com.safepocket.shared.crypto.CryptoPrimitives
+import com.safepocket.shared.crypto.HkdfSha256Pure
 import com.safepocket.shared.crypto.ZeroKnowledgeEncryptionService
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -8,7 +9,11 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
 data class CloudSyncUserSession(
@@ -45,62 +50,88 @@ object ProvisionedFirebaseProject {
 /**
  * Shared KMP Zero-Knowledge Firebase Auth Client (Default Cloud Sync Account Creation & Sign-In).
  *
- * Pre-initialized in dormant standby mode from v0.1 boot (making zero network calls while
- * `VaultSyncPreferences.cloudSyncEnabled == false`). Derives a domain-separated authentication
- * verifier via HKDF-SHA256 so Firebase Auth never receives the user's Master Password.
+ * Uses exact RFC 5869 HKDF-SHA256 parameters matching `pwaApp/src/sync/liveCloudConnectors.ts`
+ * (`deriveZeroKnowledgeCloudAuthPassword`) so accounts created on Android sign in seamlessly on
+ * ChromeOS PWA and vice versa, without transmitting raw passwords to Firebase Auth.
  */
 class FirebaseZeroKnowledgeAuthService(
     private val httpClient: HttpClient,
+    @Suppress("UNUSED_PARAMETER")
     private val primitives: CryptoPrimitives,
-    private val firebaseWebApiKey: String = ProvisionedFirebaseProject.WEB_API_KEY
+    private val firebaseWebApiKey: String = ProvisionedFirebaseProject.WEB_API_KEY,
+    private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
     private var activeSession: CloudSyncUserSession? = null
 
     val currentUser: CloudSyncUserSession? get() = activeSession
 
-    suspend fun deriveZeroKnowledgeAuthPassword(email: String, syncPassword: String): String {
+    fun restoreSession(session: CloudSyncUserSession?) {
+        activeSession = session
+    }
+
+    fun deriveZeroKnowledgeAuthPassword(email: String, syncPassword: String): String {
         val cleanEmail = email.trim().lowercase()
         val ikm = "safepocket-cloud-auth:$cleanEmail:$syncPassword".encodeToByteArray()
         val salt = "salt:$cleanEmail:safepocket-v0.1".encodeToByteArray()
-        val derived = primitives.hkdfSha256Combine(
-            argonKey = ikm,
-            secretKeyBytes = salt,
-            infoUtf8 = "safepocket-firebase-auth-verifier-v1".encodeToByteArray()
+        val derived = HkdfSha256Pure.derive(
+            ikm = ikm,
+            salt = salt,
+            info = "safepocket-firebase-auth-verifier-v1".encodeToByteArray(),
+            length = 32
         )
         return "spzk_${ZeroKnowledgeEncryptionService.bytesToHex(derived)}"
     }
 
-    suspend fun createCloudAccount(email: String, syncPassword: String): CloudSyncUserSession {
-        val zkPassword = deriveZeroKnowledgeAuthPassword(email, syncPassword)
-        val response: IdentityToolkitAuthResponse = httpClient.post(
-            "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$firebaseWebApiKey"
-        ) {
-            contentType(ContentType.Application.Json)
-            setBody(IdentityToolkitAuthRequest(email = email.trim().lowercase(), password = zkPassword))
-        }.body()
+    suspend fun createCloudAccount(email: String, syncPassword: String): CloudSyncUserSession =
+        authenticate("signUp", email, syncPassword)
 
-        return CloudSyncUserSession(
-            uid = response.localId,
-            email = response.email,
-            idToken = response.idToken,
-            refreshToken = response.refreshToken
-        ).also { activeSession = it }
+    suspend fun signInCloudAccount(email: String, syncPassword: String): CloudSyncUserSession =
+        authenticate("signInWithPassword", email, syncPassword)
+
+    suspend fun refreshIdTokenIfPossible(): CloudSyncUserSession? {
+        val cur = activeSession ?: return null
+        val refresh = cur.refreshToken?.takeIf { it.isNotBlank() } ?: return cur
+        val resp = httpClient.post("https://securetoken.googleapis.com/v1/token?key=$firebaseWebApiKey") {
+            contentType(ContentType.Application.FormUrlEncoded)
+            setBody("grant_type=refresh_token&refresh_token=$refresh")
+        }
+        if (!resp.status.isSuccess()) return cur
+        val raw: String = resp.body()
+        val obj = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return cur
+        val nextIdToken = obj["id_token"]?.jsonPrimitive?.content ?: return cur
+        val nextRefresh = obj["refresh_token"]?.jsonPrimitive?.content ?: refresh
+        return cur.copy(idToken = nextIdToken, refreshToken = nextRefresh).also { activeSession = it }
     }
 
-    suspend fun signInCloudAccount(email: String, syncPassword: String): CloudSyncUserSession {
+    private suspend fun authenticate(
+        action: String,
+        email: String,
+        syncPassword: String
+    ): CloudSyncUserSession {
         val zkPassword = deriveZeroKnowledgeAuthPassword(email, syncPassword)
-        val response: IdentityToolkitAuthResponse = httpClient.post(
-            "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$firebaseWebApiKey"
+        val httpResp = httpClient.post(
+            "https://identitytoolkit.googleapis.com/v1/accounts:$action?key=$firebaseWebApiKey"
         ) {
             contentType(ContentType.Application.Json)
-            setBody(IdentityToolkitAuthRequest(email = email.trim().lowercase(), password = zkPassword))
-        }.body()
-
+            setBody(json.encodeToString(IdentityToolkitAuthRequest.serializer(), IdentityToolkitAuthRequest(
+                email = email.trim().lowercase(),
+                password = zkPassword
+            )))
+        }
+        val bodyText: String = httpResp.body()
+        if (!httpResp.status.isSuccess()) {
+            val fbErr = runCatching {
+                json.parseToJsonElement(bodyText).jsonObject["error"]
+                    ?.jsonObject?.get("message")?.jsonPrimitive?.content
+            }.getOrNull()
+            throw IllegalStateException(fbErr ?: "Firebase Auth $action failed (${httpResp.status.value})")
+        }
+        val parsed = json.decodeFromString(IdentityToolkitAuthResponse.serializer(), bodyText)
         return CloudSyncUserSession(
-            uid = response.localId,
-            email = response.email,
-            idToken = response.idToken,
-            refreshToken = response.refreshToken
+            uid = parsed.localId,
+            email = parsed.email,
+            idToken = parsed.idToken,
+            refreshToken = parsed.refreshToken
         ).also { activeSession = it }
     }
 

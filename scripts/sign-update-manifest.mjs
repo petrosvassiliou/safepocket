@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.1.2').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.2').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '3');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '4');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-16T12:00:00Z',
+    publishedAt: '2026-11-16T20:30:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} permanent release-signed Android APK (v1+v2+v3), bundled 6-locale ARB display names & live Screenshot toggle.\n• Offline live camera scanner with Code 128B, EAN-13 & QR encoders, full-screen presentation mode, and ICAO MRZ assist.\n• Configurable expiry alerts, Pin-to-Top & tag filters, cross-vault .safepocket merge/restore, and printable Emergency Recovery Kit with QR.`,
-      de: `• SafePocket v${latestVersion} permanent signierte Release-APK (v1+v2+v3), gebündelte 6-Sprachen-Anzeigenamen & Live-Screenshot-Schalter.\n• Offline-Kamerascanner mit Code-128B-, EAN-13- & QR-Generator, Vollbild-Präsentationsmodus und ICAO-MRZ-Assistent.\n• Konfigurierbare Ablaufwarnungen, Anheften & Tag-Filter, .safepocket-Zusammenführung sowie druckbares Notfall-Kit mit QR-Code.`,
-      it: `• SafePocket v${latestVersion} APK Android firmato con chiave di rilascio permanente (v1+v2+v3), nomi localizzati in 6 lingue e opzione screenshot.\n• Scanner fotocamera offline con codici Code 128B, EAN-13 e QR, modalità presentazione a schermo intero e supporto MRZ ICAO.\n• Avvisi di scadenza configurabili, elementi fissati e filtri tag, unione/ripristino .safepocket e Kit di Emergenza stampabile con QR.`,
-      fr: `• SafePocket v${latestVersion} APK Android signé avec clé de publication permanente (v1+v2+v3), noms localisés en 6 langues et option captures d’écran.\n• Scanner caméra hors ligne avec Code 128B, EAN-13 et QR, mode présentation plein écran et assistant MRZ OACI.\n• Alertes d’expiration configurables, épinglage et filtres par étiquette, fusion/restauration .safepocket et Kit d’Urgence imprimable avec QR.`,
-      es: `• SafePocket v${latestVersion} APK Android firmado con clave permanente (v1+v2+v3), nombres localizados en 6 idiomas y opción de capturas de pantalla.\n• Escáner de cámara sin conexión con Code 128B, EAN-13 y QR, modo presentación a pantalla completa y asistente MRZ OACI.\n• Alertas de caducidad configurables, fijar arriba y filtros por etiquetas, fusión .safepocket y Kit de Emergencia imprimible con QR.`,
-      el: `• SafePocket v${latestVersion} μόνιμα υπογεγραμμένο Android APK (v1+v2+v3), ενσωματωμένα ονόματα σε 6 γλώσσες & διακόπτης στιγμιότυπων οθόνης.\n• Offline σαρωτής κάμερας με Code 128B, EAN-13 & QR, λειτουργία παρουσίασης πλήρους οθόνης και βοηθό MRZ ICAO.\n• Ρυθμιζόμενες ειδοποιήσεις λήξης, καρφίτσωμα & φίλτρα ετικετών, συγχώνευση .safepocket και εκτυπώσιμο Κιτ Έκτακτης Ανάγκης με QR.`
+      en: `• SafePocket v${latestVersion} adds automatic Institution + Card Network/Type dual logos & brand colors (e.g. Deutsche Bank + VISA) with optional HTTPS icon download.\n• Complete category-specific field templates across all 7 categories, full item editing, bottom-left theme toggle, and smooth seam-free button hover.\n• Local encrypted SQLCipher / SQLite WASM DB + Firebase Cloud Sync account creation, encrypted .safepocket backup/restore, and 1Password (.1pux / CSV) & CSV import/export.`,
+      de: `• SafePocket v${latestVersion} bietet automatische Dual-Logos (Institut + Kartentyp, z. B. Deutsche Bank + VISA) und Markenfarben inkl. optionalem HTTPS-Logo-Download.\n• Vollständige kategoriebezogene Felder für alle 7 Kategorien, vollständiges Bearbeiten bestehender Einträge, Theme-Icon unten links & weicher Button-Hover ohne graue Linie.\n• Lokale verschlüsselte SQLCipher-/SQLite-Datenbank + Firebase-Konto & Cloud-Sync, verschlüsseltes .safepocket-Backup sowie Import/Export für 1Password (.1pux / CSV) & CSV.`,
+      it: `• SafePocket v${latestVersion} introduce doppi loghi automatici istituto + circuito/tipo (es. Deutsche Bank + VISA) e colori del brand con download icone opzionale.\n• Campi completi per tutte le 7 categorie, modifica completa degli elementi, selettore tema in basso a sinistra e pulsanti fluidi senza linea grigia.\n• DB locale cifrato SQLCipher / SQLite WASM + account e sync Firebase, backup cifrato .safepocket e import/export 1Password (.1pux / CSV) e CSV.`,
+      fr: `• SafePocket v${latestVersion} ajoute les doubles logos automatiques établissement + réseau/type (ex. Deutsche Bank + VISA) et couleurs de marque.\n• Champs complets pour les 7 catégories, modification complète des éléments, bouton de thème en bas à gauche et survol fluide sans ligne grise.\n• Base locale chiffrée SQLCipher / SQLite WASM + compte et synchro Firebase, sauvegarde chiffrée .safepocket et import/export 1Password (.1pux / CSV) et CSV.`,
+      es: `• SafePocket v${latestVersion} añade dobles logotipos automáticos de entidad + red/tipo (ej. Deutsche Bank + VISA) y colores de marca.\n• Campos completos para las 7 categorías, edición completa de elementos, botón de tema abajo a la izquierda y botones suaves sin línea gris.\n• Base local cifrada SQLCipher / SQLite WASM + cuenta y sincronización Firebase, copia cifrada .safepocket e importación/exportación 1Password (.1pux / CSV) y CSV.`,
+      el: `• Το SafePocket v${latestVersion} προσθέτει αυτόματα διπλά λογότυπα ιδρύματος + δικτύου/τύπου (π.χ. Deutsche Bank + VISA) και χρώματα επωνυμίας.\n• Πλήρη πεδία και για τις 7 κατηγορίες, πλήρη επεξεργασία στοιχείων, εναλλαγή θέματος κάτω αριστερά και ομαλό hover κουμπιών χωρίς γκρι γραμμή.\n• Τοπική κρυπτογραφημένη βάση SQLCipher / SQLite WASM + συγχρονισμός Firebase, κρυπτογραφημένο αντίγραφο .safepocket και εισαγωγή/εξαγωγή 1Password (.1pux / CSV) & CSV.`
     },
     artifacts: {
       'android-universal': {

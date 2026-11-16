@@ -2,106 +2,179 @@ package com.safepocket.shared.backup
 
 import com.safepocket.shared.crypto.Argon2idParameters
 import com.safepocket.shared.crypto.CryptoPrimitives
+import com.safepocket.shared.crypto.HkdfSha256Pure
 import com.safepocket.shared.crypto.ZeroKnowledgeEncryptionService
 import com.safepocket.shared.model.VaultItemPayload
+import com.safepocket.shared.update.AppBuildInfo
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+@Serializable
+data class CrossPlatformKdfConfig(
+    val memorySizeKiB: Int = 16_384,
+    val iterations: Int = 3,
+    val parallelism: Int = 2,
+    val saltHex: String
+)
+
 /**
- * Backup, Restore & Portability Service.
- *
- * 1. Encrypted `.safepocket` Container:
- *    Self-contained zero-knowledge archive protected by Argon2id + Secret Key + AES-256-GCM.
- *    Safe for one-click cross-platform restore across Android, Googlebook OS, ChromeOS PWA, and macOS.
- * 2. Unencrypted JSON / CSV Export & Import:
- *    Strictly gated behind fresh Master Password re-authentication (`reauthenticateMasterPassword`).
+ * Cross-platform `.safepocket` encrypted container schema (100% compatible with ChromeOS/Web PWA).
  */
 @Serializable
 data class SafePocketContainerFile(
     val magic: String = "SAFEPOCKET-CONTAINER-V1",
+    val appVersion: String = AppBuildInfo.CURRENT_VERSION_NAME,
     val exportedAtIso: String,
-    val kdfParams: Argon2idParameters,
+    val itemCount: Int? = null,
+    val attachmentCount: Int? = null,
+    val kdf: CrossPlatformKdfConfig? = null,
+    val kdfParams: Argon2idParameters? = null,
     val ivHex: String,
     val ciphertextHex: String,
-    val containerSha256Hex: String
+    val sha256Hex: String? = null,
+    val containerSha256Hex: String? = null
+)
+
+data class ContainerInspectionSummary(
+    val exportedAtIso: String,
+    val appVersion: String,
+    val itemCount: Int?,
+    val attachmentCount: Int?,
+    val sha256Hex: String,
+    val kdf: CrossPlatformKdfConfig
 )
 
 class VaultPortabilityService(
     private val primitives: CryptoPrimitives,
-    private val json: Json = Json { prettyPrint = true; ignoreUnknownKeys = true }
+    private val json: Json = Json {
+        prettyPrint = true
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
 ) {
-    suspend fun exportEncryptedContainer(
+    private val compactJson = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
+    /**
+     * Exports a cross-platform `.safepocket` archive encrypted with `(masterPassword, secretKeyFormatted)`.
+     * Byte-for-byte compatible with `ZeroKnowledgeVaultCrypto.exportSafePocketContainer` in `pwaApp`.
+     */
+    suspend fun exportCrossPlatformContainer(
         items: List<VaultItemPayload>,
         masterPassword: String,
-        secretKeyRaw: ByteArray,
-        exportedAtIso: String
+        secretKeyFormatted: String,
+        exportedAtIso: String,
+        memorySizeKiB: Int = 16_384,
+        iterations: Int = 3,
+        parallelism: Int = 2
     ): String {
         val salt = primitives.secureRandomBytes(16)
-        val params = Argon2idParameters(saltHex = ZeroKnowledgeEncryptionService.bytesToHex(salt))
-        val pwBytes = masterPassword.encodeToByteArray()
-        try {
-            val argon = primitives.deriveArgon2idKey(
-                pwBytes, salt, params.memoryKiB, params.iterations, params.parallelism
-            )
-            val backupKey = primitives.hkdfSha256Combine(
-                argon, secretKeyRaw, "safepocket-container-backup-v1".encodeToByteArray()
-            )
-            argon.fill(0)
-            val plaintext = json.encodeToString(items).encodeToByteArray()
+        val saltHex = ZeroKnowledgeEncryptionService.bytesToHex(salt)
+        val kdf = CrossPlatformKdfConfig(
+            memorySizeKiB = memorySizeKiB,
+            iterations = iterations,
+            parallelism = parallelism,
+            saltHex = saltHex
+        )
+        val backupKey = HkdfSha256Pure.deriveTwoSecretKey(
+            masterPassword = masterPassword,
+            secretKeyFormatted = secretKeyFormatted,
+            saltHex = saltHex,
+            memorySizeKiB = memorySizeKiB,
+            iterations = iterations,
+            parallelism = parallelism,
+            domainContext = "safepocket-container-backup-v1"
+        )
+        return try {
+            val plaintext = compactJson.encodeToString(items).encodeToByteArray()
             val aad = "SAFEPOCKET-CONTAINER-V1:$exportedAtIso".encodeToByteArray()
             val (iv, ciphertext) = primitives.aes256GcmEncrypt(backupKey, plaintext, aad)
-            backupKey.fill(0)
-
             val shaHex = ZeroKnowledgeEncryptionService.bytesToHex(primitives.sha256(ciphertext))
+            val attachmentCount = items.sumOf { it.attachments.size }
+
             val container = SafePocketContainerFile(
+                appVersion = AppBuildInfo.CURRENT_VERSION_NAME,
                 exportedAtIso = exportedAtIso,
-                kdfParams = params,
+                itemCount = items.size,
+                attachmentCount = attachmentCount,
+                kdf = kdf,
                 ivHex = ZeroKnowledgeEncryptionService.bytesToHex(iv),
                 ciphertextHex = ZeroKnowledgeEncryptionService.bytesToHex(ciphertext),
-                containerSha256Hex = shaHex
+                sha256Hex = shaHex
             )
-            return json.encodeToString(container)
+            json.encodeToString(container)
         } finally {
-            pwBytes.fill(0)
+            backupKey.fill(0)
         }
     }
 
-    suspend fun restoreEncryptedContainer(
-        containerJson: String,
-        masterPassword: String,
-        secretKeyRaw: ByteArray
-    ): List<VaultItemPayload> {
+    suspend fun inspectContainer(containerJson: String): ContainerInspectionSummary {
         val container = json.decodeFromString<SafePocketContainerFile>(containerJson)
         require(container.magic == "SAFEPOCKET-CONTAINER-V1") { "Invalid .safepocket container header" }
+        val expectedSha = container.sha256Hex ?: container.containerSha256Hex
+            ?: error("Missing SHA-256 digest in .safepocket container")
         val ciphertext = ZeroKnowledgeEncryptionService.hexToBytes(container.ciphertextHex)
         val computedSha = ZeroKnowledgeEncryptionService.bytesToHex(primitives.sha256(ciphertext))
-        require(computedSha.equals(container.containerSha256Hex, ignoreCase = true)) {
+        require(computedSha.equals(expectedSha, ignoreCase = true)) {
             "Backup integrity check failed: SHA-256 mismatch"
         }
+        val resolvedKdf = container.kdf ?: container.kdfParams?.let {
+            CrossPlatformKdfConfig(
+                memorySizeKiB = it.memoryKiB,
+                iterations = it.iterations,
+                parallelism = it.parallelism,
+                saltHex = it.saltHex
+            )
+        } ?: error("Missing Argon2id KDF parameters in .safepocket container")
 
-        val salt = ZeroKnowledgeEncryptionService.hexToBytes(container.kdfParams.saltHex)
-        val pwBytes = masterPassword.encodeToByteArray()
-        try {
-            val argon = primitives.deriveArgon2idKey(
-                pwBytes,
-                salt,
-                container.kdfParams.memoryKiB,
-                container.kdfParams.iterations,
-                container.kdfParams.parallelism
+        return ContainerInspectionSummary(
+            exportedAtIso = container.exportedAtIso,
+            appVersion = container.appVersion,
+            itemCount = container.itemCount,
+            attachmentCount = container.attachmentCount,
+            sha256Hex = expectedSha,
+            kdf = resolvedKdf
+        )
+    }
+
+    suspend fun restoreCrossPlatformContainer(
+        containerJson: String,
+        masterPassword: String,
+        secretKeyFormatted: String
+    ): List<VaultItemPayload> {
+        val summary = inspectContainer(containerJson)
+        val container = json.decodeFromString<SafePocketContainerFile>(containerJson)
+        val ciphertext = ZeroKnowledgeEncryptionService.hexToBytes(container.ciphertextHex)
+        val iv = ZeroKnowledgeEncryptionService.hexToBytes(container.ivHex)
+        val aad = "SAFEPOCKET-CONTAINER-V1:${summary.exportedAtIso}".encodeToByteArray()
+
+        val domains = listOf("safepocket-container-backup-v1", "safepocket-backup-v1")
+        var lastError: Throwable? = null
+        for (domain in domains) {
+            val key = HkdfSha256Pure.deriveTwoSecretKey(
+                masterPassword = masterPassword,
+                secretKeyFormatted = secretKeyFormatted,
+                saltHex = summary.kdf.saltHex,
+                memorySizeKiB = summary.kdf.memorySizeKiB,
+                iterations = summary.kdf.iterations,
+                parallelism = summary.kdf.parallelism,
+                domainContext = domain
             )
-            val backupKey = primitives.hkdfSha256Combine(
-                argon, secretKeyRaw, "safepocket-container-backup-v1".encodeToByteArray()
-            )
-            argon.fill(0)
-            val aad = "SAFEPOCKET-CONTAINER-V1:${container.exportedAtIso}".encodeToByteArray()
-            val iv = ZeroKnowledgeEncryptionService.hexToBytes(container.ivHex)
-            val decrypted = primitives.aes256GcmDecrypt(backupKey, iv, ciphertext, aad)
-            backupKey.fill(0)
-            return json.decodeFromString(decrypted.decodeToString())
-        } finally {
-            pwBytes.fill(0)
+            try {
+                val decrypted = primitives.aes256GcmDecrypt(key, iv, ciphertext, aad)
+                return compactJson.decodeFromString(decrypted.decodeToString())
+            } catch (t: Throwable) {
+                lastError = t
+            } finally {
+                key.fill(0)
+            }
         }
+        throw IllegalStateException(
+            lastError?.message ?: "Decryption failed — verify Master Password & Secret Key"
+        )
     }
 
     fun mergeSnapshots(
@@ -116,26 +189,5 @@ class VaultPortabilityService(
             }
         }
         return map.values.sortedByDescending { it.updatedAtEpochMs }
-    }
-
-    /**
-     * Plaintext CSV export strictly gated behind explicit Master Password verification callback.
-     */
-    suspend fun exportUnencryptedCsvGated(
-        items: List<VaultItemPayload>,
-        candidateMasterPassword: String,
-        verifyMasterPassword: suspend (String) -> Boolean
-    ): String {
-        check(verifyMasterPassword(candidateMasterPassword)) {
-            "Master Password re-authentication failed — plaintext export denied"
-        }
-        val header = "id,category,title,subtitle,favorite,tags,fields_json"
-        val rows = items.map { item ->
-            val fieldsEscaped = json.encodeToString(item.fields).replace("\"", "\"\"")
-            "\"${item.id}\",\"${item.category.name}\",\"${item.title.replace("\"", "\"\"")}\"," +
-                "\"${item.subtitle.replace("\"", "\"\"")}\",${item.favorite}," +
-                "\"${item.tags.joinToString("|")}\",\"$fieldsEscaped\""
-        }
-        return (listOf(header) + rows).joinToString("\n")
     }
 }

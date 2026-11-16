@@ -74,8 +74,23 @@ import {
   type VaultItem,
   type VaultSortMode
 } from '../types';
+import {
+  exportTo1Password1Pux,
+  exportTo1PasswordCsv,
+  exportToSafePocketCsv,
+  importFrom1Password1Pux,
+  importFromCsv
+} from '../crypto/portability1PasswordCsv';
 import { PwaUpdateController } from '../update/pwaUpdater';
 import { buildCustomCardStyle, normalizeHexColor } from './cardColorUtils';
+import {
+  applyAutoBranding,
+  fetchDomainBrandLogo,
+  renderInstitutionLogoHtml,
+  renderNetworkOrTypeLogoHtml,
+  resolveDualBrand,
+  resolveDualBrandFromFields
+} from './institutionBrands';
 import {
   buildEmergencyKitHtml,
   estimateMasterPasswordEntropy
@@ -85,6 +100,9 @@ const THEME_STORAGE_KEY = 'safepocket.theme_mode';
 const MATERIAL_ACCENT_STORAGE_KEY = 'safepocket.material_accent';
 const EXPIRY_WINDOW_STORAGE_KEY = 'safepocket.expiry_window_days';
 const ALLOW_SCREENSHOTS_STORAGE_KEY = 'safepocket.allow_screenshots';
+const AUTO_DOWNLOAD_LOGOS_STORAGE_KEY = 'safepocket.auto_download_logos';
+
+export type PlainExportFormat = '1pux' | '1password_csv' | 'csv' | 'json';
 
 export function resolveEffectiveTheme(
   mode: ThemeMode,
@@ -122,6 +140,8 @@ interface ItemEditorDraft {
   subtitle: string;
   paletteId: CardThemePalette;
   customColorHex: string;
+  autoBrandColor: boolean;
+  institutionLogoDataUri?: string;
   showVisualCard: boolean;
   barcodeFormat: BarcodeFormat;
   tagsCsv: string;
@@ -166,6 +186,8 @@ export class SafePocketAppShell {
   private materialAccent: MaterialColorScheme = 'emerald';
   private expiryWindowDays: ExpiryWindowDays = 90;
   private allowScreenshots = true;
+  private autoDownloadLogos = true;
+  private importIncludeLogins = false;
   private sortMode: VaultSortMode = 'pinned_recent';
   private activeTagFilter: string | null = null;
   private items: VaultItem[] = [];
@@ -210,7 +232,7 @@ export class SafePocketAppShell {
     error?: string;
   } | null = null;
   private plainExportModalState: {
-    format: 'json' | 'csv';
+    format: PlainExportFormat;
     password: string;
     error?: string;
   } | null = null;
@@ -236,6 +258,7 @@ export class SafePocketAppShell {
     this.materialAccent = this.loadSavedMaterialAccent();
     this.expiryWindowDays = this.loadSavedExpiryWindowDays();
     this.allowScreenshots = this.loadSavedAllowScreenshots();
+    this.autoDownloadLogos = this.loadSavedAutoDownloadLogos();
     this.applyThemeToDocument();
 
     this.clipboard = new ClipboardHygieneController((seconds, cleared) => {
@@ -255,6 +278,21 @@ export class SafePocketAppShell {
         this.lockVault(true);
       }
     });
+  }
+
+  private loadSavedAutoDownloadLogos(): boolean {
+    if (typeof localStorage === 'undefined') return true;
+    const raw = localStorage.getItem(AUTO_DOWNLOAD_LOGOS_STORAGE_KEY);
+    if (raw === 'false') return false;
+    return true;
+  }
+
+  setAutoDownloadLogos(enabled: boolean): void {
+    this.autoDownloadLogos = enabled;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(AUTO_DOWNLOAD_LOGOS_STORAGE_KEY, String(enabled));
+    }
+    this.render();
   }
 
   private loadSavedAllowScreenshots(): boolean {
@@ -860,7 +898,9 @@ export class SafePocketAppShell {
       title: '',
       subtitle: '',
       paletteId: defaultCat === 'IDENTITY' ? 'forest_sage' : 'obsidian_slate',
-      customColorHex: '#1E5B53',
+      customColorHex: '#0018A8',
+      autoBrandColor: true,
+      institutionLogoDataUri: undefined,
       showVisualCard: true,
       barcodeFormat: 'CODE_128',
       tagsCsv: '',
@@ -900,6 +940,8 @@ export class SafePocketAppShell {
       subtitle: item.subtitle,
       paletteId: item.cardTheme?.paletteId ?? 'obsidian_slate',
       customColorHex: normalizeHexColor(item.cardTheme?.customColorHex),
+      autoBrandColor: item.cardTheme?.autoBrandColor !== false,
+      institutionLogoDataUri: item.cardTheme?.institutionLogoDataUri,
       showVisualCard: item.cardTheme?.showVisualCard !== false,
       barcodeFormat: item.cardTheme?.barcodeFormat ?? 'CODE_128',
       tagsCsv: item.tags.join(', '),
@@ -919,6 +961,9 @@ export class SafePocketAppShell {
     const customHexEl = this.root.querySelector<HTMLInputElement>(
       '#sp-edit-custom-color-hex'
     );
+    const autoBrandEl = this.root.querySelector<HTMLInputElement>(
+      '#sp-edit-auto-brand'
+    );
     const showVisEl = this.root.querySelector<HTMLInputElement>(
       '#sp-edit-show-visual-card'
     );
@@ -935,6 +980,9 @@ export class SafePocketAppShell {
         customHexEl.value,
         this.editorDraft.customColorHex
       );
+    }
+    if (autoBrandEl) {
+      this.editorDraft.autoBrandColor = autoBrandEl.checked;
     }
     if (showVisEl) {
       this.editorDraft.showVisualCard = showVisEl.checked;
@@ -1249,13 +1297,6 @@ export class SafePocketAppShell {
                 </div>
                 <h1 class="sp-brand-title">${this.escape(this.i18n.t('app_name'))}</h1>
               </div>
-              <button
-                type="button"
-                id="sp-quick-theme-toggle"
-                class="sp-theme-toggle-btn"
-                title="${this.escape(this.themeToggleTooltip())}"
-                aria-label="${this.escape(this.i18n.t('settings_theme_title'))}"
-              >${this.renderThemeToggleIconSvg()}</button>
             </div>
 
             <nav class="sp-nav-group">
@@ -1332,10 +1373,20 @@ export class SafePocketAppShell {
               ).join('')}
             </div>
 
-            <button type="button" id="sp-lock-btn" class="sp-btn" style="width:100%;justify-content:space-between;">
-              <span>${this.escape(this.i18n.t('action_lock_vault'))}</span>
-              <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);">Ctrl+L</span>
-            </button>
+            <div class="sp-sidebar-bottom-bar">
+              <button
+                type="button"
+                id="sp-quick-theme-toggle"
+                class="sp-theme-toggle-btn"
+                title="${this.escape(this.themeToggleTooltip())}"
+                aria-label="${this.escape(this.i18n.t('settings_theme_title'))}"
+              >${this.renderThemeToggleIconSvg()}</button>
+
+              <button type="button" id="sp-lock-btn" class="sp-btn" style="flex:1;justify-content:space-between;">
+                <span>${this.escape(this.i18n.t('action_lock_vault'))}</span>
+                <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);">Ctrl+L</span>
+              </button>
+            </div>
 
             <div class="sp-version-subtle" id="sp-sidebar-version">
               <span>${this.escape(versionBanner)}</span>
@@ -1733,6 +1784,8 @@ export class SafePocketAppShell {
 
   private renderItemListRow(item: VaultItem, isSelected: boolean): string {
     const exp = computeExpiryStatus(item, Date.now(), this.expiryWindowDays);
+    const resolved = resolveDualBrand(item);
+    const miniLogoHtml = renderInstitutionLogoHtml(item, resolved, 28);
     let badgeHtml = '';
     if (exp.severity === 'critical') {
       badgeHtml = `<span class="sp-badge sp-badge-critical">⚡ ${this.escape(
@@ -1761,15 +1814,23 @@ export class SafePocketAppShell {
         class="sp-item-row ${isSelected ? 'is-selected' : ''}"
         data-select-item="${this.escape(item.id)}"
       >
-        <div class="sp-item-row-top">
-          <span class="sp-item-title">${item.pinned ? '📌 ' : ''}${
-            item.favorite ? '★ ' : ''
-          }${this.escape(item.title)}</span>
+        <div class="sp-item-row-top" style="align-items:center;">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+            ${miniLogoHtml}
+            <div style="min-width:0;display:flex;flex-direction:column;gap:2px;">
+              <span class="sp-item-title">${item.pinned ? '📌 ' : ''}${
+                item.favorite ? '★ ' : ''
+              }${this.escape(item.title)}</span>
+              <span class="sp-item-subtitle">${this.escape(
+                item.subtitle || this.i18n.resolveCategoryName(item.category)
+              )}</span>
+            </div>
+          </div>
+          <span style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);flex-shrink:0;">
+            ${this.escape(resolved.networkDisplayLabel)}
+          </span>
         </div>
-        <span class="sp-item-subtitle">${this.escape(
-          item.subtitle || this.i18n.resolveCategoryName(item.category)
-        )}</span>
-        ${badgeHtml ? `<div>${badgeHtml}</div>` : ''}
+        ${badgeHtml ? `<div style="padding-left:38px;">${badgeHtml}</div>` : ''}
       </button>
     `;
   }
@@ -1842,7 +1903,7 @@ export class SafePocketAppShell {
             <button type="button" id="sp-toggle-fav" class="sp-btn">
               ${item.favorite ? '★' : '☆'} ${this.escape(this.i18n.t('action_favorite'))}
             </button>
-            <button type="button" id="sp-edit-item-btn" class="sp-btn sp-btn-tonal">
+            <button type="button" id="sp-edit-item-btn" class="sp-btn sp-btn-primary">
               ✎ ${this.escape(this.i18n.t('action_edit'))}
             </button>
             <button type="button" id="sp-duplicate-item-btn" class="sp-btn">
@@ -1885,13 +1946,32 @@ export class SafePocketAppShell {
   }
 
   private renderVisualCardHero(item: VaultItem, isPresentation = false): string {
-    const palette = item.cardTheme?.paletteId ?? 'obsidian_slate';
-    const customStyleAttr =
-      palette === 'custom'
-        ? ` style="${this.escape(
-            buildCustomCardStyle(item.cardTheme?.customColorHex).inlineStyleAttr
-          )}"`
-        : '';
+    const resolved = resolveDualBrand(item);
+    const effectiveBrandHex =
+      item.cardTheme?.paletteId === 'custom'
+        ? item.cardTheme.customColorHex ?? resolved.effectiveColorHex
+        : item.cardTheme?.autoBrandColor !== false && resolved.effectiveColorHex
+          ? resolved.effectiveColorHex
+          : null;
+    const palette = effectiveBrandHex
+      ? 'custom'
+      : item.cardTheme?.paletteId ?? 'obsidian_slate';
+    const customStyleAttr = effectiveBrandHex
+      ? ` style="${this.escape(
+          buildCustomCardStyle(effectiveBrandHex).inlineStyleAttr
+        )}"`
+      : '';
+
+    const instLogoHtml = renderInstitutionLogoHtml(item, resolved, 36);
+    const netLogoHtml = renderNetworkOrTypeLogoHtml(resolved);
+    const instDisplayName =
+      resolved.institution?.displayName ||
+      item.cardTheme?.institutionName ||
+      item.fields.find((f) => f.labelKey === 'field_issuing_bank')?.value ||
+      item.fields.find((f) => f.labelKey === 'field_insurer_name')?.value ||
+      item.fields.find((f) => f.labelKey === 'field_organization')?.value ||
+      item.title;
+
     const presentBtn = isPresentation
       ? ''
       : `<button
@@ -1908,8 +1988,8 @@ export class SafePocketAppShell {
         item.fields.find((f) => f.labelKey === 'field_cardholder')?.value ?? '';
       const expiry =
         item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
-      const bank =
-        item.fields.find((f) => f.labelKey === 'field_issuing_bank')?.value ?? '';
+      const cardType =
+        item.fields.find((f) => f.labelKey === 'field_card_type')?.value ?? '';
       const panFieldId =
         item.fields.find((f) => f.labelKey === 'field_card_number')?.id ?? '';
       const revealed = this.revealedFieldIds.has(panFieldId) || isPresentation;
@@ -1920,13 +2000,29 @@ export class SafePocketAppShell {
       return `
         <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
-            <div class="sp-emv-chip" aria-hidden="true"></div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span style="font-weight:650;font-size:13px;opacity:0.9;">${this.escape(
-                bank || item.cardTheme?.networkBrand || 'CARD'
-              )}</span>
+            <div class="sp-dual-brand-left">
+              ${instLogoHtml}
+              <div style="min-width:0;">
+                <div style="font-weight:700;font-size:14px;line-height:1.2;">${this.escape(
+                  instDisplayName
+                )}</div>
+                ${
+                  cardType
+                    ? `<div style="font-size:10.5px;opacity:0.8;">${this.escape(
+                        cardType
+                      )}</div>`
+                    : ''
+                }
+              </div>
+            </div>
+            <div class="sp-dual-brand-right">
+              ${netLogoHtml}
               ${presentBtn}
             </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div class="sp-emv-chip" aria-hidden="true"></div>
+            <span style="font-size:14px;opacity:0.75;" aria-hidden="true">)))</span>
           </div>
           <div class="sp-card-pan">
             <span>${this.escape(maskedPan)}</span>
@@ -1977,24 +2073,21 @@ export class SafePocketAppShell {
         '';
       const bic =
         item.fields.find((f) => f.labelKey === 'field_bic')?.value ?? '';
-      const bank =
-        item.fields.find((f) => f.labelKey === 'field_issuing_bank')?.value ??
-        item.title;
       const acctType =
         item.fields.find((f) => f.labelKey === 'field_account_type')?.value ??
-        this.i18n.t('category_bank_account');
+        'SEPA';
 
       return `
         <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <div class="sp-card-emblem" aria-hidden="true">🏦</div>
-              <span style="font-weight:650;font-size:14px;">${this.escape(
-                bank
+            <div class="sp-dual-brand-left">
+              ${instLogoHtml}
+              <span style="font-weight:700;font-size:14px;">${this.escape(
+                instDisplayName
               )}</span>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span class="sp-card-pill">${this.escape(acctType)}</span>
+            <div class="sp-dual-brand-right">
+              ${renderNetworkOrTypeLogoHtml(resolved, acctType)}
               ${presentBtn}
             </div>
           </div>
@@ -2047,27 +2140,24 @@ export class SafePocketAppShell {
         : rawNum.length > 4
           ? `${rawNum.slice(0, 1)}•••••${rawNum.slice(-3)}`
           : '••••••';
-      const insurer =
-        item.fields.find((f) => f.labelKey === 'field_insurer_name')?.value ??
-        item.title;
       const holder =
         item.fields.find((f) => f.labelKey === 'field_full_name')?.value ?? '';
       const ik =
         item.fields.find((f) => f.labelKey === 'field_insurer_id')?.value ?? '';
       const plan =
         item.fields.find((f) => f.labelKey === 'field_coverage_plan')?.value ??
-        'eGK / EHIC';
+        resolved.networkDisplayLabel;
       const expiry =
         item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
 
       return `
         <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <div class="sp-card-emblem" aria-hidden="true">🩺</div>
+            <div class="sp-dual-brand-left">
+              ${instLogoHtml}
               <div>
-                <div style="font-weight:650;font-size:14px;">${this.escape(
-                  insurer
+                <div style="font-weight:700;font-size:14px;">${this.escape(
+                  instDisplayName
                 )}</div>
                 ${
                   ik
@@ -2078,8 +2168,8 @@ export class SafePocketAppShell {
                 }
               </div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span class="sp-card-pill">${this.escape(plan)}</span>
+            <div class="sp-dual-brand-right">
+              ${renderNetworkOrTypeLogoHtml(resolved, plan)}
               ${presentBtn}
             </div>
           </div>
@@ -2118,21 +2208,22 @@ export class SafePocketAppShell {
     }
 
     if (item.category === 'MEMBERSHIP_CARD') {
-      const org =
-        item.fields.find((f) => f.labelKey === 'field_organization')?.value ??
-        item.title;
       const memberName =
         item.fields.find((f) => f.labelKey === 'field_member_name')?.value ?? '';
       const memberId =
         item.fields.find((f) => f.labelKey === 'field_membership_id')?.value ??
         '';
+      const barcodePayload =
+        item.fields.find((f) => f.labelKey === 'field_barcode_value')?.value ||
+        memberId ||
+        item.id;
       const tier =
         item.fields.find((f) => f.labelKey === 'field_membership_tier')?.value ??
-        this.i18n.t('category_membership_card');
+        resolved.networkDisplayLabel;
       const expiry =
         item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
       const renderedCode = renderScannableBarcodeSvg(
-        memberId || item.id,
+        barcodePayload,
         item.cardTheme?.barcodeFormat,
         { heightPx: 44, maxWidthPx: 340, qrSizePx: 112 }
       );
@@ -2140,26 +2231,26 @@ export class SafePocketAppShell {
       return `
         <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <div class="sp-card-emblem" aria-hidden="true">🎫</div>
-              <span style="font-weight:650;font-size:14px;">${this.escape(
-                org
+            <div class="sp-dual-brand-left">
+              ${instLogoHtml}
+              <span style="font-weight:700;font-size:14px;">${this.escape(
+                instDisplayName
               )}</span>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span class="sp-card-pill">${this.escape(tier)}</span>
+            <div class="sp-dual-brand-right">
+              ${renderNetworkOrTypeLogoHtml(resolved, tier)}
               ${presentBtn}
             </div>
           </div>
           <div class="sp-card-pan" style="font-size:17.5px;">
-            <span>${this.escape(memberId)}</span>
+            <span>${this.escape(memberId || barcodePayload)}</span>
             ${
-              memberId
+              memberId || barcodePayload
                 ? `<button
                      type="button"
                      class="sp-btn"
                      style="padding:4px 10px;min-height:28px;"
-                     data-copy-value="${this.escape(memberId)}"
+                     data-copy-value="${this.escape(memberId || barcodePayload)}"
                      data-copy-sensitive="false"
                    >${this.escape(this.i18n.t('action_copy'))}</button>`
                 : ''
@@ -2216,16 +2307,17 @@ export class SafePocketAppShell {
       return `
         <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <div class="sp-card-emblem" aria-hidden="true">🪪</div>
-              <span style="font-weight:650;font-size:14px;">${this.escape(
+            <div class="sp-dual-brand-left">
+              ${instLogoHtml}
+              <span style="font-weight:700;font-size:14px;">${this.escape(
                 fullName
               )}</span>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span class="sp-card-pill">${this.escape(
+            <div class="sp-dual-brand-right">
+              ${renderNetworkOrTypeLogoHtml(
+                resolved,
                 this.i18n.t('category_identity')
-              )}</span>
+              )}
               ${presentBtn}
             </div>
           </div>
@@ -2283,11 +2375,17 @@ export class SafePocketAppShell {
     return `
       <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
         <div class="sp-card-top-row">
-          <span style="font-size:11.5px;font-family:var(--font-mono);letter-spacing:0.08em;opacity:0.86;">
-            ICAO DOC 9303 • ${this.escape(item.documentSubtype ?? 'OFFICIAL_ID')}
-          </span>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span style="font-size:12px;opacity:0.9;">${this.escape(authority)}</span>
+          <div class="sp-dual-brand-left">
+            ${instLogoHtml}
+            <div>
+              <div style="font-size:11.5px;font-family:var(--font-mono);letter-spacing:0.06em;font-weight:700;">
+                ICAO DOC 9303 • ${this.escape(item.documentSubtype ?? 'OFFICIAL_ID')}
+              </div>
+              <div style="font-size:11.5px;opacity:0.86;">${this.escape(authority)}</div>
+            </div>
+          </div>
+          <div class="sp-dual-brand-right">
+            ${netLogoHtml}
             ${presentBtn}
           </div>
         </div>
@@ -2854,7 +2952,7 @@ export class SafePocketAppShell {
     const st = this.plainExportModalState;
     return `
       <div class="sp-overlay" id="sp-plain-export-backdrop" style="z-index:920;">
-        <form class="sp-modal-card" id="sp-plain-export-form" style="max-width:460px;">
+        <form class="sp-modal-card" id="sp-plain-export-form" style="max-width:520px;">
           <h2 style="margin:0;font-size:17px;">${this.escape(
             this.i18n.t('export_plain_modal_title')
           )}</h2>
@@ -2867,19 +2965,27 @@ export class SafePocketAppShell {
               : ''
           }
 
-          <div style="display:flex;gap:8px;">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
             <button
               type="button"
-              class="sp-btn ${st.format === 'json' ? 'sp-btn-primary' : ''}"
-              data-plain-format="json"
-              style="flex:1;"
-            >JSON (.json)</button>
+              class="sp-btn ${st.format === '1pux' ? 'sp-btn-primary' : ''}"
+              data-plain-format="1pux"
+            >1Password (.1pux)</button>
+            <button
+              type="button"
+              class="sp-btn ${st.format === '1password_csv' ? 'sp-btn-primary' : ''}"
+              data-plain-format="1password_csv"
+            >1Password CSV (.csv)</button>
             <button
               type="button"
               class="sp-btn ${st.format === 'csv' ? 'sp-btn-primary' : ''}"
               data-plain-format="csv"
-              style="flex:1;"
-            >CSV (.csv)</button>
+            >SafePocket CSV (.csv)</button>
+            <button
+              type="button"
+              class="sp-btn ${st.format === 'json' ? 'sp-btn-primary' : ''}"
+              data-plain-format="json"
+            >JSON (.json)</button>
           </div>
 
           <label style="font-size:12px;color:var(--text-secondary);">
@@ -3081,7 +3187,7 @@ export class SafePocketAppShell {
         </div>
       </section>
 
-      <!-- 3. Local Storage Default & Optional Cloud Sync (Pre-Initialized Firebase DB) -->
+      <!-- 3. Local Encrypted Database, Firebase Cloud Sync & 1Password / CSV Portability -->
       <section class="sp-settings-section">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <h2>${this.escape(this.i18n.t('sync_section_title'))}</h2>
@@ -3102,6 +3208,22 @@ export class SafePocketAppShell {
                 : this.escape(this.i18n.t('sync_provider_none'))
             }
           </span>
+        </div>
+
+        <div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:4px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-primary);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span>🗄 ${this.escape(this.i18n.t('db_local_section_title'))}</span>
+            <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--accent-primary);">
+              ✓ ${this.escape(
+                this.i18n.t('db_local_sqlite_status', {
+                  count: this.items.length
+                })
+              )}
+            </span>
+          </div>
+          <div style="font-size:11.5px;color:var(--text-secondary);">
+            ${this.escape(this.i18n.t('sync_auto_note'))}
+          </div>
         </div>
 
         <div style="font-size:11.5px;font-family:var(--font-mono);padding:8px 11px;border-radius:var(--radius-sm);background:var(--bg-canvas);border:1px solid var(--border-subtle);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -3290,17 +3412,66 @@ export class SafePocketAppShell {
           }
         </div>
 
-        <div style="border-top:1px solid var(--border-subtle);padding-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" id="sp-export-safepocket" class="sp-btn sp-btn-tonal">
-            ⬇ ${this.escape(this.i18n.t('backup_export_encrypted'))}
-          </button>
-          <label class="sp-btn" style="cursor:pointer;">
-            ⬆ ${this.escape(this.i18n.t('backup_restore_encrypted'))}
-            <input type="file" id="sp-restore-safepocket" accept=".safepocket,application/json" style="display:none;" />
+        <div style="border-top:1px solid var(--border-subtle);padding-top:12px;display:flex;flex-direction:column;gap:10px;">
+          <div style="font-size:12.5px;font-weight:700;color:var(--text-primary);">
+            ${this.escape(this.i18n.t('portability_section_title'))}
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" id="sp-export-safepocket" class="sp-btn sp-btn-primary">
+              ⬇ ${this.escape(this.i18n.t('backup_export_encrypted'))}
+            </button>
+            <label class="sp-btn sp-btn-tonal" style="cursor:pointer;">
+              ⬆ ${this.escape(this.i18n.t('backup_restore_encrypted'))}
+              <input type="file" id="sp-restore-safepocket" accept=".safepocket,application/json" style="display:none;" />
+            </label>
+          </div>
+
+          <label style="display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer;">
+            <input
+              type="checkbox"
+              id="sp-import-include-logins"
+              ${this.importIncludeLogins ? 'checked' : ''}
+              style="accent-color:var(--accent-primary);"
+            />
+            <span>${this.escape(this.i18n.t('import_include_logins_toggle'))}</span>
           </label>
-          <button type="button" id="sp-export-plain-csv" class="sp-btn">
-            ${this.escape(this.i18n.t('backup_export_plain'))}
-          </button>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <label class="sp-btn sp-btn-tonal" style="cursor:pointer;">
+              📥 ${this.escape(this.i18n.t('import_1password_btn'))}
+              <input
+                type="file"
+                id="sp-import-1password"
+                accept=".1pux,.csv,application/zip,text/csv"
+                style="display:none;"
+              />
+            </label>
+            <label class="sp-btn sp-btn-tonal" style="cursor:pointer;">
+              📥 ${this.escape(this.i18n.t('import_csv_btn'))}
+              <input
+                type="file"
+                id="sp-import-csv"
+                accept=".csv,text/csv"
+                style="display:none;"
+              />
+            </label>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" id="sp-export-1pux-btn" class="sp-btn">
+              📤 ${this.escape(this.i18n.t('export_1password_1pux_btn'))}
+            </button>
+            <button type="button" id="sp-export-1p-csv-btn" class="sp-btn">
+              📤 ${this.escape(this.i18n.t('export_1password_csv_btn'))}
+            </button>
+            <button type="button" id="sp-export-sp-csv-btn" class="sp-btn">
+              📤 ${this.escape(this.i18n.t('export_csv_btn'))}
+            </button>
+            <button type="button" id="sp-export-plain-csv" class="sp-btn">
+              ${this.escape(this.i18n.t('export_json_btn'))}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -3329,6 +3500,23 @@ export class SafePocketAppShell {
             id="sp-toggle-allow-screenshots"
             type="checkbox"
             ${this.allowScreenshots ? 'checked' : ''}
+            style="margin-top:4px;width:18px;height:18px;accent-color:var(--accent-primary);"
+          />
+        </label>
+
+        <label style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;cursor:pointer;padding:8px 0;border-top:1px solid var(--border-subtle);">
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+              ${this.escape(this.i18n.t('settings_auto_download_logos_toggle'))}
+            </span>
+            <span style="font-size:11.5px;color:var(--text-secondary);">
+              ${this.escape(this.i18n.t('settings_auto_download_logos_desc'))}
+            </span>
+          </div>
+          <input
+            id="sp-toggle-auto-logos"
+            type="checkbox"
+            ${this.autoDownloadLogos ? 'checked' : ''}
             style="margin-top:4px;width:18px;height:18px;accent-color:var(--accent-primary);"
           />
         </label>
@@ -3542,6 +3730,40 @@ export class SafePocketAppShell {
       })),
       { id: 'custom', key: 'palette_custom' }
     ];
+
+    const previewResolved = resolveDualBrandFromFields(
+      draft.category,
+      draft.title,
+      draft.subtitle,
+      draft.standardFieldValues,
+      {
+        paletteId: draft.paletteId,
+        customColorHex: draft.customColorHex,
+        autoBrandColor: draft.autoBrandColor,
+        institutionLogoDataUri: draft.institutionLogoDataUri
+      }
+    );
+    const previewDummyItem: VaultItem = {
+      schemaVersion: 1,
+      id: 'preview',
+      category: draft.category,
+      title: draft.title || 'SafePocket',
+      subtitle: draft.subtitle,
+      favorite: false,
+      tags: [],
+      cardTheme: {
+        paletteId: draft.paletteId,
+        customColorHex:
+          previewResolved.effectiveColorHex ?? draft.customColorHex,
+        autoBrandColor: draft.autoBrandColor,
+        institutionLogoDataUri: draft.institutionLogoDataUri
+      },
+      fields: [],
+      attachments: [],
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0
+    };
+
     const customSwatchStyle =
       draft.paletteId === 'custom'
         ? ` style="${this.escape(
@@ -3551,7 +3773,7 @@ export class SafePocketAppShell {
 
     return `
       <div class="sp-overlay" id="sp-modal-backdrop">
-        <form class="sp-modal-card" id="sp-item-editor-form" style="max-width:540px;">
+        <form class="sp-modal-card" id="sp-item-editor-form" style="max-width:580px;">
           <h2 style="margin:0;font-size:18px;">${this.escape(
             draft.editingItemId
               ? this.i18n.t('action_edit')
@@ -3559,7 +3781,7 @@ export class SafePocketAppShell {
           )}</h2>
 
           <label style="font-size:12px;color:var(--text-secondary);">
-            Category
+            ${this.escape(this.i18n.t('field_category'))}
             <select id="sp-edit-category" class="sp-select" style="margin-top:4px;">
               <option value="PAYMENT_CARD" ${
                 draft.category === 'PAYMENT_CARD' ? 'selected' : ''
@@ -3587,18 +3809,18 @@ export class SafePocketAppShell {
 
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
             <label style="font-size:12px;color:var(--text-secondary);">
-              Title
+              ${this.escape(this.i18n.t('field_title'))}
               <input
                 id="sp-edit-title"
                 class="sp-input"
                 required
                 value="${this.escape(draft.title)}"
-                placeholder="e.g. ING Girokonto / TK Gesundheitskarte / ADAC"
+                placeholder="e.g. Deutsche Bank VISA / ING Girokonto / TK / ADAC"
                 style="margin-top:4px;"
               />
             </label>
             <label style="font-size:12px;color:var(--text-secondary);">
-              Subtitle
+              ${this.escape(this.i18n.t('field_subtitle'))}
               <input
                 id="sp-edit-subtitle"
                 class="sp-input"
@@ -3609,6 +3831,45 @@ export class SafePocketAppShell {
                 style="margin-top:4px;"
               />
             </label>
+          </div>
+
+          <div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+              <label style="display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--text-primary);cursor:pointer;">
+                <input
+                  type="checkbox"
+                  id="sp-edit-auto-brand"
+                  ${draft.autoBrandColor ? 'checked' : ''}
+                  style="accent-color:var(--accent-primary);"
+                />
+                <span>${this.escape(
+                  this.i18n.t('brand_auto_detect_toggle')
+                )}</span>
+              </label>
+              <button
+                type="button"
+                id="sp-fetch-brand-logo-btn"
+                class="sp-btn sp-btn-tonal"
+                style="min-height:28px;padding:4px 10px;font-size:11.5px;"
+              >🌐 ${this.escape(this.i18n.t('brand_fetch_logo_btn'))}</button>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                ${renderInstitutionLogoHtml(previewDummyItem, previewResolved, 30)}
+                <span style="font-size:12px;color:var(--text-secondary);">
+                  ${this.escape(
+                    this.i18n.t('brand_detected_badge', {
+                      institution:
+                        previewResolved.institution?.displayName ??
+                        previewResolved.inferredDomain ??
+                        (draft.title.trim() || '—'),
+                      network: previewResolved.networkDisplayLabel
+                    })
+                  )}
+                </span>
+              </div>
+              <div>${renderNetworkOrTypeLogoHtml(previewResolved)}</div>
+            </div>
           </div>
 
           ${
@@ -3761,10 +4022,15 @@ export class SafePocketAppShell {
                     this.i18n.resolveFieldLabel(tf.key, false, draft.category)
                   )}</span>${validationHint}
                   ${
-                    tf.valueType === 'MARKDOWN'
-                      ? `<textarea class="sp-textarea" rows="4" data-std-field="${tf.key}" data-std-type="${tf.valueType}" style="margin-top:4px;">${this.escape(
-                          val
-                        )}</textarea>`
+                    tf.valueType === 'MARKDOWN' ||
+                    tf.valueType === 'MULTILINE_ADDRESS'
+                      ? `<textarea class="sp-textarea" rows="${
+                          tf.valueType === 'MARKDOWN' ? 3 : 2
+                        }" data-std-field="${tf.key}" data-std-type="${
+                          tf.valueType
+                        }" placeholder="${this.escape(
+                          tf.placeholder
+                        )}" style="margin-top:4px;">${this.escape(val)}</textarea>`
                       : `<input class="sp-input" data-std-field="${tf.key}" data-std-type="${tf.valueType}" value="${this.escape(
                           val
                         )}" placeholder="${this.escape(
@@ -3854,26 +4120,95 @@ export class SafePocketAppShell {
     switch (category) {
       case 'PAYMENT_CARD':
         return [
-          { key: 'field_cardholder', valueType: 'TEXT', placeholder: 'JANE DOE' },
+          {
+            key: 'field_cardholder',
+            valueType: 'TEXT',
+            placeholder: 'CLARA SOFIA MÜLLER'
+          },
           {
             key: 'field_card_number',
             valueType: 'CARD_NUMBER',
             placeholder: '4532 0192 8834 1109'
           },
-          { key: 'field_expiry_date', valueType: 'DATE_ISO', placeholder: '2029-11' },
-          { key: 'field_cvv', valueType: 'SENSITIVE_SECRET', placeholder: '742' },
-          { key: 'field_pin', valueType: 'SENSITIVE_SECRET', placeholder: '1234' },
+          {
+            key: 'field_card_network',
+            valueType: 'TEXT',
+            placeholder: 'VISA / Mastercard / AMEX / girocard'
+          },
+          {
+            key: 'field_card_type',
+            valueType: 'TEXT',
+            placeholder: 'Credit / Debit / Virtual / Prepaid'
+          },
+          {
+            key: 'field_valid_from',
+            valueType: 'DATE_ISO',
+            placeholder: '2025-11'
+          },
+          {
+            key: 'field_expiry_date',
+            valueType: 'DATE_ISO',
+            placeholder: '2029-11'
+          },
+          {
+            key: 'field_cvv',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: '742'
+          },
+          {
+            key: 'field_pin',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: '1234'
+          },
           {
             key: 'field_issuing_bank',
             valueType: 'TEXT',
-            placeholder: 'Issuing Bank'
+            placeholder: 'Deutsche Bank AG / N26 / Sparkasse'
           },
-          { key: 'field_iban', valueType: 'IBAN', placeholder: 'DE00 0000 ...' },
-          { key: 'field_bic', valueType: 'TEXT', placeholder: 'BIC / SWIFT' },
+          {
+            key: 'field_institution_domain',
+            valueType: 'TEXT',
+            placeholder: 'deutsche-bank.de'
+          },
+          {
+            key: 'field_credit_limit',
+            valueType: 'TEXT',
+            placeholder: '€ 10,000.00'
+          },
+          {
+            key: 'field_iban',
+            valueType: 'IBAN',
+            placeholder: 'DE89 3704 0044 0532 0130 00'
+          },
+          {
+            key: 'field_bic',
+            valueType: 'TEXT',
+            placeholder: 'DEUTDEFFXXX'
+          },
+          {
+            key: 'field_billing_address',
+            valueType: 'MULTILINE_ADDRESS',
+            placeholder: 'Taunusanlage 12, 60325 Frankfurt am Main'
+          },
+          {
+            key: 'field_online_passcode',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: '3D Secure / PhotoTAN PIN'
+          },
+          {
+            key: 'field_emergency_phone',
+            valueType: 'PHONE',
+            placeholder: '+49 116 116'
+          },
           {
             key: 'field_support_phone',
             valueType: 'PHONE',
-            placeholder: '+49 30 ...'
+            placeholder: '+49 69 910 10000'
+          },
+          {
+            key: 'field_notes',
+            valueType: 'MARKDOWN',
+            placeholder: 'Insurance benefits, foreign fee notes…'
           }
         ];
       case 'BANK_ACCOUNT':
@@ -3882,6 +4217,21 @@ export class SafePocketAppShell {
             key: 'field_account_holder',
             valueType: 'TEXT',
             placeholder: 'CLARA SOFIA MÜLLER'
+          },
+          {
+            key: 'field_issuing_bank',
+            valueType: 'TEXT',
+            placeholder: 'ING-DiBa AG / Deutsche Bank / DKB'
+          },
+          {
+            key: 'field_institution_domain',
+            valueType: 'TEXT',
+            placeholder: 'ing.de'
+          },
+          {
+            key: 'field_account_type',
+            valueType: 'TEXT',
+            placeholder: 'Girokonto / Tagesgeld / Depot'
           },
           {
             key: 'field_iban',
@@ -3904,19 +4254,39 @@ export class SafePocketAppShell {
             placeholder: '37040044'
           },
           {
-            key: 'field_account_type',
+            key: 'field_currency',
             valueType: 'TEXT',
-            placeholder: 'Girokonto / Tagesgeld'
+            placeholder: 'EUR'
           },
           {
-            key: 'field_issuing_bank',
+            key: 'field_online_banking_id',
             valueType: 'TEXT',
-            placeholder: 'ING-DiBa AG'
+            placeholder: 'Zugangsnummer / Banking ID'
+          },
+          {
+            key: 'field_pin',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: 'Online Banking PIN / Telebanking PIN'
+          },
+          {
+            key: 'field_credit_limit',
+            valueType: 'TEXT',
+            placeholder: 'Dispokredit € 5,000'
+          },
+          {
+            key: 'field_branch_address',
+            valueType: 'MULTILINE_ADDRESS',
+            placeholder: 'Theodor-Heuss-Allee 2, 60486 Frankfurt'
           },
           {
             key: 'field_support_phone',
             valueType: 'PHONE',
-            placeholder: '+49 69 ...'
+            placeholder: '+49 69 50 500 105'
+          },
+          {
+            key: 'field_notes',
+            valueType: 'MARKDOWN',
+            placeholder: 'TAN device, sub-accounts…'
           }
         ];
       case 'INSURANCE_CARD':
@@ -3927,9 +4297,24 @@ export class SafePocketAppShell {
             placeholder: 'Clara Sofia Müller'
           },
           {
+            key: 'field_birthdate',
+            valueType: 'DATE_ISO',
+            placeholder: '1992-04-19'
+          },
+          {
             key: 'field_insurer_name',
             valueType: 'TEXT',
-            placeholder: 'Techniker Krankenkasse (TK)'
+            placeholder: 'Techniker Krankenkasse (TK) / Allianz'
+          },
+          {
+            key: 'field_institution_domain',
+            valueType: 'TEXT',
+            placeholder: 'tk.de'
+          },
+          {
+            key: 'field_coverage_plan',
+            valueType: 'TEXT',
+            placeholder: 'GKV + EHIC / PKV Komfort'
           },
           {
             key: 'field_insurance_number',
@@ -3942,9 +4327,14 @@ export class SafePocketAppShell {
             placeholder: '101575519'
           },
           {
-            key: 'field_coverage_plan',
+            key: 'field_group_number',
             valueType: 'TEXT',
-            placeholder: 'GKV / EHIC / PKV'
+            placeholder: 'Tariff / Group ID'
+          },
+          {
+            key: 'field_valid_from',
+            valueType: 'DATE_ISO',
+            placeholder: '2024-01-01'
           },
           {
             key: 'field_expiry_date',
@@ -3952,22 +4342,37 @@ export class SafePocketAppShell {
             placeholder: '2029-12-31'
           },
           {
+            key: 'field_emergency_phone',
+            valueType: 'PHONE',
+            placeholder: '+49 40 4606 6191 20'
+          },
+          {
             key: 'field_support_phone',
             valueType: 'PHONE',
-            placeholder: '+49 800 ...'
+            placeholder: '+49 800 285 85 85'
+          },
+          {
+            key: 'field_notes',
+            valueType: 'MARKDOWN',
+            placeholder: 'Deductible, travel coverage…'
           }
         ];
       case 'MEMBERSHIP_CARD':
         return [
           {
+            key: 'field_organization',
+            valueType: 'TEXT',
+            placeholder: 'ADAC / BahnCard / Miles & More'
+          },
+          {
+            key: 'field_institution_domain',
+            valueType: 'TEXT',
+            placeholder: 'adac.de'
+          },
+          {
             key: 'field_member_name',
             valueType: 'TEXT',
             placeholder: 'CLARA SOFIA MÜLLER'
-          },
-          {
-            key: 'field_organization',
-            valueType: 'TEXT',
-            placeholder: 'ADAC / BahnCard / Fitnessclub'
           },
           {
             key: 'field_membership_id',
@@ -3975,9 +4380,19 @@ export class SafePocketAppShell {
             placeholder: '7081 4920 1184'
           },
           {
+            key: 'field_barcode_value',
+            valueType: 'TEXT',
+            placeholder: '708149201184'
+          },
+          {
             key: 'field_membership_tier',
             valueType: 'TEXT',
-            placeholder: 'Plus / Gold'
+            placeholder: 'Plus / Gold / Senator'
+          },
+          {
+            key: 'field_member_since',
+            valueType: 'DATE_ISO',
+            placeholder: '2019-05-01'
           },
           {
             key: 'field_expiry_date',
@@ -3985,44 +4400,105 @@ export class SafePocketAppShell {
             placeholder: '2027-09-30'
           },
           {
+            key: 'field_pin',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: 'Lounge / Portal PIN'
+          },
+          {
             key: 'field_support_phone',
             valueType: 'PHONE',
-            placeholder: '+49 89 ...'
+            placeholder: '+49 89 22 22 22'
+          },
+          {
+            key: 'field_notes',
+            valueType: 'MARKDOWN',
+            placeholder: 'Partner perks, renewal terms…'
           }
         ];
       case 'IDENTITY':
         return [
-          { key: 'field_full_name', valueType: 'TEXT', placeholder: 'Full Name' },
+          {
+            key: 'field_salutation',
+            valueType: 'TEXT',
+            placeholder: 'Ms. / Mr. / Dr.'
+          },
+          {
+            key: 'field_full_name',
+            valueType: 'TEXT',
+            placeholder: 'Clara Sofia Müller'
+          },
           {
             key: 'field_birthdate',
             valueType: 'DATE_ISO',
             placeholder: '1992-04-19'
           },
           {
+            key: 'field_place_of_birth',
+            valueType: 'TEXT',
+            placeholder: 'Munich, Germany'
+          },
+          {
+            key: 'field_nationality',
+            valueType: 'TEXT',
+            placeholder: 'German (DEU)'
+          },
+          {
             key: 'field_tax_id',
             valueType: 'SENSITIVE_SECRET',
-            placeholder: 'Regional Tax Identifier'
+            placeholder: 'Steuer-ID / AFM / Codice Fiscale'
           },
           {
             key: 'field_ssn',
             valueType: 'SENSITIVE_SECRET',
-            placeholder: 'Social Insurance ID'
+            placeholder: 'Social Security / Rentenversicherungsnr.'
           },
           {
             key: 'field_health_insurance',
             valueType: 'SENSITIVE_SECRET',
-            placeholder: 'Health Card Number'
+            placeholder: 'Health Insurance ID'
           },
-          { key: 'field_address', valueType: 'MULTILINE_ADDRESS', placeholder: '' },
-          { key: 'field_email', valueType: 'EMAIL', placeholder: 'name@domain.eu' },
-          { key: 'field_phone', valueType: 'PHONE', placeholder: '+49 ...' }
+          {
+            key: 'field_address',
+            valueType: 'MULTILINE_ADDRESS',
+            placeholder: 'Friedrichstraße 120, 10117 Berlin'
+          },
+          {
+            key: 'field_email',
+            valueType: 'EMAIL',
+            placeholder: 'name@domain.eu'
+          },
+          {
+            key: 'field_phone',
+            valueType: 'PHONE',
+            placeholder: '+49 170 ...'
+          },
+          {
+            key: 'field_organization',
+            valueType: 'TEXT',
+            placeholder: 'Employer / University'
+          },
+          {
+            key: 'field_emergency_phone',
+            valueType: 'PHONE',
+            placeholder: 'ICE Contact +49 ...'
+          },
+          {
+            key: 'field_notes',
+            valueType: 'MARKDOWN',
+            placeholder: 'Blood type, allergies, civic registration…'
+          }
         ];
       case 'OFFICIAL_DOCUMENT':
         return [
           {
             key: 'field_document_subtype',
             valueType: 'TEXT',
-            placeholder: 'Biometric Passport / National ID'
+            placeholder: 'Biometric Passport / National ID / Driver License'
+          },
+          {
+            key: 'field_full_name',
+            valueType: 'TEXT',
+            placeholder: 'CLARA SOFIA MÜLLER'
           },
           {
             key: 'field_document_number',
@@ -4030,9 +4506,24 @@ export class SafePocketAppShell {
             placeholder: 'C01X00T47'
           },
           {
-            key: 'field_issuing_authority',
+            key: 'field_issuing_country',
             valueType: 'TEXT',
-            placeholder: 'Issuing Authority'
+            placeholder: 'Germany (DEU)'
+          },
+          {
+            key: 'field_nationality',
+            valueType: 'TEXT',
+            placeholder: 'German (DEU)'
+          },
+          {
+            key: 'field_birthdate',
+            valueType: 'DATE_ISO',
+            placeholder: '1992-04-19'
+          },
+          {
+            key: 'field_place_of_birth',
+            valueType: 'TEXT',
+            placeholder: 'Munich'
           },
           {
             key: 'field_issue_date',
@@ -4045,13 +4536,48 @@ export class SafePocketAppShell {
             placeholder: '2031-06-15'
           },
           {
-            key: 'field_nationality',
+            key: 'field_issuing_authority',
             valueType: 'TEXT',
-            placeholder: 'Nationality'
+            placeholder: 'Stadt München / Bürgeramt Mitte'
+          },
+          {
+            key: 'field_pin',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: 'eID Online-Ausweis 6-digit PIN / CAN'
+          },
+          {
+            key: 'field_license_classes',
+            valueType: 'TEXT',
+            placeholder: 'B, BE, AM, L'
+          },
+          {
+            key: 'field_notes',
+            valueType: 'MARKDOWN',
+            placeholder: 'Consulate contact, biometric visa notes…'
           }
         ];
       case 'SECURE_NOTE':
         return [
+          {
+            key: 'field_organization',
+            valueType: 'TEXT',
+            placeholder: 'Provider / Institution'
+          },
+          {
+            key: 'field_institution_domain',
+            valueType: 'TEXT',
+            placeholder: 'example.org'
+          },
+          {
+            key: 'field_document_number',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: 'Contract / Reference Number'
+          },
+          {
+            key: 'field_pin',
+            valueType: 'SENSITIVE_SECRET',
+            placeholder: 'Safe Code / PUK / Recovery Code'
+          },
           {
             key: 'field_markdown_note',
             valueType: 'MARKDOWN',
@@ -4855,8 +5381,71 @@ export class SafePocketAppShell {
       });
 
     this.root
+      .querySelector<HTMLInputElement>('#sp-edit-auto-brand')
+      ?.addEventListener('change', (e) => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        this.editorDraft.autoBrandColor = (
+          e.target as HTMLInputElement
+        ).checked;
+        this.render();
+      });
+
+    this.root
+      .querySelector('#sp-fetch-brand-logo-btn')
+      ?.addEventListener('click', async () => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        const draft = this.editorDraft;
+        const preview = resolveDualBrandFromFields(
+          draft.category,
+          draft.title,
+          draft.subtitle,
+          draft.standardFieldValues,
+          {
+            paletteId: draft.paletteId,
+            customColorHex: draft.customColorHex,
+            autoBrandColor: draft.autoBrandColor
+          }
+        );
+        const query =
+          draft.standardFieldValues.field_institution_domain ||
+          preview.inferredDomain ||
+          draft.standardFieldValues.field_issuing_bank ||
+          draft.standardFieldValues.field_insurer_name ||
+          draft.standardFieldValues.field_organization ||
+          draft.title;
+        if (!query.trim()) {
+          this.showToast('Enter an institution name or website domain first');
+          return;
+        }
+        const fetched = await fetchDomainBrandLogo(query);
+        if (!this.editorDraft) return;
+        if (fetched) {
+          this.editorDraft.institutionLogoDataUri = fetched.dataUri;
+          if (!this.editorDraft.standardFieldValues.field_institution_domain) {
+            this.editorDraft.standardFieldValues.field_institution_domain =
+              fetched.domain;
+          }
+          if (fetched.extractedColorHex && this.editorDraft.autoBrandColor) {
+            this.editorDraft.paletteId = 'custom';
+            this.editorDraft.customColorHex = fetched.extractedColorHex;
+          }
+          this.render();
+          this.showToast(`Downloaded icon & brand color from ${fetched.domain}`);
+        } else {
+          this.render();
+          this.showToast(
+            preview.institution
+              ? `Using built-in ${preview.institution.displayName} vector emblem`
+              : 'Could not reach domain icon — using vector monogram'
+          );
+        }
+      });
+
+    this.root
       .querySelectorAll<HTMLInputElement>(
-        '[data-std-field="field_card_number"], [data-std-field="field_iban"]'
+        '[data-std-field="field_card_number"], [data-std-field="field_iban"], [data-std-field="field_issuing_bank"], [data-std-field="field_insurer_name"], [data-std-field="field_organization"], [data-std-field="field_institution_domain"], [data-std-field="field_card_network"]'
       )
       .forEach((inp) => {
         inp.addEventListener('change', () => {
@@ -4918,11 +5507,7 @@ export class SafePocketAppShell {
             : undefined;
 
         const buildCardTheme = (
-          prevNetwork?: VaultItem['cardTheme'] extends infer T
-            ? T extends { networkBrand?: infer N }
-              ? N
-              : undefined
-            : undefined
+          prevTheme?: VaultItem['cardTheme']
         ): VaultItem['cardTheme'] => ({
           paletteId: draft.paletteId,
           customColorHex:
@@ -4935,8 +5520,13 @@ export class SafePocketAppShell {
             draft.category === 'MEMBERSHIP_CARD'
               ? draft.barcodeFormat
               : undefined,
-          networkBrand: detectedNetwork ?? prevNetwork
+          networkBrand: detectedNetwork ?? prevTheme?.networkBrand,
+          autoBrandColor: draft.autoBrandColor,
+          institutionLogoDataUri:
+            draft.institutionLogoDataUri ?? prevTheme?.institutionLogoDataUri
         });
+
+        let savedTarget: VaultItem | null = null;
 
         if (draft.editingItemId) {
           const existing = this.items.find(
@@ -4948,18 +5538,19 @@ export class SafePocketAppShell {
             existing.subtitle =
               draft.subtitle.trim() ||
               this.i18n.resolveCategoryName(draft.category);
-            existing.cardTheme = buildCardTheme(
-              existing.cardTheme?.networkBrand
-            );
+            existing.cardTheme = buildCardTheme(existing.cardTheme);
             existing.tags = tags;
             existing.fields = fields;
             existing.updatedAtEpochMs = now;
             existing.lastAccessedAtEpochMs = now;
+            const branded = applyAutoBranding(existing);
+            existing.cardTheme = branded.cardTheme;
             await this.persistSingleItemEncrypted(existing);
             this.selectedItemId = existing.id;
+            savedTarget = existing;
           }
         } else {
-          const created: VaultItem = {
+          const createdRaw: VaultItem = {
             schemaVersion: 1,
             id: `item-${now}`,
             category: draft.category,
@@ -4976,13 +5567,44 @@ export class SafePocketAppShell {
             updatedAtEpochMs: now,
             lastAccessedAtEpochMs: now
           };
+          const created = applyAutoBranding(createdRaw);
           this.items.unshift(created);
           this.selectedItemId = created.id;
           await this.persistSingleItemEncrypted(created);
+          savedTarget = created;
         }
 
         this.editorDraft = null;
         this.render();
+
+        if (
+          savedTarget &&
+          this.autoDownloadLogos &&
+          !savedTarget.cardTheme?.institutionLogoDataUri
+        ) {
+          const resolved = resolveDualBrand(savedTarget);
+          const domainCandidate = resolved.inferredDomain;
+          if (domainCandidate && !resolved.institution) {
+            const targetRef = savedTarget;
+            void fetchDomainBrandLogo(domainCandidate).then(async (fetched) => {
+              if (!fetched) return;
+              targetRef.cardTheme = {
+                ...(targetRef.cardTheme ?? { paletteId: 'custom' }),
+                institutionLogoDataUri: fetched.dataUri,
+                institutionDomain: fetched.domain,
+                ...(fetched.extractedColorHex &&
+                targetRef.cardTheme?.autoBrandColor !== false
+                  ? {
+                      paletteId: 'custom',
+                      customColorHex: fetched.extractedColorHex
+                    }
+                  : {})
+              };
+              await this.persistSingleItemEncrypted(targetRef);
+              this.render();
+            });
+          }
+        }
       });
 
     // Scan side selector, Camera Document Capture & Attachment Preview / Delete / Drag-and-Drop
@@ -5509,16 +6131,105 @@ export class SafePocketAppShell {
         }
       });
 
-    // Master-Password-Gated Plaintext JSON/CSV Export Modal
+    // 1Password (.1pux / CSV) & SafePocket CSV Import + Master-Password-Gated Export Modal
+    this.root
+      .querySelector<HTMLInputElement>('#sp-import-include-logins')
+      ?.addEventListener('change', (e) => {
+        this.importIncludeLogins = (e.target as HTMLInputElement).checked;
+      });
+
+    const mergeImportedItems = async (
+      importedItems: VaultItem[],
+      skippedLoginCount: number
+    ) => {
+      if (importedItems.length === 0) {
+        this.showToast(
+          this.i18n.t('import_summary_toast', {
+            imported: 0,
+            skipped: skippedLoginCount
+          })
+        );
+        return;
+      }
+      const report = mergeVaultSnapshots(this.items, importedItems);
+      this.items = report.merged;
+      await this.persistAllItemsEncrypted();
+      this.selectedItemId = importedItems[0]?.id ?? this.selectedItemId;
+      this.render();
+      this.showToast(
+        this.i18n.t('import_summary_toast', {
+          imported: importedItems.length,
+          skipped: skippedLoginCount
+        })
+      );
+    };
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-import-1password')
+      ?.addEventListener('change', async (e) => {
+        const inputEl = e.target as HTMLInputElement;
+        const file = inputEl.files?.[0];
+        if (!file) return;
+        const rawBytes = new Uint8Array(await file.arrayBuffer());
+        inputEl.value = '';
+        try {
+          const isZipOr1Pux =
+            file.name.toLowerCase().endsWith('.1pux') ||
+            (rawBytes.byteLength >= 4 &&
+              rawBytes[0] === 0x50 &&
+              rawBytes[1] === 0x4b);
+          const rep = isZipOr1Pux
+            ? await importFrom1Password1Pux(rawBytes, this.importIncludeLogins)
+            : importFromCsv(
+                new TextDecoder().decode(rawBytes),
+                this.importIncludeLogins
+              );
+          await mergeImportedItems(rep.importedItems, rep.skippedLoginCount);
+        } catch (err) {
+          this.showToast(
+            err instanceof Error ? err.message : '1Password import failed'
+          );
+        }
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-import-csv')
+      ?.addEventListener('change', async (e) => {
+        const inputEl = e.target as HTMLInputElement;
+        const file = inputEl.files?.[0];
+        if (!file) return;
+        const rawText = await file.text();
+        inputEl.value = '';
+        try {
+          const rep = importFromCsv(rawText, this.importIncludeLogins);
+          await mergeImportedItems(rep.importedItems, rep.skippedLoginCount);
+        } catch (err) {
+          this.showToast(
+            err instanceof Error ? err.message : 'CSV import failed'
+          );
+        }
+      });
+
+    const openPlainExport = (format: PlainExportFormat) => {
+      this.plainExportModalState = {
+        format,
+        password: ''
+      };
+      this.render();
+    };
+
+    this.root
+      .querySelector('#sp-export-1pux-btn')
+      ?.addEventListener('click', () => openPlainExport('1pux'));
+    this.root
+      .querySelector('#sp-export-1p-csv-btn')
+      ?.addEventListener('click', () => openPlainExport('1password_csv'));
+    this.root
+      .querySelector('#sp-export-sp-csv-btn')
+      ?.addEventListener('click', () => openPlainExport('csv'));
     this.root
       .querySelector('#sp-export-plain-csv')
-      ?.addEventListener('click', () => {
-        this.plainExportModalState = {
-          format: 'json',
-          password: ''
-        };
-        this.render();
-      });
+      ?.addEventListener('click', () => openPlainExport('json'));
 
     this.root
       .querySelectorAll<HTMLElement>('[data-plain-format]')
@@ -5529,8 +6240,15 @@ export class SafePocketAppShell {
             '#sp-plain-export-password'
           );
           if (pwEl) this.plainExportModalState.password = pwEl.value;
-          this.plainExportModalState.format =
-            btn.dataset.plainFormat === 'csv' ? 'csv' : 'json';
+          const fmt = btn.dataset.plainFormat as PlainExportFormat;
+          if (
+            fmt === '1pux' ||
+            fmt === '1password_csv' ||
+            fmt === 'csv' ||
+            fmt === 'json'
+          ) {
+            this.plainExportModalState.format = fmt;
+          }
           this.render();
         });
       });
@@ -5567,24 +6285,63 @@ export class SafePocketAppShell {
           this.render();
           return;
         }
-        const exported = formatUnencryptedVaultExport(this.items, st.format);
+        const fmt = st.format;
         this.plainExportModalState = null;
         this.render();
-        this.downloadBlob(
-          exported.content,
-          `safepocket-export.${exported.extension}`,
-          exported.mimeType
-        );
-        this.showToast(
-          `Exported unencrypted ${exported.extension.toUpperCase()} (${this.items.length} items)`
-        );
+
+        const dateStamp = new Date().toISOString().slice(0, 10);
+        if (fmt === '1pux') {
+          const zipBytes = exportTo1Password1Pux(this.items);
+          this.downloadBinaryBlob(
+            zipBytes,
+            `safepocket-1password-${dateStamp}.1pux`,
+            'application/zip'
+          );
+          this.showToast(
+            `Exported 1Password .1pux archive (${this.items.length} items)`
+          );
+        } else if (fmt === '1password_csv') {
+          const csv1p = exportTo1PasswordCsv(this.items);
+          this.downloadBlob(
+            csv1p,
+            `safepocket-1password-${dateStamp}.csv`,
+            'text/csv;charset=utf-8'
+          );
+          this.showToast(
+            `Exported 1Password CSV (${this.items.length} items)`
+          );
+        } else if (fmt === 'csv') {
+          const spCsv = exportToSafePocketCsv(this.items);
+          this.downloadBlob(
+            spCsv,
+            `safepocket-vault-${dateStamp}.csv`,
+            'text/csv;charset=utf-8'
+          );
+          this.showToast(`Exported SafePocket CSV (${this.items.length} items)`);
+        } else {
+          const exported = formatUnencryptedVaultExport(this.items, 'json');
+          this.downloadBlob(
+            exported.content,
+            `safepocket-export-${dateStamp}.${exported.extension}`,
+            exported.mimeType
+          );
+          this.showToast(
+            `Exported unencrypted JSON (${this.items.length} items)`
+          );
+        }
       });
 
-    // Settings: Allow Screenshots, Expiry Warning Horizon, Auto-Lock Timeout, Biometrics & Emergency Kit v2
+    // Settings: Allow Screenshots, Auto-Download Logos, Expiry Warning Horizon, Auto-Lock Timeout, Biometrics & Emergency Kit v2
     this.root
       .querySelector<HTMLInputElement>('#sp-toggle-allow-screenshots')
       ?.addEventListener('change', (e) => {
         this.setAllowScreenshots((e.target as HTMLInputElement).checked);
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-toggle-auto-logos')
+      ?.addEventListener('change', (e) => {
+        this.setAutoDownloadLogos((e.target as HTMLInputElement).checked);
       });
 
     this.root
@@ -5761,6 +6518,22 @@ export class SafePocketAppShell {
     mimeType: string
   ): void {
     const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private downloadBinaryBlob(
+    bytes: Uint8Array,
+    fileName: string,
+    mimeType: string
+  ): void {
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    const blob = new Blob([copy.buffer], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

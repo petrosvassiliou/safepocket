@@ -147,6 +147,11 @@ export interface VaultItem {
     showVisualCard?: boolean;
     barcodeFormat?: BarcodeFormat;
     networkBrand?: string;
+    institutionId?: string;
+    institutionName?: string;
+    institutionDomain?: string;
+    institutionLogoDataUri?: string;
+    autoBrandColor?: boolean;
   };
   documentSubtype?: DocumentSubtype;
   fields: VaultField[];
@@ -194,6 +199,7 @@ export const SENSITIVE_FIELD_KEYS = new Set<string>([
   'field_card_number',
   'field_cvv',
   'field_pin',
+  'field_online_passcode',
   'field_iban',
   'field_account_number',
   'field_insurance_number',
@@ -205,6 +211,6 @@ export const SENSITIVE_FIELD_KEYS = new Set<string>([
 
 export const APP_BUILD_INFO = {
   appName: 'SafePocket',
-  versionName: '0.1.2',
-  versionCode: 3
+  versionName: '0.2',
+  versionCode: 4
 } as const;

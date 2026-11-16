@@ -1,4 +1,5 @@
 import type { VaultItem } from '../types';
+import { applyAutoBranding } from '../ui/institutionBrands';
 
 export function createInitialSampleVaultItems(): VaultItem[] {
   const now = Date.now();
@@ -7,7 +8,7 @@ export function createInitialSampleVaultItems(): VaultItem[] {
     .toISOString()
     .slice(0, 10);
 
-  return [
+  const items: VaultItem[] = [
     {
       schemaVersion: 1,
       id: 'item-card-alpine-metal',
@@ -504,8 +505,141 @@ Home Insurance Policy: ALLIANZ-DE-9940218
       attachments: [],
       createdAtEpochMs: now - 86_400_000 * 18,
       updatedAtEpochMs: now - 3_600_000 * 4
+    },
+    {
+      schemaVersion: 1,
+      id: 'item-card-db-visa',
+      category: 'PAYMENT_CARD',
+      title: 'Deutsche Bank Card Plus VISA',
+      subtitle: 'Kreditkarte • Weltweit & Kontaktlos',
+      favorite: true,
+      pinned: true,
+      tags: ['kreditkarte', 'visa', 'deutsche-bank', 'reise'],
+      cardTheme: {
+        paletteId: 'custom',
+        customColorHex: '#0018A8',
+        networkBrand: 'VISA',
+        institutionId: 'deutsche_bank',
+        institutionName: 'Deutsche Bank',
+        institutionDomain: 'deutsche-bank.de',
+        autoBrandColor: true
+      },
+      fields: [
+        {
+          id: 'db-ch',
+          labelKey: 'field_cardholder',
+          value: 'CLARA SOFIA MÜLLER',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'db-pan',
+          labelKey: 'field_card_number',
+          value: '4532 0151 1283 0366',
+          valueType: 'CARD_NUMBER',
+          isSensitive: true
+        },
+        {
+          id: 'db-net',
+          labelKey: 'field_card_network',
+          value: 'VISA',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'db-type',
+          labelKey: 'field_card_type',
+          value: 'Credit Card (Gold)',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'db-from',
+          labelKey: 'field_valid_from',
+          value: '2025-11',
+          valueType: 'DATE_ISO'
+        },
+        {
+          id: 'db-exp',
+          labelKey: 'field_expiry_date',
+          value: '2029-11',
+          valueType: 'DATE_ISO'
+        },
+        {
+          id: 'db-cvv',
+          labelKey: 'field_cvv',
+          value: '742',
+          valueType: 'SENSITIVE_SECRET',
+          isSensitive: true
+        },
+        {
+          id: 'db-pin',
+          labelKey: 'field_pin',
+          value: '4819',
+          valueType: 'SENSITIVE_SECRET',
+          isSensitive: true
+        },
+        {
+          id: 'db-bank',
+          labelKey: 'field_issuing_bank',
+          value: 'Deutsche Bank AG',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'db-dom',
+          labelKey: 'field_institution_domain',
+          value: 'deutsche-bank.de',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'db-limit',
+          labelKey: 'field_credit_limit',
+          value: '7.500 EUR',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'db-iban',
+          labelKey: 'field_iban',
+          value: 'DE12 5007 0010 0928 4410 00',
+          valueType: 'IBAN',
+          isSensitive: true
+        },
+        {
+          id: 'db-bic',
+          labelKey: 'field_bic',
+          value: 'DEUTDEFFXXX',
+          valueType: 'TEXT'
+        },
+        {
+          id: 'db-addr',
+          labelKey: 'field_billing_address',
+          value: 'Maximilianstraße 42, 80539 München, Deutschland',
+          valueType: 'MULTILINE_ADDRESS'
+        },
+        {
+          id: 'db-3ds',
+          labelKey: 'field_online_passcode',
+          value: 'PhotoTAN / BestSign Aktiviert',
+          valueType: 'SENSITIVE_SECRET',
+          isSensitive: true
+        },
+        {
+          id: 'db-emg',
+          labelKey: 'field_emergency_phone',
+          value: '+49 116 116',
+          valueType: 'PHONE'
+        },
+        {
+          id: 'db-sup',
+          labelKey: 'field_support_phone',
+          value: '+49 69 910-10000',
+          valueType: 'PHONE'
+        }
+      ],
+      attachments: [],
+      createdAtEpochMs: now - 86_400_000 * 10,
+      updatedAtEpochMs: now - 3_600_000 * 1
     }
   ];
+
+  return items.map((item) => applyAutoBranding(item));
 }
 
 export function buildSampleSvgScanBytes(params: {

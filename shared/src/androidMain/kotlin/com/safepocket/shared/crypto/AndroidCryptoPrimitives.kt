@@ -7,16 +7,20 @@ import com.safepocket.db.SafePocketDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import javax.crypto.Cipher
-import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Android 17+ & Googlebook OS (`arm64-v8a` + `x86_64`) Hardware-Accelerated CryptoPrimitives
- * & SQLCipher 4.6 Encrypted Database Driver Factory.
+ * Android 10+ / Android 17+ & Googlebook OS (`arm64-v8a` + `x86_64`) CryptoPrimitives,
+ * SQLCipher 4.6 Encrypted Database Driver Factory, and `.1pux` ZIP Codec.
  */
 class AndroidCryptoPrimitives(
     private val argon2idBridge: suspend (
@@ -25,7 +29,16 @@ class AndroidCryptoPrimitives(
         memoryKiB: Int,
         iterations: Int,
         parallelism: Int
-    ) -> ByteArray
+    ) -> ByteArray = { pw, salt, mem, iter, par ->
+        Argon2idPure.hash(
+            password = pw,
+            salt = salt,
+            memoryKiB = mem,
+            iterations = iter,
+            parallelism = par,
+            hashLength = 32
+        )
+    }
 ) : CryptoPrimitives {
 
     private val csprng = SecureRandom()
@@ -45,18 +58,14 @@ class AndroidCryptoPrimitives(
         secretKeyBytes: ByteArray,
         infoUtf8: ByteArray
     ): ByteArray = withContext(Dispatchers.Default) {
-        // RFC 5869 HKDF-Extract + HKDF-Expand (HmacSHA256)
         val ikm = argonKey + secretKeyBytes
         try {
-            val extractMac = Mac.getInstance("HmacSHA256")
-            extractMac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
-            val prk = extractMac.doFinal(ikm)
-
-            val expandMac = Mac.getInstance("HmacSHA256")
-            expandMac.init(SecretKeySpec(prk, "HmacSHA256"))
-            expandMac.update(infoUtf8)
-            expandMac.update(0x01.toByte())
-            expandMac.doFinal()
+            HkdfSha256Pure.derive(
+                ikm = ikm,
+                salt = ByteArray(32),
+                info = infoUtf8,
+                length = 32
+            )
         } finally {
             ikm.fill(0)
         }
@@ -107,5 +116,42 @@ object AndroidSqlCipherDriverFactory {
             name = "safepocket_vault.db",
             factory = factory
         )
+    }
+}
+
+object AndroidZipCodec {
+    fun extractEntries(zipBytes: ByteArray): Map<String, ByteArray> {
+        val entries = linkedMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory) {
+                    val out = ByteArrayOutputStream()
+                    val buf = ByteArray(8192)
+                    var n = zis.read(buf)
+                    while (n > 0) {
+                        out.write(buf, 0, n)
+                        n = zis.read(buf)
+                    }
+                    entries[entry.name] = out.toByteArray()
+                }
+                zis.closeEntry()
+                entry = zis.nextEntry
+            }
+        }
+        return entries
+    }
+
+    fun createZip(entries: Map<String, ByteArray>): ByteArray {
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            for ((name, bytes) in entries) {
+                val entry = ZipEntry(name)
+                zos.putNextEntry(entry)
+                zos.write(bytes)
+                zos.closeEntry()
+            }
+        }
+        return baos.toByteArray()
     }
 }

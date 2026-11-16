@@ -45,13 +45,15 @@ data class HybridLogicalClock(
 @Serializable
 data class EncryptedSyncRecord(
     val entityId: String,
-    val entityType: String,               // "ITEM" | "ATTACHMENT_META"
+    val entityType: String = "ITEM",      // "ITEM" | "ATTACHMENT_META"
     val hlcPacked: String,
     val versionVector: Map<String, Long>, // nodeId -> monotonic counter
     val isTombstone: Boolean,
-    val ivBase64: String,
-    val ciphertextBase64: String,         // Opaque AES-256-GCM ciphertext + 128-bit auth tag
-    val aadContext: String
+    val ivHex: String = "",
+    val ciphertextHex: String = "",       // Opaque AES-256-GCM ciphertext + 128-bit auth tag (hex)
+    val aadContext: String,
+    val ivBase64: String = "",
+    val ciphertextBase64: String = ""
 )
 
 enum class SyncProviderType {

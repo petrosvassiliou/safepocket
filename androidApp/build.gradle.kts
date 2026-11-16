@@ -9,10 +9,10 @@ val targetAndroidSdk = (System.getenv("SAFEPOCKET_COMPILE_SDK") ?: "35").toInt()
 val minAndroidSdk = (System.getenv("SAFEPOCKET_MIN_SDK") ?: "29").toInt()
 val releaseVersionName = (project.findProperty("versionName") as String?)
     ?: System.getenv("SAFEPOCKET_RELEASE_VERSION")?.removePrefix("v")
-    ?: "0.1.2"
+    ?: "0.2"
 val releaseVersionCode = ((project.findProperty("versionCode") as String?)
     ?: System.getenv("SAFEPOCKET_VERSION_CODE")
-    ?: "3").toInt()
+    ?: "4").toInt()
 val configuredKeystoreFile = file(System.getenv("SAFEPOCKET_KEYSTORE_PATH") ?: "keystore/release.jks")
 
 android {
@@ -108,4 +108,7 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.window)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.sqldelight.runtime)
 }
