@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.1.1').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.1.2').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '2');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '3');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -96,12 +96,12 @@ function main() {
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} initial zero-knowledge vault release (Light default, Dark & System themes, custom card colors).\n• Offline live camera scanner with Code 128B, EAN-13 & QR encoders, full-screen presentation mode, and ICAO MRZ assist.\n• Configurable expiry alerts, Pin-to-Top & tag filters, cross-vault .safepocket merge/restore, and printable Emergency Recovery Kit with QR.`,
-      de: `• SafePocket v${latestVersion} erste Zero-Knowledge-Tresor-Version (Helles Standarddesign, Dunkel- & Systemdesign, eigene Kartenfarben).\n• Offline-Kamerascanner mit Code-128B-, EAN-13- & QR-Generator, Vollbild-Präsentationsmodus und ICAO-MRZ-Assistent.\n• Konfigurierbare Ablaufwarnungen, Anheften & Tag-Filter, .safepocket-Zusammenführung sowie druckbares Notfall-Kit mit QR-Code.`,
-      it: `• SafePocket v${latestVersion} prima versione cassaforte zero-knowledge (tema chiaro predefinito, scuro e di sistema, colori carta personalizzati).\n• Scanner fotocamera offline con codici Code 128B, EAN-13 e QR, modalità presentazione a schermo intero e supporto MRZ ICAO.\n• Avvisi di scadenza configurabili, elementi fissati e filtri tag, unione/ripristino .safepocket e Kit di Emergenza stampabile con QR.`,
-      fr: `• SafePocket v${latestVersion} première version du coffre zéro-connaissance (thème clair par défaut, sombre et système, couleurs de carte personnalisées).\n• Scanner caméra hors ligne avec Code 128B, EAN-13 et QR, mode présentation plein écran et assistant MRZ OACI.\n• Alertes d’expiration configurables, épinglage et filtres par étiquette, fusion/restauration .safepocket et Kit d’Urgence imprimable avec QR.`,
-      es: `• SafePocket v${latestVersion} primera versión de bóveda de conocimiento cero (tema claro predeterminado, oscuro y del sistema, colores personalizados).\n• Escáner de cámara sin conexión con Code 128B, EAN-13 y QR, modo presentación a pantalla completa y asistente MRZ OACI.\n• Alertas de caducidad configurables, fijar arriba y filtros por etiquetas, fusión .safepocket y Kit de Emergencia imprimible con QR.`,
-      el: `• SafePocket v${latestVersion} πρώτη έκδοση θησαυροφυλακίου μηδενικής γνώσης (φωτεινό θέμα προεπιλογής, σκοτεινό & συστήματος, προσαρμοσμένα χρώματα καρτών).\n• Offline σαρωτής κάμερας με Code 128B, EAN-13 & QR, λειτουργία παρουσίασης πλήρους οθόνης και βοηθό MRZ ICAO.\n• Ρυθμιζόμενες ειδοποιήσεις λήξης, καρφίτσωμα & φίλτρα ετικετών, συγχώνευση .safepocket και εκτυπώσιμο Κιτ Έκτακτης Ανάγκης με QR.`
+      en: `• SafePocket v${latestVersion} permanent release-signed Android APK (v1+v2+v3), bundled 6-locale ARB display names & live Screenshot toggle.\n• Offline live camera scanner with Code 128B, EAN-13 & QR encoders, full-screen presentation mode, and ICAO MRZ assist.\n• Configurable expiry alerts, Pin-to-Top & tag filters, cross-vault .safepocket merge/restore, and printable Emergency Recovery Kit with QR.`,
+      de: `• SafePocket v${latestVersion} permanent signierte Release-APK (v1+v2+v3), gebündelte 6-Sprachen-Anzeigenamen & Live-Screenshot-Schalter.\n• Offline-Kamerascanner mit Code-128B-, EAN-13- & QR-Generator, Vollbild-Präsentationsmodus und ICAO-MRZ-Assistent.\n• Konfigurierbare Ablaufwarnungen, Anheften & Tag-Filter, .safepocket-Zusammenführung sowie druckbares Notfall-Kit mit QR-Code.`,
+      it: `• SafePocket v${latestVersion} APK Android firmato con chiave di rilascio permanente (v1+v2+v3), nomi localizzati in 6 lingue e opzione screenshot.\n• Scanner fotocamera offline con codici Code 128B, EAN-13 e QR, modalità presentazione a schermo intero e supporto MRZ ICAO.\n• Avvisi di scadenza configurabili, elementi fissati e filtri tag, unione/ripristino .safepocket e Kit di Emergenza stampabile con QR.`,
+      fr: `• SafePocket v${latestVersion} APK Android signé avec clé de publication permanente (v1+v2+v3), noms localisés en 6 langues et option captures d’écran.\n• Scanner caméra hors ligne avec Code 128B, EAN-13 et QR, mode présentation plein écran et assistant MRZ OACI.\n• Alertes d’expiration configurables, épinglage et filtres par étiquette, fusion/restauration .safepocket et Kit d’Urgence imprimable avec QR.`,
+      es: `• SafePocket v${latestVersion} APK Android firmado con clave permanente (v1+v2+v3), nombres localizados en 6 idiomas y opción de capturas de pantalla.\n• Escáner de cámara sin conexión con Code 128B, EAN-13 y QR, modo presentación a pantalla completa y asistente MRZ OACI.\n• Alertas de caducidad configurables, fijar arriba y filtros por etiquetas, fusión .safepocket y Kit de Emergencia imprimible con QR.`,
+      el: `• SafePocket v${latestVersion} μόνιμα υπογεγραμμένο Android APK (v1+v2+v3), ενσωματωμένα ονόματα σε 6 γλώσσες & διακόπτης στιγμιότυπων οθόνης.\n• Offline σαρωτής κάμερας με Code 128B, EAN-13 & QR, λειτουργία παρουσίασης πλήρους οθόνης και βοηθό MRZ ICAO.\n• Ρυθμιζόμενες ειδοποιήσεις λήξης, καρφίτσωμα & φίλτρα ετικετών, συγχώνευση .safepocket και εκτυπώσιμο Κιτ Έκτακτης Ανάγκης με QR.`
     },
     artifacts: {
       'android-universal': {
@@ -110,9 +110,9 @@ function main() {
         sizeBytes: apkDigest.sizeBytes,
         minSdk: 29,
         abis: ['arm64-v8a', 'x86_64'],
-        apkSignatureSchemes: ['v2', 'v3', 'v4'],
+        apkSignatureSchemes: ['v1', 'v2', 'v3'],
         signingCertSha256:
-          '3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea'
+          '5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09'
       },
       'macos-universal': {
         url: `https://github.com/petrosvassiliou/safepocket/releases/download/v${latestVersion}/SafePocket-${latestVersion}-${versionCode}-macOS-universal.dmg`,

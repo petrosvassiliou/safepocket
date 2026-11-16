@@ -77,11 +77,11 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var verifiedSha256: String?
     @Published var isChecking: Bool = false
 
-    let currentVersionName = "0.1.1"
-    let currentVersionCode = 2
-    let currentVersionDisplay = "SafePocket v0.1.1 (Build 2)"
+    let currentVersionName = "0.1.2"
+    let currentVersionCode = 3
+    let currentVersionDisplay = "SafePocket v0.1.2 (Build 3)"
 
-    func checkForUpdatesInitiatedByUser(remoteVersionName: String = "0.1.1", remoteVersionCode: Int = 2) {
+    func checkForUpdatesInitiatedByUser(remoteVersionName: String = "0.1.2", remoteVersionCode: Int = 3) {
         isChecking = true
         // Triggers Sparkle SPUStandardUpdaterController.checkForUpdates(nil)
         // and verifies Ed25519 signature + SHA-256 checksum from manifest/version.json

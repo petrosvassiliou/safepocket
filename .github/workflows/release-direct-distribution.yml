@@ -39,12 +39,14 @@ jobs:
               echo "version_code=1" >> "${GITHUB_OUTPUT}"
             elif [[ "${RAW_TAG}" == "0.1.1" ]]; then
               echo "version_code=2" >> "${GITHUB_OUTPUT}"
+            elif [[ "${RAW_TAG}" == "0.1.2" ]]; then
+              echo "version_code=3" >> "${GITHUB_OUTPUT}"
             else
-              echo "version_code=${GITHUB_RUN_NUMBER:-2}" >> "${GITHUB_OUTPUT}"
+              echo "version_code=${GITHUB_RUN_NUMBER:-3}" >> "${GITHUB_OUTPUT}"
             fi
           else
-            echo "version_name=${{ inputs.version_name || '0.1.1' }}" >> "${GITHUB_OUTPUT}"
-            echo "version_code=${{ inputs.version_code || '2' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_name=${{ inputs.version_name || '0.1.2' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_code=${{ inputs.version_code || '3' }}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Setup Node.js 24 LTS
@@ -97,6 +99,7 @@ jobs:
           if [ -n "${KEYSTORE_BASE64}" ]; then
             mkdir -p androidApp/keystore
             echo "${KEYSTORE_BASE64}" | base64 --decode > androidApp/keystore/release.jks
+            echo "Decoded release keystore ($(wc -c < androidApp/keystore/release.jks) bytes)"
           fi
 
       - name: Assemble Android Universal Release APK
@@ -111,8 +114,10 @@ jobs:
             -PversionName="${SAFEPOCKET_RELEASE_VERSION}" \
             -PversionCode="${SAFEPOCKET_VERSION_CODE}" \
             --no-daemon
-          APK_SRC="$(find androidApp/build/outputs/apk/release -name '*.apk' | head -n 1)"
-          cp "${APK_SRC}" "SafePocket-v${SAFEPOCKET_RELEASE_VERSION}-b${SAFEPOCKET_VERSION_CODE}-universal-arm64-x86_64.apk"
+          APK_SRC="$(find androidApp/build/outputs/apk/release -name '*.apk' ! -name '*-unsigned.apk' | head -n 1)"
+          OUT_APK="SafePocket-v${SAFEPOCKET_RELEASE_VERSION}-b${SAFEPOCKET_VERSION_CODE}-universal-arm64-x86_64.apk"
+          cp "${APK_SRC}" "${OUT_APK}"
+          keytool -printcert -jarfile "${OUT_APK}" | head -n 12
 
       - name: Upload Android APK artifact
         uses: actions/upload-artifact@v4
@@ -124,7 +129,7 @@ jobs:
     name: Build Native macOS Universal App & DMG (Apple Silicon + Intel)
     needs: build-pwa
     runs-on: macos-latest
-    timeout-minutes: 8
+    timeout-minutes: 4
     continue-on-error: true
     steps:
       - name: Checkout repository

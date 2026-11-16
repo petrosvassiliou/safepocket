@@ -9,10 +9,10 @@ val targetAndroidSdk = (System.getenv("SAFEPOCKET_COMPILE_SDK") ?: "35").toInt()
 val minAndroidSdk = (System.getenv("SAFEPOCKET_MIN_SDK") ?: "29").toInt()
 val releaseVersionName = (project.findProperty("versionName") as String?)
     ?: System.getenv("SAFEPOCKET_RELEASE_VERSION")?.removePrefix("v")
-    ?: "0.1.1"
+    ?: "0.1.2"
 val releaseVersionCode = ((project.findProperty("versionCode") as String?)
     ?: System.getenv("SAFEPOCKET_VERSION_CODE")
-    ?: "2").toInt()
+    ?: "3").toInt()
 val configuredKeystoreFile = file(System.getenv("SAFEPOCKET_KEYSTORE_PATH") ?: "keystore/release.jks")
 
 android {
@@ -43,15 +43,16 @@ android {
         if (configuredKeystoreFile.exists()) {
             create("release") {
                 storeFile = configuredKeystoreFile
+                storeType = "PKCS12"
                 storePassword = System.getenv("SAFEPOCKET_KEYSTORE_PASSWORD") ?: ""
                 keyAlias = System.getenv("SAFEPOCKET_KEY_ALIAS") ?: "safepocket-release"
                 keyPassword = System.getenv("SAFEPOCKET_KEY_PASSWORD") ?: ""
 
-                // Mandatory modern APK Signature Schemes for Play Protect compliance & incremental streaming
-                enableV1Signing = false
+                // Universal APK Signature Schemes (v1 + v2 + v3) for Android 10–17 & ChromeOS PackageInstaller
+                enableV1Signing = true
                 enableV2Signing = true
                 enableV3Signing = true
-                enableV4Signing = true
+                enableV4Signing = false
             }
         }
     }

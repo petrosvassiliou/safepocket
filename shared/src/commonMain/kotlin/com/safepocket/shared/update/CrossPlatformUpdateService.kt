@@ -24,8 +24,8 @@ import kotlinx.serialization.json.Json
  */
 object AppBuildInfo {
     const val APP_NAME = "SafePocket"
-    const val CURRENT_VERSION_NAME = "0.1.1"
-    const val CURRENT_VERSION_CODE = 2
+    const val CURRENT_VERSION_NAME = "0.1.2"
+    const val CURRENT_VERSION_CODE = 3
     val DISPLAY_STRING: String get() = "$APP_NAME v$CURRENT_VERSION_NAME (Build $CURRENT_VERSION_CODE)"
 }
 
