@@ -62,11 +62,10 @@ class FirebaseZeroKnowledgeAuthService(
         val cleanEmail = email.trim().lowercase()
         val ikm = "safepocket-cloud-auth:$cleanEmail:$syncPassword".encodeToByteArray()
         val salt = "salt:$cleanEmail:safepocket-v0.1".encodeToByteArray()
-        val derived = primitives.hkdfSha256(
-            ikm = ikm,
-            salt = salt,
-            info = "safepocket-firebase-auth-verifier-v1".encodeToByteArray(),
-            outputLengthBytes = 32
+        val derived = primitives.hkdfSha256Combine(
+            argonKey = ikm,
+            secretKeyBytes = salt,
+            infoUtf8 = "safepocket-firebase-auth-verifier-v1".encodeToByteArray()
         )
         return "spzk_${ZeroKnowledgeEncryptionService.bytesToHex(derived)}"
     }

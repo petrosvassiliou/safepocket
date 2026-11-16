@@ -89,8 +89,10 @@ class PlayProtectPackageInstaller(
                 setAppPackageName(context.packageName)
                 setSize(stagedApk.length())
                 setInstallReason(PackageManager.INSTALL_REASON_USER)
-                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-                if (Build.VERSION.SDK_INT >= 34) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     setRequestUpdateOwnership(true)
                 }
             }
@@ -109,11 +111,13 @@ class PlayProtectPackageInstaller(
             val callbackIntent = Intent(context, PackageInstallerStatusReceiver::class.java).apply {
                 setPackage(context.packageName)
             }
+            val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0)
             val pendingIntent = PendingIntent.getBroadcast(
                 context,
                 sessionId,
                 callbackIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                pendingFlags
             )
 
             onProgress(1.0f)
@@ -130,9 +134,15 @@ class PlayProtectPackageInstaller(
 
     private fun verifyApkSigningCertificate(stagedApk: File, pinnedCertSha256: String?) {
         val pm = context.packageManager
-        val flags = PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
-        val archiveInfo: PackageInfo = pm.getPackageArchiveInfo(stagedApk.absolutePath, flags)
-            ?: error("Downloaded file is not a valid signed Android APK archive")
+        val archiveInfo: PackageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageArchiveInfo(
+                stagedApk.absolutePath,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageArchiveInfo(stagedApk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+        } ?: error("Downloaded file is not a valid signed Android APK archive")
 
         check(archiveInfo.packageName == context.packageName) {
             "APK packageName mismatch: ${archiveInfo.packageName}"
@@ -140,7 +150,15 @@ class PlayProtectPackageInstaller(
 
         val archiveSigners = archiveInfo.signingInfo?.apkContentsSigners
             ?: error("Downloaded APK lacks V2/V3/V4 signing certificates")
-        val installedInfo = pm.getPackageInfo(context.packageName, flags)
+        val installedInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageInfo(
+                context.packageName,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        }
         val installedSigners = installedInfo.signingInfo?.apkContentsSigners.orEmpty()
 
         val sha256 = MessageDigest.getInstance("SHA-256")
@@ -168,7 +186,12 @@ class PackageInstallerStatusReceiver : BroadcastReceiver() {
         when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 // Triggered on initial sideload before update ownership is established or when OS requires confirmation
-                val confirmIntent = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                val confirmIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_INTENT)
+                }
                 confirmIntent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let(context::startActivity)
             }
             PackageInstaller.STATUS_SUCCESS -> {

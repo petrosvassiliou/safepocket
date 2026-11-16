@@ -50,6 +50,7 @@ kotlin {
                 implementation(libs.ktor.client.okhttp)
                 implementation(libs.sqldelight.android.driver)
                 implementation(libs.sqlcipher.android)
+                implementation(libs.androidx.sqlite.ktx)
             }
         }
         val appleMain by creating {
@@ -64,7 +65,6 @@ kotlin {
         val jsMain by getting {
             dependencies {
                 implementation(libs.ktor.client.js)
-                implementation(libs.sqldelight.web.worker.driver)
             }
         }
     }
@@ -76,13 +76,16 @@ android {
     defaultConfig {
         minSdk = (System.getenv("SAFEPOCKET_MIN_SDK") ?: "29").toInt()
     }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
 }
 
 sqldelight {
     databases {
         create("SafePocketDatabase") {
             packageName.set("com.safepocket.db")
-            generateAsync.set(true)
         }
     }
 }

@@ -72,9 +72,10 @@ fun AdaptiveSafePocketShell(
         ThemePreference.DARK -> true
         ThemePreference.SYSTEM -> isSystemInDarkTheme()
     }
+    val supportsDynamicColor = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
     val colorScheme = when {
-        useDeviceDynamicColor && useDarkTheme -> dynamicDarkColorScheme(context)
-        useDeviceDynamicColor && !useDarkTheme -> dynamicLightColorScheme(context)
+        useDeviceDynamicColor && supportsDynamicColor && useDarkTheme -> dynamicDarkColorScheme(context)
+        useDeviceDynamicColor && supportsDynamicColor && !useDarkTheme -> dynamicLightColorScheme(context)
         useDarkTheme -> darkColorScheme()
         else -> lightColorScheme()
     }
@@ -84,7 +85,12 @@ fun AdaptiveSafePocketShell(
         val clip = ClipData.newPlainText(label, secretValue).apply {
             if (isSensitive) {
                 description.extras = PersistableBundle().apply {
-                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    val key = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        ClipDescription.EXTRA_IS_SENSITIVE
+                    } else {
+                        "android.content.extra.IS_SENSITIVE"
+                    }
+                    putBoolean(key, true)
                 }
             }
         }

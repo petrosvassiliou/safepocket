@@ -35,7 +35,11 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             RAW_TAG="${GITHUB_REF#refs/tags/v}"
             echo "version_name=${RAW_TAG}" >> "${GITHUB_OUTPUT}"
-            echo "version_code=${GITHUB_RUN_NUMBER:-1}" >> "${GITHUB_OUTPUT}"
+            if [[ "${RAW_TAG}" == "0.1" ]]; then
+              echo "version_code=1" >> "${GITHUB_OUTPUT}"
+            else
+              echo "version_code=${GITHUB_RUN_NUMBER:-1}" >> "${GITHUB_OUTPUT}"
+            fi
           else
             echo "version_name=${{ inputs.version_name || '0.1' }}" >> "${GITHUB_OUTPUT}"
             echo "version_code=${{ inputs.version_code || '1' }}" >> "${GITHUB_OUTPUT}"
@@ -173,4 +177,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: SafePocket v${{ needs.build-pwa.outputs.version_name }} (Build ${{ needs.build-pwa.outputs.version_code }})
+          make_latest: true
+          generate_release_notes: true
+          body: |
+            ## SafePocket v${{ needs.build-pwa.outputs.version_name }} (Build ${{ needs.build-pwa.outputs.version_code }}) — Zero-Knowledge Personal Vault
+
+            ### Direct-Distribution Signed Artifacts
+            - **Android 10+ / Android 17+ / Googlebook OS (`arm64-v8a` + `x86_64`)**: `SafePocket-v${{ needs.build-pwa.outputs.version_name }}-b${{ needs.build-pwa.outputs.version_code }}-universal-arm64-x86_64.apk`
+            - **macOS 14+ Universal (`Apple Silicon + Intel`)**: `SafePocket-${{ needs.build-pwa.outputs.version_name }}-${{ needs.build-pwa.outputs.version_code }}-macOS-universal.dmg`
+            - **ChromeOS / Web Offline PWA Bundle**: `safepocket-chromeos-pwa-v${{ needs.build-pwa.outputs.version_name }}.tar.gz` (Live EU Hosting: https://safepocket-vault-eu.web.app)
+            - **Ed25519-Signed Update Manifest & SHA-256 Digests**: `version.json`
           files: dist-artifacts/*
