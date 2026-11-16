@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-16T12:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:be73bf52976dfbc66c7baf203dce159316b97fe613214b18073ec545d8f63748ea46f7dd483bdf0a4fb50539f7064c5b093352a6b7edcc015886b095658ab30d",
+  "manifestSignature": "ed25519:fa9a5f95a0c6824365ae2a38508309f6e7a6369a1163584071b1a93f5dd66c0e653037937a402df19578a747969792618df5dc662d6a90ed1ea60a0ee2da3d08",
   "releaseNotes": {
     "en": "• SafePocket v0.1 initial zero-knowledge vault release (Light default, Dark & System themes, custom card colors).\n• Offline live camera scanner with Code 128B, EAN-13 & QR encoders, full-screen presentation mode, and ICAO MRZ assist.\n• Configurable expiry alerts, Pin-to-Top & tag filters, cross-vault .safepocket merge/restore, and printable Emergency Recovery Kit with QR.",
     "de": "• SafePocket v0.1 erste Zero-Knowledge-Tresor-Version (Helles Standarddesign, Dunkel- & Systemdesign, eigene Kartenfarben).\n• Offline-Kamerascanner mit Code-128B-, EAN-13- & QR-Generator, Vollbild-Präsentationsmodus und ICAO-MRZ-Assistent.\n• Konfigurierbare Ablaufwarnungen, Anheften & Tag-Filter, .safepocket-Zusammenführung sowie druckbares Notfall-Kit mit QR-Code.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.1/SafePocket-v0.1-b1-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "152d77c399065e2ac68ca3fd2e24c7308a7e5de2254f1cc6182ec2a693db28f0",
+      "sizeBytes": 36748200,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.1/SafePocket-0.1-1-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "ad33584a5230ead7cf93f9bdee7ba4af7db1fa54a9b6f7fece610ce076f2f236",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 157432,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
