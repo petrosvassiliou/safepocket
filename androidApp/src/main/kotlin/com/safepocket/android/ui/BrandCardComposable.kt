@@ -734,12 +734,14 @@ fun resolveCardGradientColors(
     item: VaultItemPayload,
     resolved: ResolvedDualBrand
 ): Pair<Color, Color> {
-    val customHex = item.cardTheme?.customColorHex?.takeIf { it.isNotBlank() }
+    val themeCustomHex = item.cardTheme?.customColorHex
+    val inst = resolved.institution
+    val customHex = themeCustomHex?.takeIf { it.isNotBlank() }
         ?: resolved.effectiveColorHex
     val parsedCustom = parseHexColorOrNull(customHex)
     if (parsedCustom != null) {
-        val secondary = resolved.institution?.secondaryColorHex
-            ?.takeIf { item.cardTheme?.customColorHex == null || item.cardTheme.customColorHex.equals(resolved.institution.primaryColorHex, ignoreCase = true) }
+        val secondary = inst?.secondaryColorHex
+            ?.takeIf { themeCustomHex == null || themeCustomHex.equals(inst.primaryColorHex, ignoreCase = true) }
             ?.let { parseHexColorOrNull(it) }
             ?: lerp(parsedCustom, Color.Black, 0.28f)
         return parsedCustom to secondary

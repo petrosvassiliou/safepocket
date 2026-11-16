@@ -1156,9 +1156,10 @@ private fun VaultItemEditorDialog(
                         item = livePreviewItem,
                         categoryLabelText = categorySingularLabel(i18n, category)
                     )
-                    if (liveBrand.institution != null) {
+                    val detectedInst = liveBrand.institution
+                    if (detectedInst != null) {
                         Text(
-                            text = "✓ ${i18n.t("brand_detected_badge", mapOf("institution" to liveBrand.institution.displayName, "network" to liveBrand.networkDisplayLabel))}",
+                            text = "✓ ${i18n.t("brand_detected_badge", mapOf("institution" to detectedInst.displayName, "network" to liveBrand.networkDisplayLabel))}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )

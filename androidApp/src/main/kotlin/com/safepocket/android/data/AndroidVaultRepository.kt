@@ -145,11 +145,7 @@ class AndroidVaultRepository(
         }
 
     val kdfSaltHex: String
-        get() = prefs.getString(KEY_KDF_SALT_HEX, null) ?: run {
-            val derived = deterministicSaltHexForSecretKey(secretKeyFormatted)
-            prefs.edit().putString(KEY_KDF_SALT_HEX, derived).apply()
-            derived
-        }
+        get() = ensureSaltInitializedSync()
 
     val vaultId: String
         get() = "vault-${kdfSaltHex.take(12)}"
