@@ -4,16 +4,26 @@ plugins {
     alias(libs.plugins.composeCompiler)
 }
 
+val targetAndroidSdk = (System.getenv("SAFEPOCKET_COMPILE_SDK") ?: "35").toInt()
+val minAndroidSdk = (System.getenv("SAFEPOCKET_MIN_SDK") ?: "29").toInt()
+val releaseVersionName = (project.findProperty("versionName") as String?)
+    ?: System.getenv("SAFEPOCKET_RELEASE_VERSION")?.removePrefix("v")
+    ?: "0.1"
+val releaseVersionCode = ((project.findProperty("versionCode") as String?)
+    ?: System.getenv("SAFEPOCKET_VERSION_CODE")
+    ?: "1").toInt()
+val configuredKeystoreFile = file(System.getenv("SAFEPOCKET_KEYSTORE_PATH") ?: "keystore/release.jks")
+
 android {
     namespace = "com.safepocket.android"
-    compileSdk = 36 // Android 17+ SDK target
+    compileSdk = targetAndroidSdk
 
     defaultConfig {
         applicationId = "com.safepocket.vault"
-        minSdk = 36
-        targetSdk = 36
-        versionCode = 1
-        versionName = "0.1"
+        minSdk = minAndroidSdk
+        targetSdk = targetAndroidSdk
+        versionCode = releaseVersionCode
+        versionName = releaseVersionName
 
         // Single universal native target supporting Smartphones, Foldables (ARM64),
         // and Googlebook OS laptops (ARM64 + x86_64)
@@ -23,17 +33,19 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file(System.getenv("SAFEPOCKET_KEYSTORE_PATH") ?: "keystore/release.jks")
-            storePassword = System.getenv("SAFEPOCKET_KEYSTORE_PASSWORD") ?: ""
-            keyAlias = System.getenv("SAFEPOCKET_KEY_ALIAS") ?: "safepocket-release"
-            keyPassword = System.getenv("SAFEPOCKET_KEY_PASSWORD") ?: ""
+        if (configuredKeystoreFile.exists()) {
+            create("release") {
+                storeFile = configuredKeystoreFile
+                storePassword = System.getenv("SAFEPOCKET_KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("SAFEPOCKET_KEY_ALIAS") ?: "safepocket-release"
+                keyPassword = System.getenv("SAFEPOCKET_KEY_PASSWORD") ?: ""
 
-            // Mandatory modern APK Signature Schemes for Play Protect compliance & incremental streaming
-            enableV1Signing = false
-            enableV2Signing = true
-            enableV3Signing = true
-            enableV4Signing = true
+                // Mandatory modern APK Signature Schemes for Play Protect compliance & incremental streaming
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
         }
     }
 
@@ -41,7 +53,11 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (configuredKeystoreFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

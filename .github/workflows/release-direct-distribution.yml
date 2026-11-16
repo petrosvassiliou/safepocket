@@ -1,21 +1,45 @@
-name: Direct Distribution Self-Update Release
+name: Direct Distribution Self-Update Release (PWA + Android APK + macOS DMG)
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Semantic release version (initial baseline: 0.1)'
+        required: false
+        default: '0.1'
+      version_code:
+        description: 'Monotonic integer build number (initial baseline: 1)'
+        required: false
+        default: '1'
 
 permissions:
   contents: write
 
 jobs:
-  build-and-sign-pwa:
-    name: Build & Sign ChromeOS PWA Bundle + Ed25519 Update Manifest
+  build-pwa:
+    name: Build & Verify ChromeOS/Web Offline PWA
     runs-on: ubuntu-latest
+    outputs:
+      version_name: ${{ steps.meta.outputs.version_name }}
+      version_code: ${{ steps.meta.outputs.version_code }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve release version (0.1 Build 1 baseline)
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            RAW_TAG="${GITHUB_REF#refs/tags/v}"
+            echo "version_name=${RAW_TAG}" >> "${GITHUB_OUTPUT}"
+            echo "version_code=${GITHUB_RUN_NUMBER:-1}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "version_name=${{ inputs.version_name || '0.1' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_code=${{ inputs.version_code || '1' }}" >> "${GITHUB_OUTPUT}"
+          fi
 
       - name: Setup Node.js 24 LTS
         uses: actions/setup-node@v4
@@ -31,19 +55,122 @@ jobs:
           npm test
           npm run build
 
-      - name: Sign version.json manifest with Ed25519 & SHA-256
-        env:
-          SAFEPOCKET_ED25519_SEED_HEX: ${{ secrets.SAFEPOCKET_ED25519_SEED_HEX }}
-        run: node scripts/sign-update-manifest.mjs
-
       - name: Package PWA offline archive
         run: |
-          tar -czf safepocket-chromeos-pwa-${{ github.ref_name }}.tar.gz -C pwaApp/dist .
+          tar -czf "safepocket-chromeos-pwa-v${{ steps.meta.outputs.version_name }}.tar.gz" -C pwaApp/dist .
 
-      - name: Upload signed release assets
+      - name: Upload PWA archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwa-bundle
+          path: safepocket-chromeos-pwa-v*.tar.gz
+
+  build-android-apk:
+    name: Build Native Android Universal APK (arm64-v8a + x86_64)
+    needs: build-pwa
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Decode optional Android release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SAFEPOCKET_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "${KEYSTORE_BASE64}" ]; then
+            mkdir -p androidApp/keystore
+            echo "${KEYSTORE_BASE64}" | base64 --decode > androidApp/keystore/release.jks
+          fi
+
+      - name: Assemble Android Universal Release APK
+        env:
+          SAFEPOCKET_RELEASE_VERSION: ${{ needs.build-pwa.outputs.version_name }}
+          SAFEPOCKET_VERSION_CODE: ${{ needs.build-pwa.outputs.version_code }}
+          SAFEPOCKET_KEYSTORE_PASSWORD: ${{ secrets.SAFEPOCKET_KEYSTORE_PASSWORD }}
+          SAFEPOCKET_KEY_ALIAS: ${{ secrets.SAFEPOCKET_KEY_ALIAS }}
+          SAFEPOCKET_KEY_PASSWORD: ${{ secrets.SAFEPOCKET_KEY_PASSWORD }}
+        run: |
+          gradle :androidApp:assembleRelease \
+            -PversionName="${SAFEPOCKET_RELEASE_VERSION}" \
+            -PversionCode="${SAFEPOCKET_VERSION_CODE}" \
+            --no-daemon
+          APK_SRC="$(find androidApp/build/outputs/apk/release -name '*.apk' | head -n 1)"
+          cp "${APK_SRC}" "SafePocket-v${SAFEPOCKET_RELEASE_VERSION}-b${SAFEPOCKET_VERSION_CODE}-universal-arm64-x86_64.apk"
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: SafePocket-v*-universal-arm64-x86_64.apk
+
+  build-macos-dmg:
+    name: Build Native macOS Universal App & DMG (Apple Silicon + Intel)
+    needs: build-pwa
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package universal SafePocket.app & UDZO .dmg
+        env:
+          SAFEPOCKET_RELEASE_VERSION: ${{ needs.build-pwa.outputs.version_name }}
+          SAFEPOCKET_VERSION_CODE: ${{ needs.build-pwa.outputs.version_code }}
+        run: |
+          chmod +x scripts/package-macos-dmg.sh
+          ./scripts/package-macos-dmg.sh \
+            "SafePocket-${SAFEPOCKET_RELEASE_VERSION}-${SAFEPOCKET_VERSION_CODE}-macOS-universal.dmg"
+
+      - name: Upload macOS DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: SafePocket-*-macOS-universal.dmg
+
+  sign-manifest-and-publish:
+    name: Ed25519 Sign version.json & Publish GitHub Release
+    needs: [build-pwa, build-android-apk, build-macos-dmg]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Download all platform release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      - name: Compute SHA-256 digests & Ed25519 sign manifest/version.json
+        env:
+          SAFEPOCKET_ED25519_SEED_HEX: ${{ secrets.SAFEPOCKET_ED25519_SEED_HEX }}
+          SAFEPOCKET_RELEASE_VERSION: ${{ needs.build-pwa.outputs.version_name }}
+          SAFEPOCKET_VERSION_CODE: ${{ needs.build-pwa.outputs.version_code }}
+        run: |
+          APK_FILE="$(ls dist-artifacts/SafePocket-v*-universal-arm64-x86_64.apk | head -n 1)"
+          DMG_FILE="$(ls dist-artifacts/SafePocket-*-macOS-universal.dmg | head -n 1)"
+          SAFEPOCKET_APK_PATH="${APK_FILE}" \
+          SAFEPOCKET_DMG_PATH="${DMG_FILE}" \
+          node scripts/sign-update-manifest.mjs
+          cp manifest/version.json dist-artifacts/version.json
+
+      - name: Upload signed release assets to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            manifest/version.json
-            safepocket-chromeos-pwa-${{ github.ref_name }}.tar.gz
+          files: dist-artifacts/*

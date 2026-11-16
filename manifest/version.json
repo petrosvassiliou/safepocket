@@ -1,27 +1,27 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
-  "latestVersion": "0.1.1",
-  "versionCode": 2,
+  "latestVersion": "0.1",
+  "versionCode": 1,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-15T12:00:00Z",
+  "publishedAt": "2026-11-16T12:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:e7a834740ecd99ec8d17d3bc8463dbeb2d8160d82aac4f6dd825f27810763c15b6e7560d9012455c93b79907a1c4fdaa79096e64c8b74d6e7649c2ee9e086f04",
+  "manifestSignature": "ed25519:be73bf52976dfbc66c7baf203dce159316b97fe613214b18073ec545d8f63748ea46f7dd483bdf0a4fb50539f7064c5b093352a6b7edcc015886b095658ab30d",
   "releaseNotes": {
-    "en": "• Enhanced Material Design 3 Expressive 3-column inspector for Googlebook OS freeform windows.\n• Upgraded ChromeOS PWA local storage to SQLite WASM + OPFS with pre-initialized Firebase Cloud Sync.\n• Added offline ICAO Doc 9303 MRZ document scanner and 90-day expiry warnings across all 6 languages.",
-    "de": "• Verbesserter dreispaltiger Material Design 3 Expressive Inspektor für freie Fenstergrößen unter Googlebook OS.\n• Lokaler Speicher der ChromeOS-PWA auf SQLite WASM + OPFS mit vorkonfiguriertem Firebase Cloud Sync aktualisiert.\n• Offline-ICAO-MRZ-Dokumentenscanner und 90-Tage-Ablaufwarnungen hinzugefügt.",
-    "it": "• Migliorato l'ispettore a 3 colonne Material Design 3 Expressive per finestre libere su Googlebook OS.\n• Archiviazione locale PWA ChromeOS aggiornata a SQLite WASM + OPFS con Firebase Cloud Sync preconfigurato.\n• Aggiunto scanner offline MRZ ICAO Doc 9303 e avvisi di scadenza a 90 giorni.",
-    "fr": "• Inspecteur à 3 colonnes Material Design 3 Expressive amélioré pour le fenêtrage libre sur Googlebook OS.\n• Stockage local PWA ChromeOS mis à niveau vers SQLite WASM + OPFS avec Firebase Cloud Sync préconfiguré.\n• Ajout du lecteur hors ligne MRZ OACI Doc 9303 et des alertes d’expiration à 90 jours.",
-    "es": "• Inspector de 3 columnas Material Design 3 Expressive mejorado para ventanas libres en Googlebook OS.\n• Almacenamiento local de ChromeOS PWA actualizado a SQLite WASM + OPFS con Firebase Cloud Sync preconfigurado.\n• Escáner MRZ OACI Doc 9303 sin conexión y alertas de caducidad a 90 días.",
-    "el": "• Βελτιωμένη προβολή 3 στηλών Material Design 3 Expressive για ελεύθερα παράθυρα στο Googlebook OS.\n• Αναβάθμιση τοπικής βάσης ChromeOS PWA σε SQLite WASM + OPFS με προεγκατεστημένο Firebase Cloud Sync.\n• Προσθήκη offline σαρωτή MRZ διαβατηρίων/ταυτοτήτων και ειδοποιήσεων λήξης 90 ημερών."
+    "en": "• SafePocket v0.1 initial zero-knowledge vault release (Light default, Dark & System themes, custom card colors).\n• Offline live camera scanner with Code 128B, EAN-13 & QR encoders, full-screen presentation mode, and ICAO MRZ assist.\n• Configurable expiry alerts, Pin-to-Top & tag filters, cross-vault .safepocket merge/restore, and printable Emergency Recovery Kit with QR.",
+    "de": "• SafePocket v0.1 erste Zero-Knowledge-Tresor-Version (Helles Standarddesign, Dunkel- & Systemdesign, eigene Kartenfarben).\n• Offline-Kamerascanner mit Code-128B-, EAN-13- & QR-Generator, Vollbild-Präsentationsmodus und ICAO-MRZ-Assistent.\n• Konfigurierbare Ablaufwarnungen, Anheften & Tag-Filter, .safepocket-Zusammenführung sowie druckbares Notfall-Kit mit QR-Code.",
+    "it": "• SafePocket v0.1 prima versione cassaforte zero-knowledge (tema chiaro predefinito, scuro e di sistema, colori carta personalizzati).\n• Scanner fotocamera offline con codici Code 128B, EAN-13 e QR, modalità presentazione a schermo intero e supporto MRZ ICAO.\n• Avvisi di scadenza configurabili, elementi fissati e filtri tag, unione/ripristino .safepocket e Kit di Emergenza stampabile con QR.",
+    "fr": "• SafePocket v0.1 première version du coffre zéro-connaissance (thème clair par défaut, sombre et système, couleurs de carte personnalisées).\n• Scanner caméra hors ligne avec Code 128B, EAN-13 et QR, mode présentation plein écran et assistant MRZ OACI.\n• Alertes d’expiration configurables, épinglage et filtres par étiquette, fusion/restauration .safepocket et Kit d’Urgence imprimable avec QR.",
+    "es": "• SafePocket v0.1 primera versión de bóveda de conocimiento cero (tema claro predeterminado, oscuro y del sistema, colores personalizados).\n• Escáner de cámara sin conexión con Code 128B, EAN-13 y QR, modo presentación a pantalla completa y asistente MRZ OACI.\n• Alertas de caducidad configurables, fijar arriba y filtros por etiquetas, fusión .safepocket y Kit de Emergencia imprimible con QR.",
+    "el": "• SafePocket v0.1 πρώτη έκδοση θησαυροφυλακίου μηδενικής γνώσης (φωτεινό θέμα προεπιλογής, σκοτεινό & συστήματος, προσαρμοσμένα χρώματα καρτών).\n• Offline σαρωτής κάμερας με Code 128B, EAN-13 & QR, λειτουργία παρουσίασης πλήρους οθόνης και βοηθό MRZ ICAO.\n• Ρυθμιζόμενες ειδοποιήσεις λήξης, καρφίτσωμα & φίλτρα ετικετών, συγχώνευση .safepocket και εκτυπώσιμο Κιτ Έκτακτης Ανάγκης με QR."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://releases.safepocket.app/v0.1.1/SafePocket-v0.1.1-b2-universal-arm64-x86_64.apk",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.1/SafePocket-v0.1-b1-universal-arm64-x86_64.apk",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "sizeBytes": 18432960,
-      "minSdk": 36,
+      "minSdk": 29,
       "abis": [
         "arm64-v8a",
         "x86_64"
@@ -34,17 +34,17 @@
       "signingCertSha256": "3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea"
     },
     "macos-universal": {
-      "url": "https://releases.safepocket.app/v0.1.1/SafePocket-0.1.1-2-macOS-universal.dmg",
-      "sparkleAppcastUrl": "https://releases.safepocket.app/appcast-macos.xml",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.1/SafePocket-0.1-1-macOS-universal.dmg",
+      "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
       "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
       "sizeBytes": 14208512,
-      "minMacOS": "15.0"
+      "minMacOS": "14.0"
     },
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "ee3b58791bab8b89a9ab5c0228420de8b72832ff4c5a23ba68493ae8c64f36f5",
+      "sha256": "b6f2f97817b8b8d868c68a3877a241ce1c94fae4c2a70cba4f30ab811330e678",
       "sizeBytes": 2657
     }
   }

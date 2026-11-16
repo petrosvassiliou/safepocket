@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import nodeCrypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  formatUnencryptedVaultExport,
   generateFormattedSecretKey,
+  inspectSafePocketContainerHeader,
+  mergeVaultSnapshots,
   ZeroKnowledgeVaultCrypto
 } from '../crypto/vaultCrypto';
 import {
@@ -20,6 +24,18 @@ import {
 } from '../firebase/firebaseVaultService';
 import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
 import {
+  computeEan13CheckDigit,
+  decodeCode128BFromModules,
+  encodeCode128BModules,
+  encodeQrSvg,
+  renderScannableBarcodeSvg
+} from '../scanner/barcodeRenderer';
+import {
+  applyCrispDocumentFilterInPlace,
+  decode1DBarcodeFromImageData,
+  parseRecoverySecretKeyPayload
+} from '../scanner/cameraScanner';
+import {
   buildSampleTd3PassportMrz,
   computeIcaoCheckDigit,
   parseOfflineIcaoMrz,
@@ -28,7 +44,11 @@ import {
 } from '../scanner/mrzAndCardValidator';
 import {
   computeExpiryStatus,
-  searchVaultItems
+  extractVaultTags,
+  parseExpiryDateUtc,
+  searchVaultItems,
+  sortVaultItems,
+  summarizeVaultExpiries
 } from '../search/searchEngine';
 import { IdleAutoLockMonitor } from '../security/autoLockMonitor';
 import {
@@ -58,10 +78,16 @@ import {
   resolveEffectiveTheme
 } from '../ui/appShell';
 import {
+  buildCustomCardStyle,
+  normalizeHexColor
+} from '../ui/cardColorUtils';
+import {
   buildEmergencyKitHtml,
+  buildRecoverySecretKeyUri,
   estimateMasterPasswordEntropy
 } from '../ui/onboardingWizard';
 import {
+  buildCanonicalManifestMessage,
   PwaUpdateController,
   verifyManifestEd25519Signature
 } from '../update/pwaUpdater';
@@ -466,17 +492,56 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     }
   });
 
-  it('10. Self-Updating Service: verifies signed version.json & exact SHA-256 of sw.js and rejects tampered payloads', async () => {
+  it('10. Self-Updating Service: reports up_to_date on shipped v0.1 (Build 1) manifest, stages signed v0.2 updates, and rejects SHA-256 tampering', async () => {
     const publicDir = path.resolve(__dirname, '../../public');
-    const manifestJson = fs.readFileSync(
+    const shippedManifestJson = fs.readFileSync(
       path.join(publicDir, 'version.json'),
       'utf-8'
     );
     const swBytes = fs.readFileSync(path.join(publicDir, 'sw.js'));
 
+    // 1) Shipped v0.1 (Build 1) manifest matches APP_BUILD_INFO (versionCode: 1) -> up_to_date
+    const baselineUpdater = new PwaUpdateController('/version.json');
+    const baselineStatus = await baselineUpdater.checkForUpdates((async (
+      url: string
+    ) => {
+      if (url.endsWith('/version.json')) {
+        return new Response(shippedManifestJson, { status: 200 });
+      }
+      return new Response(swBytes, { status: 200 });
+    }) as typeof fetch);
+    expect(baselineStatus.phase).toBe('up_to_date');
+    expect(baselineStatus.ed25519Verified).toBe(true);
+
+    // 2) Dynamically sign a v0.2 (Build 2) manifest fixture to verify staged update & SHA-256 tamper rejection
+    const nextManifest: RemoteUpdateManifest = {
+      ...(JSON.parse(shippedManifestJson) as RemoteUpdateManifest),
+      latestVersion: '0.2',
+      versionCode: 2
+    };
+    const pkcs8Prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
+    const seedBytes = nodeCrypto
+      .createHash('sha256')
+      .update('safepocket-dev-release-signing-seed-v0.1')
+      .digest();
+    const privateKey = nodeCrypto.createPrivateKey({
+      key: Buffer.concat([pkcs8Prefix, seedBytes]),
+      format: 'der',
+      type: 'pkcs8'
+    });
+    const sigHex = nodeCrypto
+      .sign(
+        null,
+        Buffer.from(buildCanonicalManifestMessage(nextManifest), 'utf-8'),
+        privateKey
+      )
+      .toString('hex');
+    nextManifest.manifestSignature = `ed25519:${sigHex}`;
+    const nextManifestJson = JSON.stringify(nextManifest);
+
     const mockFetcher = (async (url: string) => {
       if (url.endsWith('/version.json')) {
-        return new Response(manifestJson, { status: 200 });
+        return new Response(nextManifestJson, { status: 200 });
       }
       return new Response(swBytes, { status: 200 });
     }) as typeof fetch;
@@ -484,7 +549,7 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     const updater = new PwaUpdateController('/version.json');
     const checkStatus = await updater.checkForUpdates(mockFetcher);
     expect(checkStatus.phase).toBe('available');
-    expect(updater.localizedReleaseNotes('el')).toContain('Googlebook OS');
+    expect(updater.localizedReleaseNotes('el')).toContain('SafePocket');
 
     const stageStatus =
       await updater.verifyChecksumAndStageServiceWorker(mockFetcher);
@@ -493,7 +558,7 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
 
     const tamperedFetcher = (async (url: string) => {
       if (url.endsWith('/version.json')) {
-        return new Response(manifestJson, { status: 200 });
+        return new Response(nextManifestJson, { status: 200 });
       }
       return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 });
     }) as typeof fetch;
@@ -514,8 +579,8 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
       fs.readFileSync(path.join(publicDir, 'version.json'), 'utf-8')
     ) as RemoteUpdateManifest;
 
-    expect(signedManifest.latestVersion).toBe('0.1.1');
-    expect(signedManifest.versionCode).toBe(2);
+    expect(signedManifest.latestVersion).toBe('0.1');
+    expect(signedManifest.versionCode).toBe(1);
     expect(await verifyManifestEd25519Signature(signedManifest)).toBe(true);
 
     // Mutate latestVersion without re-signing -> Ed25519 verification must fail
@@ -525,12 +590,14 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     };
     expect(await verifyManifestEd25519Signature(mutatedManifest)).toBe(false);
 
-    //Updater must immediately reject tampered manifest signature
+    // Updater must immediately reject tampered manifest signature
     const updater = new PwaUpdateController('/version.json');
     const badStatus = await updater.checkForUpdates((async () =>
       new Response(JSON.stringify(mutatedManifest), { status: 200 })) as typeof fetch);
     expect(badStatus.phase).toBe('error');
-    expect(badStatus.errorMessage).toContain('Ed25519 manifest signature verification failed');
+    expect(badStatus.errorMessage).toContain(
+      'Ed25519 manifest signature verification failed'
+    );
   });
 
   it('12. SQLite WASM Encrypted Database Engine: persists encrypted rows, filters tombstones, and tracks provider sync cursors', async () => {
@@ -1166,7 +1233,319 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     );
     expect(appShellSource).not.toContain('<span class="sp-zk-chip">AES-256</span>');
   });
+
+  it('20. Standards-Compliant Barcodes (Code 128B, EAN-13, QR) & Offline Camera Scanline Decoder: round-trips module rasters and recovery QR URIs', () => {
+    // 1) ISO/IEC 15417 Code 128B encode -> module decode + RGBA scanline decode round-trip
+    const codePayload = 'ADAC-70814920';
+    const modules = encodeCode128BModules(codePayload);
+    expect(decodeCode128BFromModules(modules)).toBe(codePayload);
+
+    // Render synthetic 4x-scaled RGBA scanline image (white quiet zone + black bars)
+    const scale = 4;
+    const width = modules.length * scale;
+    const height = 24;
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const isBar = modules[Math.floor(x / scale)] === 1;
+        const c = isBar ? 12 : 248;
+        const offset = (y * width + x) * 4;
+        rgba[offset] = c;
+        rgba[offset + 1] = c;
+        rgba[offset + 2] = c;
+        rgba[offset + 3] = 255;
+      }
+    }
+    const scanned1D = decode1DBarcodeFromImageData(rgba, width, height);
+    expect(scanned1D).toEqual({ rawValue: codePayload, format: 'CODE_128' });
+
+    // 2) GS1 EAN-13 check digit & SVG renderer
+    expect(computeEan13CheckDigit('400638133393')).toBe(1);
+    const eanRendered = renderScannableBarcodeSvg('4006381333931', 'EAN_13');
+    expect(eanRendered.format).toBe('EAN_13');
+    expect(eanRendered.svg).toContain('<svg');
+    expect(eanRendered.svg).toContain('aria-label="EAN-13 Barcode"');
+
+    // 3) ISO/IEC 18004 QR Code SVG encoder & Crisp Document contrast stretch
+    const qrSvg = encodeQrSvg('safepocket-recovery://v1?vaultId=v1&secretKey=SPK-23456-789AB-CDEFG-HJKLM-NPQRS');
+    expect(qrSvg).toContain('<svg');
+    expect(qrSvg).toContain('aria-label="QR Code"');
+
+    const docPixels = new Uint8ClampedArray([40, 40, 40, 255, 220, 220, 220, 255]);
+    applyCrispDocumentFilterInPlace(docPixels);
+    expect(docPixels[0]).toBeLessThan(35);
+    expect(docPixels[4]).toBeGreaterThan(240);
+
+    // 4) Recovery QR payload extraction
+    const sk = generateFormattedSecretKey();
+    const uri = buildRecoverySecretKeyUri('vault-eu-01', sk);
+    expect(parseRecoverySecretKeyPayload(uri)).toEqual({
+      secretKey: sk,
+      vaultId: 'vault-eu-01'
+    });
+  });
+
+  it('21. Configurable Expiry Monitor, Pin-to-Top, Tag Filter Chips & 4-Mode Vault Sorting', () => {
+    const nowMs = Date.UTC(2026, 10, 16, 12, 0, 0); // 2026-11-16 UTC
+    expect(parseExpiryDateUtc('12/28')?.toISOString()).toBe(
+      '2028-12-31T23:59:59.000Z'
+    );
+    expect(parseExpiryDateUtc('2027-02')?.toISOString()).toBe(
+      '2027-02-28T23:59:59.000Z'
+    );
+
+    const items = createInitialSampleVaultItems();
+    // Create controlled items for critical (<=30d), warning (31..90d), and expired (<0d)
+    const criticalDoc = structuredClone(items[1]);
+    criticalDoc.id = 'doc-crit-15d';
+    criticalDoc.title = 'Zeta Critical ID';
+    criticalDoc.pinned = false;
+    criticalDoc.fields = [
+      {
+        id: 'f-exp-crit',
+        labelKey: 'field_expiry_date',
+        value: '2026-12-01',
+        valueType: 'DATE_ISO'
+      }
+    ];
+
+    const warningDoc = structuredClone(items[1]);
+    warningDoc.id = 'doc-warn-75d';
+    warningDoc.title = 'Alpha Renewal Card';
+    warningDoc.pinned = false;
+    warningDoc.fields = [
+      {
+        id: 'f-exp-warn',
+        labelKey: 'field_expiry_date',
+        value: '2027-01-30',
+        valueType: 'DATE_ISO'
+      }
+    ];
+
+    const expiredDoc = structuredClone(items[1]);
+    expiredDoc.id = 'doc-expired-5d';
+    expiredDoc.title = 'Beta Expired Pass';
+    expiredDoc.pinned = false;
+    expiredDoc.fields = [
+      {
+        id: 'f-exp-past',
+        labelKey: 'field_expiry_date',
+        value: '2026-11-10',
+        valueType: 'DATE_ISO'
+      }
+    ];
+
+    expect(computeExpiryStatus(criticalDoc, nowMs, 90).severity).toBe('critical');
+    expect(computeExpiryStatus(warningDoc, nowMs, 90).severity).toBe('warning');
+    // Narrowing horizon to 30 days marks 75-day item as 'valid' while 15-day item stays 'critical'
+    expect(computeExpiryStatus(warningDoc, nowMs, 30).severity).toBe('valid');
+    expect(computeExpiryStatus(criticalDoc, nowMs, 30).severity).toBe('critical');
+    expect(computeExpiryStatus(expiredDoc, nowMs, 30).severity).toBe('expired');
+
+    const summary90 = summarizeVaultExpiries(
+      [criticalDoc, warningDoc, expiredDoc],
+      nowMs,
+      90
+    );
+    expect(summary90).toEqual({
+      expiredCount: 1,
+      criticalCount: 1,
+      warningCount: 1,
+      totalAttentionCount: 3
+    });
+
+    // Tag extraction & tag filtering
+    const tags = extractVaultTags(items);
+    expect(tags.length).toBeGreaterThan(0);
+    const i18n = new SafePocketI18n('en-US');
+    const targetTag = items[0].tags[0];
+    const tagFiltered = searchVaultItems(items, '', i18n, { tag: targetTag });
+    expect(tagFiltered.every((it) => it.tags.includes(targetTag))).toBe(true);
+
+    // 4-mode sorting: pinned_recent keeps pinned items on top; alphabetical & expiring_soon sort deterministically
+    const pinnedCard = {
+      ...structuredClone(items[0]),
+      id: 'pinned-card',
+      title: 'Omega Pinned Card',
+      pinned: true
+    };
+    const byPinned = sortVaultItems(
+      [warningDoc, pinnedCard, criticalDoc],
+      'pinned_recent',
+      'en',
+      nowMs,
+      90
+    );
+    expect(byPinned[0].id).toBe('pinned-card');
+
+    const byAlpha = sortVaultItems(
+      [criticalDoc, warningDoc, expiredDoc],
+      'alphabetical',
+      'en',
+      nowMs,
+      90
+    );
+    expect(byAlpha.map((i) => i.title)).toEqual([
+      'Alpha Renewal Card',
+      'Beta Expired Pass',
+      'Zeta Critical ID'
+    ]);
+
+    const byExpiring = sortVaultItems(
+      [warningDoc, criticalDoc, expiredDoc],
+      'expiring_soon',
+      'en',
+      nowMs,
+      90
+    );
+    expect(byExpiring.map((i) => i.id)).toEqual([
+      'doc-expired-5d',
+      'doc-crit-15d',
+      'doc-warn-75d'
+    ]);
+  });
+
+  it('22. Encrypted .safepocket Header Inspection, Cross-Vault Merge/Restore, Plain Export & Printable Emergency Kit v2 QR', async () => {
+    // Vault A creates backup with its own Master Password + Secret Key
+    const cryptoA = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    const secretA = generateFormattedSecretKey();
+    await cryptoA.initializeOrUnlock('VaultAPass#2026', secretA);
+    const sample = createInitialSampleVaultItems();
+    const backupItems = [
+      { ...structuredClone(sample[0]), updatedAtEpochMs: 5_000, title: 'Updated N26 Metal' },
+      { ...structuredClone(sample[1]), id: 'new-foreign-passport', title: 'New Passport From Backup' }
+    ];
+    const containerJson = await cryptoA.exportSafePocketContainer(
+      backupItems,
+      'VaultAPass#2026',
+      secretA
+    );
+
+    const headerSummary = await inspectSafePocketContainerHeader(containerJson);
+    expect(headerSummary.appVersion).toBe('0.1');
+    expect(headerSummary.itemCount).toBe(2);
+    expect(headerSummary.sha256Hex).toHaveLength(64);
+
+    // Vault B (unlocked with different credentials!) restores Vault A's container using Vault A's credentials & merges
+    const cryptoB = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    await cryptoB.initializeOrUnlock('VaultBPass#9999', generateFormattedSecretKey());
+    const decryptedIncoming = await cryptoB.restoreSafePocketContainer(
+      containerJson,
+      'VaultAPass#2026',
+      secretA
+    );
+    const localBefore = [
+      { ...structuredClone(sample[0]), updatedAtEpochMs: 1_000, title: 'Older N26 Metal' },
+      { ...structuredClone(sample[2]), updatedAtEpochMs: 9_000 }
+    ];
+    const mergeReport = mergeVaultSnapshots(localBefore, decryptedIncoming);
+    expect(mergeReport.addedCount).toBe(1);
+    expect(mergeReport.updatedCount).toBe(1);
+    expect(mergeReport.unchangedCount).toBe(0);
+    expect(mergeReport.merged).toHaveLength(3);
+    expect(
+      mergeReport.merged.find((i) => i.id === sample[0].id)?.title
+    ).toBe('Updated N26 Metal');
+
+    // Plaintext JSON & CSV export formatter
+    const jsonExport = formatUnencryptedVaultExport(mergeReport.merged, 'json');
+    expect(jsonExport.extension).toBe('json');
+    expect(JSON.parse(jsonExport.content).exportedFrom).toBe('SafePocket v0.1');
+    const csvExport = formatUnencryptedVaultExport(mergeReport.merged, 'csv');
+    expect(csvExport.extension).toBe('csv');
+    expect(csvExport.content).toContain('Updated N26 Metal');
+
+    // Printable Emergency Kit v2 embeds QR SVG + Secret Key + optional hint, never Master Password
+    const kitHtml = buildEmergencyKitHtml({
+      vaultId: 'vault-v2-print',
+      createdAtIso: '2026-11-16T12:00:00Z',
+      secretKeyFormatted: secretA,
+      kdf: cryptoA.currentKdfConfig,
+      passwordHint: 'Childhood street in Munich'
+    });
+    expect(kitHtml).toContain('<svg');
+    expect(kitHtml).toContain('aria-label="QR Code"');
+    expect(kitHtml).toContain(secretA);
+    expect(kitHtml).toContain('Childhood street in Munich');
+    expect(kitHtml).not.toContain('VaultAPass#2026');
+  });
+
+  it('23. Custom Hex Card Color Picker (WCAG Luminance Contrast), Default Identity Visual Cards & Presentation Mode', () => {
+    expect(normalizeHexColor('#abc')).toBe('#AABBCC');
+    expect(normalizeHexColor('invalid', '#1E5B53')).toBe('#1E5B53');
+
+    const lightCard = buildCustomCardStyle('#F8FAFC');
+    expect(lightCard.isLightSurface).toBe(true);
+    expect(lightCard.inkColor).toBe('#0f172a');
+    expect(lightCard.inlineStyleAttr).toContain('background:linear-gradient(');
+    expect(lightCard.inlineStyleAttr).toContain('--sp-card-ink:#0f172a;');
+
+    const darkCard = buildCustomCardStyle('#101828');
+    expect(darkCard.isLightSurface).toBe(false);
+    expect(darkCard.inkColor).toBe('#f8fafc');
+    expect(darkCard.inlineStyleAttr).toContain('--sp-card-ink:#f8fafc;');
+
+    // Sample Identity item renders visual card by default (showVisualCard !== false)
+    const sampleIdentity = createInitialSampleVaultItems().find(
+      (i) => i.category === 'IDENTITY'
+    );
+    expect(sampleIdentity?.cardTheme?.showVisualCard).not.toBe(false);
+
+    const css = fs.readFileSync(
+      path.resolve(__dirname, '../styles/m3-expressive.css'),
+      'utf-8'
+    );
+    expect(css).toContain(".sp-visual-card[data-palette='custom']");
+    expect(css).toContain('.sp-presentation-overlay');
+    expect(css).toContain('.sp-scanner-pad');
+  });
+
+  it('24. Strict Initial Version 0.1 (Build 1) Alignment Across PWA, Manifests, Android, macOS & Modal-Only UX', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const rootManifest = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'manifest/version.json'), 'utf-8')
+    ) as RemoteUpdateManifest;
+    const pwaManifest = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'pwaApp/public/version.json'), 'utf-8')
+    ) as RemoteUpdateManifest;
+
+    expect(APP_BUILD_INFO.versionName).toBe('0.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(1);
+    expect(rootManifest.latestVersion).toBe('0.1');
+    expect(rootManifest.versionCode).toBe(1);
+    expect(pwaManifest.latestVersion).toBe('0.1');
+    expect(pwaManifest.versionCode).toBe(1);
+
+    const androidGradle = fs.readFileSync(
+      path.join(repoRoot, 'androidApp/build.gradle.kts'),
+      'utf-8'
+    );
+    expect(androidGradle).toContain('?: "0.1"');
+
+    const macAppSwift = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    expect(macAppSwift).toContain('SafePocket v0.1 (Build 1)');
+    expect(macAppSwift).not.toContain('0.1.1');
+
+    // Verify legacy browser prompt dialog was eliminated in favor of Master-Password modal
+    const appShellSource = fs.readFileSync(
+      path.resolve(__dirname, '../ui/appShell.ts'),
+      'utf-8'
+    );
+    expect(appShellSource).not.toContain('window.prompt');
+  });
 });
+
 
 
 

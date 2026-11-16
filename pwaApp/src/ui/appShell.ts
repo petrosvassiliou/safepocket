@@ -1,5 +1,9 @@
 import {
+  type BackupInspectionSummary,
+  formatUnencryptedVaultExport,
   generateFormattedSecretKey,
+  inspectSafePocketContainerHeader,
+  mergeVaultSnapshots,
   sha256Hex,
   ZeroKnowledgeVaultCrypto
 } from '../crypto/vaultCrypto';
@@ -14,6 +18,14 @@ import {
 import { SqliteWasmVaultDb } from '../db/sqliteWasmVaultDb';
 import { FirebaseVaultService } from '../firebase/firebaseVaultService';
 import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
+import { renderScannableBarcodeSvg } from '../scanner/barcodeRenderer';
+import {
+  analyzeMrzRegionFromCanvas,
+  type CameraScanMode,
+  CameraScannerController,
+  parseRecoverySecretKeyPayload,
+  type ScannedBarcodeResult
+} from '../scanner/cameraScanner';
 import {
   buildSampleTd3PassportMrz,
   parseOfflineIcaoMrz,
@@ -22,7 +34,10 @@ import {
 } from '../scanner/mrzAndCardValidator';
 import {
   computeExpiryStatus,
-  searchVaultItems
+  extractVaultTags,
+  searchVaultItems,
+  sortVaultItems,
+  summarizeVaultExpiries
 } from '../search/searchEngine';
 import {
   type AutoLockMinutes,
@@ -43,9 +58,12 @@ import {
 } from '../sync/syncAdapters';
 import {
   APP_BUILD_INFO,
+  type BarcodeFormat,
   CARD_THEME_PALETTES,
   type CardThemePalette,
   type EncryptedAttachmentMeta,
+  EXPIRY_WINDOW_OPTIONS,
+  type ExpiryWindowDays,
   type MaterialColorScheme,
   SENSITIVE_FIELD_KEYS,
   type SupportedLocale,
@@ -53,9 +71,11 @@ import {
   VAULT_CATEGORIES,
   type VaultCategory,
   type VaultField,
-  type VaultItem
+  type VaultItem,
+  type VaultSortMode
 } from '../types';
 import { PwaUpdateController } from '../update/pwaUpdater';
+import { buildCustomCardStyle, normalizeHexColor } from './cardColorUtils';
 import {
   buildEmergencyKitHtml,
   estimateMasterPasswordEntropy
@@ -63,6 +83,7 @@ import {
 
 const THEME_STORAGE_KEY = 'safepocket.theme_mode';
 const MATERIAL_ACCENT_STORAGE_KEY = 'safepocket.material_accent';
+const EXPIRY_WINDOW_STORAGE_KEY = 'safepocket.expiry_window_days';
 
 export function resolveEffectiveTheme(
   mode: ThemeMode,
@@ -99,6 +120,9 @@ interface ItemEditorDraft {
   title: string;
   subtitle: string;
   paletteId: CardThemePalette;
+  customColorHex: string;
+  showVisualCard: boolean;
+  barcodeFormat: BarcodeFormat;
   tagsCsv: string;
   mrzRawInput?: string;
   standardFieldValues: Record<string, string>;
@@ -135,9 +159,13 @@ export class SafePocketAppShell {
   private readonly updater = new PwaUpdateController('/version.json');
   private readonly clipboard: ClipboardHygieneController;
   private readonly autoLockMonitor: IdleAutoLockMonitor;
+  private readonly cameraController = new CameraScannerController();
 
   private themeMode: ThemeMode = 'light';
   private materialAccent: MaterialColorScheme = 'emerald';
+  private expiryWindowDays: ExpiryWindowDays = 90;
+  private sortMode: VaultSortMode = 'pinned_recent';
+  private activeTagFilter: string | null = null;
   private items: VaultItem[] = [];
   private selectedNav: NavSelection = 'ALL';
   private selectedItemId: string | null = null;
@@ -154,10 +182,36 @@ export class SafePocketAppShell {
   private activeMasterPassword = DEMO_DEFAULT_PASSWORD;
   private showOnboardingWizard = false;
   private onboardingPassword = DEMO_DEFAULT_PASSWORD;
+  private emergencyKitHintDraft = '';
   private wasAutoLocked = false;
   private unlockError: string | null = null;
   private uploadScanSide: 'front' | 'back' = 'front';
   private activePreview: EphemeralScanPreview | null = null;
+  private presentationState: {
+    itemId: string;
+    formatOverride?: BarcodeFormat;
+  } | null = null;
+  private wakeLockSentinel: { release: () => Promise<void> } | null = null;
+  private cameraModalState: {
+    mode: CameraScanMode;
+    targetContext?: 'lock' | 'restore';
+    enhanceCrispDoc: boolean;
+    error?: string;
+    mrzPreviewUrl?: string;
+  } | null = null;
+  private restoreModalState: {
+    rawJson: string;
+    summary: BackupInspectionSummary;
+    mode: 'merge' | 'replace';
+    masterPassword: string;
+    secretKey: string;
+    error?: string;
+  } | null = null;
+  private plainExportModalState: {
+    format: 'json' | 'csv';
+    password: string;
+    error?: string;
+  } | null = null;
   private cloudAuthEmailDraft = '';
   private liveCloudConfig: LiveCloudEndpointConfig = {
     firebaseApiKey: '',
@@ -178,6 +232,7 @@ export class SafePocketAppShell {
   constructor(private readonly root: HTMLElement) {
     this.themeMode = this.loadSavedThemeMode();
     this.materialAccent = this.loadSavedMaterialAccent();
+    this.expiryWindowDays = this.loadSavedExpiryWindowDays();
     this.applyThemeToDocument();
 
     this.clipboard = new ClipboardHygieneController((seconds, cleared) => {
@@ -197,6 +252,23 @@ export class SafePocketAppShell {
         this.lockVault(true);
       }
     });
+  }
+
+  private loadSavedExpiryWindowDays(): ExpiryWindowDays {
+    if (typeof localStorage === 'undefined') return 90;
+    const raw = Number(localStorage.getItem(EXPIRY_WINDOW_STORAGE_KEY));
+    if (raw === 30 || raw === 60 || raw === 90 || raw === 180) {
+      return raw;
+    }
+    return 90;
+  }
+
+  setExpiryWindowDays(days: ExpiryWindowDays): void {
+    this.expiryWindowDays = days;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(EXPIRY_WINDOW_STORAGE_KEY, String(days));
+    }
+    this.render();
   }
 
   private loadSavedThemeMode(): ThemeMode {
@@ -541,10 +613,14 @@ export class SafePocketAppShell {
 
   private lockVault(triggeredByAutoLock = false): void {
     this.closeScanPreview();
+    this.closeCameraModal();
+    this.closePresentationMode();
     this.crypto.lock();
     this.autoLockMonitor.stop();
     this.revealedFieldIds.clear();
     this.editorDraft = null;
+    this.restoreModalState = null;
+    this.plainExportModalState = null;
     this.contextMenu = null;
     this.wasAutoLocked = triggeredByAutoLock;
     this.render();
@@ -554,6 +630,123 @@ export class SafePocketAppShell {
     if (this.activePreview) {
       URL.revokeObjectURL(this.activePreview.objectUrl);
       this.activePreview = null;
+    }
+  }
+
+  private openPresentationMode(itemId: string): void {
+    const target = this.items.find((i) => i.id === itemId);
+    if (!target) return;
+    target.lastAccessedAtEpochMs = Date.now();
+    void this.persistSingleItemEncrypted(target);
+    this.presentationState = { itemId };
+    this.render();
+
+    const nav = typeof navigator !== 'undefined'
+      ? (navigator as Navigator & {
+          wakeLock?: {
+            request: (
+              type: 'screen'
+            ) => Promise<{ release: () => Promise<void> }>;
+          };
+        })
+      : undefined;
+    if (nav?.wakeLock?.request) {
+      void nav.wakeLock
+        .request('screen')
+        .then((sentinel) => {
+          this.wakeLockSentinel = sentinel;
+        })
+        .catch(() => undefined);
+    }
+  }
+
+  private closePresentationMode(): void {
+    if (this.wakeLockSentinel) {
+      void this.wakeLockSentinel.release().catch(() => undefined);
+      this.wakeLockSentinel = null;
+    }
+    this.presentationState = null;
+  }
+
+  private openCameraModal(
+    mode: CameraScanMode,
+    targetContext?: 'lock' | 'restore'
+  ): void {
+    this.cameraController.stopStream();
+    this.cameraModalState = {
+      mode,
+      targetContext,
+      enhanceCrispDoc: true
+    };
+    this.render();
+    this.startActiveCameraStream();
+  }
+
+  private startActiveCameraStream(): void {
+    if (!this.cameraModalState) return;
+    const videoEl =
+      this.root.querySelector<HTMLVideoElement>('#sp-camera-video');
+    if (!videoEl) return;
+
+    const mode = this.cameraModalState.mode;
+    const needsBarcodeLoop = mode === 'barcode' || mode === 'recovery_qr';
+    void this.cameraController
+      .startStream(
+        videoEl,
+        needsBarcodeLoop
+          ? (res) => this.handleBarcodeDetectedFromCamera(res)
+          : undefined
+      )
+      .catch((err) => {
+        if (this.cameraModalState) {
+          this.cameraModalState.error =
+            err instanceof Error
+              ? err.message
+              : 'Camera stream unavailable — use image file fallback below';
+          this.render();
+        }
+      });
+  }
+
+  private closeCameraModal(): void {
+    this.cameraController.stopStream();
+    this.cameraModalState = null;
+  }
+
+  private handleBarcodeDetectedFromCamera(res: ScannedBarcodeResult): void {
+    if (!this.cameraModalState) return;
+    const ctx = this.cameraModalState.targetContext;
+    const mode = this.cameraModalState.mode;
+
+    if (mode === 'recovery_qr') {
+      const parsed = parseRecoverySecretKeyPayload(res.rawValue);
+      if (!parsed) {
+        this.cameraModalState.error =
+          'QR scanned, but no SPK-... Recovery Key found';
+        this.render();
+        return;
+      }
+      this.closeCameraModal();
+      if (ctx === 'restore' && this.restoreModalState) {
+        this.restoreModalState.secretKey = parsed.secretKey;
+        this.render();
+      } else {
+        this.demoSecretKey = parsed.secretKey;
+        this.render();
+        const skInput =
+          this.root.querySelector<HTMLInputElement>('#sp-unlock-secret');
+        if (skInput) skInput.value = parsed.secretKey;
+      }
+      this.showToast(`Scanned Recovery Key: ${parsed.secretKey.slice(0, 9)}…`);
+      return;
+    }
+
+    if (mode === 'barcode' && this.editorDraft) {
+      this.closeCameraModal();
+      this.editorDraft.standardFieldValues.field_membership_id = res.rawValue;
+      this.editorDraft.barcodeFormat = res.format;
+      this.render();
+      this.showToast(`Scanned ${res.format}: ${res.rawValue}`);
     }
   }
 
@@ -574,8 +767,28 @@ export class SafePocketAppShell {
   private bindGlobalShortcuts(): void {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        if (this.cameraModalState) {
+          this.closeCameraModal();
+          this.render();
+          return;
+        }
+        if (this.presentationState) {
+          this.closePresentationMode();
+          this.render();
+          return;
+        }
         if (this.activePreview) {
           this.closeScanPreview();
+          this.render();
+          return;
+        }
+        if (this.restoreModalState) {
+          this.restoreModalState = null;
+          this.render();
+          return;
+        }
+        if (this.plainExportModalState) {
+          this.plainExportModalState = null;
           this.render();
           return;
         }
@@ -628,7 +841,10 @@ export class SafePocketAppShell {
       category: defaultCat,
       title: '',
       subtitle: '',
-      paletteId: 'obsidian_slate',
+      paletteId: defaultCat === 'IDENTITY' ? 'forest_sage' : 'obsidian_slate',
+      customColorHex: '#1E5B53',
+      showVisualCard: true,
+      barcodeFormat: 'CODE_128',
       tagsCsv: '',
       standardFieldValues: {},
       customFields: []
@@ -665,6 +881,9 @@ export class SafePocketAppShell {
       title: item.title,
       subtitle: item.subtitle,
       paletteId: item.cardTheme?.paletteId ?? 'obsidian_slate',
+      customColorHex: normalizeHexColor(item.cardTheme?.customColorHex),
+      showVisualCard: item.cardTheme?.showVisualCard !== false,
+      barcodeFormat: item.cardTheme?.barcodeFormat ?? 'CODE_128',
       tagsCsv: item.tags.join(', '),
       standardFieldValues,
       customFields
@@ -679,10 +898,32 @@ export class SafePocketAppShell {
     const tagsEl = this.root.querySelector<HTMLInputElement>('#sp-edit-tags');
     const mrzEl =
       this.root.querySelector<HTMLTextAreaElement>('#sp-mrz-input');
+    const customHexEl = this.root.querySelector<HTMLInputElement>(
+      '#sp-edit-custom-color-hex'
+    );
+    const showVisEl = this.root.querySelector<HTMLInputElement>(
+      '#sp-edit-show-visual-card'
+    );
+    const barcodeFmtEl = this.root.querySelector<HTMLSelectElement>(
+      '#sp-edit-barcode-format'
+    );
+
     if (titleEl) this.editorDraft.title = titleEl.value;
     if (subEl) this.editorDraft.subtitle = subEl.value;
     if (tagsEl) this.editorDraft.tagsCsv = tagsEl.value;
     if (mrzEl) this.editorDraft.mrzRawInput = mrzEl.value;
+    if (customHexEl) {
+      this.editorDraft.customColorHex = normalizeHexColor(
+        customHexEl.value,
+        this.editorDraft.customColorHex
+      );
+    }
+    if (showVisEl) {
+      this.editorDraft.showVisualCard = showVisEl.checked;
+    }
+    if (barcodeFmtEl) {
+      this.editorDraft.barcodeFormat = barcodeFmtEl.value as BarcodeFormat;
+    }
 
     this.root
       .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
@@ -839,15 +1080,21 @@ export class SafePocketAppShell {
     }
   }
 
-  private downloadEmergencyKit(): void {
+  private buildCurrentEmergencyKitHtml(): string {
     const header = this.vaultHeaderStore.loadHeader();
     const kdf = this.crypto.currentKdfConfig;
-    const html = buildEmergencyKitHtml({
+    return buildEmergencyKitHtml({
       vaultId: header?.vaultId ?? `vault-${kdf.saltHex.slice(0, 12)}`,
       createdAtIso: header?.createdAtIso ?? new Date().toISOString(),
       secretKeyFormatted: this.demoSecretKey,
-      kdf
+      kdf,
+      passwordHint: this.emergencyKitHintDraft.trim() || undefined,
+      cloudAccountEmail: this.firebaseService.currentUser?.email
     });
+  }
+
+  private downloadEmergencyKit(): void {
+    const html = this.buildCurrentEmergencyKitHtml();
     this.downloadBlob(
       html,
       'safepocket-emergency-kit.html',
@@ -855,18 +1102,64 @@ export class SafePocketAppShell {
     );
   }
 
+  private printEmergencyKit(): void {
+    const html = this.buildCurrentEmergencyKitHtml();
+    if (typeof document === 'undefined') return;
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(() => iframe.remove(), 2500);
+      }, 150);
+    } else {
+      iframe.remove();
+      this.downloadEmergencyKit();
+    }
+  }
+
   private getFilteredItems(): VaultItem[] {
     const filter: {
       category?: VaultCategory | null;
       favoritesOnly?: boolean;
       expiringOnly?: boolean;
-    } = {};
+      tag?: string | null;
+      warningWindowDays?: ExpiryWindowDays;
+    } = {
+      tag: this.activeTagFilter,
+      warningWindowDays: this.expiryWindowDays
+    };
     if (this.selectedNav === 'FAVORITES') filter.favoritesOnly = true;
     else if (this.selectedNav === 'EXPIRING') filter.expiringOnly = true;
     else if (VAULT_CATEGORIES.includes(this.selectedNav as VaultCategory)) {
       filter.category = this.selectedNav as VaultCategory;
     }
-    return searchVaultItems(this.items, this.searchQuery, this.i18n, filter);
+    const matched = searchVaultItems(
+      this.items,
+      this.searchQuery,
+      this.i18n,
+      filter
+    );
+    const effectiveSort: VaultSortMode =
+      this.selectedNav === 'EXPIRING' && this.sortMode === 'pinned_recent'
+        ? 'expiring_soon'
+        : this.sortMode;
+    return sortVaultItems(
+      matched,
+      effectiveSort,
+      this.i18n.activeLocale,
+      Date.now(),
+      this.expiryWindowDays
+    );
   }
 
   private showToast(msg: string): void {
@@ -895,7 +1188,10 @@ export class SafePocketAppShell {
     }
 
     if (!this.crypto.isUnlocked) {
-      this.root.innerHTML = this.renderLockScreen();
+      this.root.innerHTML = `
+        ${this.renderLockScreen()}
+        ${this.cameraModalState ? this.renderCameraModal() : ''}
+      `;
       this.wireLockScreenEvents();
       return;
     }
@@ -909,6 +1205,12 @@ export class SafePocketAppShell {
       this.selectedItemId = selectedItem.id;
     }
 
+    const expirySummary = summarizeVaultExpiries(
+      this.items,
+      Date.now(),
+      this.expiryWindowDays
+    );
+    const allTags = extractVaultTags(this.items);
     const versionBanner = this.i18n.t('update_version_display', {
       version: APP_BUILD_INFO.versionName,
       build: APP_BUILD_INFO.versionCode
@@ -948,10 +1250,7 @@ export class SafePocketAppShell {
               ${this.renderNavBtn(
                 'EXPIRING',
                 this.i18n.t('nav_expiring'),
-                this.items.filter((i) => {
-                  const s = computeExpiryStatus(i).severity;
-                  return s === 'warning' || s === 'expired';
-                }).length
+                expirySummary.totalAttentionCount
               )}
             </nav>
 
@@ -1041,14 +1340,77 @@ export class SafePocketAppShell {
               <span class="sp-kbd">Ctrl+F</span>
             </div>
             <div class="sp-list-toolbar">
-              <span class="sp-list-meta">${this.escape(
-                this.i18n.plural('items_count', filtered.length)
-              )}</span>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span class="sp-list-meta">${this.escape(
+                  this.i18n.plural('items_count', filtered.length)
+                )}</span>
+                <select
+                  id="sp-sort-mode"
+                  class="sp-sort-select"
+                  aria-label="${this.escape(this.i18n.t('sort_label'))}"
+                >
+                  <option value="pinned_recent" ${
+                    this.sortMode === 'pinned_recent' ? 'selected' : ''
+                  }>${this.escape(this.i18n.t('sort_pinned_recent'))}</option>
+                  <option value="alphabetical" ${
+                    this.sortMode === 'alphabetical' ? 'selected' : ''
+                  }>${this.escape(this.i18n.t('sort_alphabetical'))}</option>
+                  <option value="expiring_soon" ${
+                    this.sortMode === 'expiring_soon' ? 'selected' : ''
+                  }>${this.escape(this.i18n.t('sort_expiring_soon'))}</option>
+                  <option value="updated_desc" ${
+                    this.sortMode === 'updated_desc' ? 'selected' : ''
+                  }>${this.escape(this.i18n.t('sort_updated_desc'))}</option>
+                </select>
+              </div>
               <button type="button" id="sp-new-item-btn" class="sp-btn sp-btn-primary">
                 + ${this.escape(this.i18n.t('action_new_item'))}
               </button>
             </div>
+            ${
+              allTags.length > 0
+                ? `<div class="sp-tag-filter-strip" role="group" aria-label="Tag Filter">
+                     ${
+                       this.activeTagFilter
+                         ? `<button type="button" id="sp-clear-tag-filter" class="sp-tag-chip is-active">${this.escape(
+                             this.i18n.t('filter_clear_tag', {
+                               tag: this.activeTagFilter
+                             })
+                           )}</button>`
+                         : ''
+                     }
+                     ${allTags
+                       .slice(0, 12)
+                       .map((entry) => {
+                         const active =
+                           this.activeTagFilter?.toLowerCase() ===
+                           entry.tag.toLowerCase();
+                         return `<button type="button" class="sp-tag-chip ${
+                           active ? 'is-active' : ''
+                         }" data-filter-tag="${this.escape(
+                           entry.tag
+                         )}">#${this.escape(entry.tag)} (${entry.count})</button>`;
+                       })
+                       .join('')}
+                   </div>`
+                : ''
+            }
           </div>
+
+          ${
+            this.selectedNav === 'EXPIRING' &&
+            expirySummary.totalAttentionCount > 0
+              ? `<div class="sp-expiry-banner" role="status">
+                   <span>⏱ ${this.escape(
+                     this.i18n.t('expiry_summary_banner', {
+                       expired: expirySummary.expiredCount,
+                       critical: expirySummary.criticalCount,
+                       warning: expirySummary.warningCount
+                     })
+                   )}</span>
+                 </div>`
+              : ''
+          }
 
           <div class="sp-items-scroll">
             ${
@@ -1091,6 +1453,10 @@ export class SafePocketAppShell {
       ${this.renderMobileBottomNav()}
       ${this.editorDraft ? this.renderItemEditorModal() : ''}
       ${this.activePreview ? this.renderScanPreviewModal() : ''}
+      ${this.presentationState ? this.renderPresentationModal() : ''}
+      ${this.restoreModalState ? this.renderRestoreBackupModal() : ''}
+      ${this.plainExportModalState ? this.renderPlainExportModal() : ''}
+      ${this.cameraModalState ? this.renderCameraModal() : ''}
       ${this.contextMenu ? this.renderContextMenu() : ''}
     `;
 
@@ -1187,8 +1553,21 @@ export class SafePocketAppShell {
             <div style="font-family:var(--font-mono);font-size:13px;font-weight:650;color:var(--accent-primary);word-break:break-all;">
               ${this.escape(this.demoSecretKey)}
             </div>
+            <input
+              id="sp-onboard-kit-hint"
+              type="text"
+              class="sp-input"
+              value="${this.escape(this.emergencyKitHintDraft)}"
+              placeholder="${this.escape(
+                this.i18n.t('emergency_kit_hint_placeholder')
+              )}"
+              style="font-size:12px;"
+            />
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button type="button" id="sp-onboard-download-kit" class="sp-btn sp-btn-tonal">
+              <button type="button" id="sp-onboard-print-kit" class="sp-btn sp-btn-tonal">
+                🖨 ${this.escape(this.i18n.t('emergency_kit_print_btn'))}
+              </button>
+              <button type="button" id="sp-onboard-download-kit" class="sp-btn">
                 ⬇ ${this.escape(
                   this.i18n.t('onboarding_download_emergency_kit')
                 )}
@@ -1248,6 +1627,19 @@ export class SafePocketAppShell {
         });
       }
     });
+
+    const hintInput = this.root.querySelector<HTMLInputElement>(
+      '#sp-onboard-kit-hint'
+    );
+    hintInput?.addEventListener('input', () => {
+      this.emergencyKitHintDraft = hintInput.value;
+    });
+
+    this.root
+      .querySelector('#sp-onboard-print-kit')
+      ?.addEventListener('click', () => {
+        this.printEmergencyKit();
+      });
 
     this.root
       .querySelector('#sp-onboard-download-kit')
@@ -1322,9 +1714,15 @@ export class SafePocketAppShell {
   }
 
   private renderItemListRow(item: VaultItem, isSelected: boolean): string {
-    const exp = computeExpiryStatus(item);
+    const exp = computeExpiryStatus(item, Date.now(), this.expiryWindowDays);
     let badgeHtml = '';
-    if (exp.severity === 'warning') {
+    if (exp.severity === 'critical') {
+      badgeHtml = `<span class="sp-badge sp-badge-critical">⚡ ${this.escape(
+        this.i18n.plural('expiry_critical', exp.daysRemaining, {
+          days: exp.daysRemaining
+        })
+      )}</span>`;
+    } else if (exp.severity === 'warning') {
       badgeHtml = `<span class="sp-badge sp-badge-warn">${this.escape(
         this.i18n.plural('expiry_warning', exp.daysRemaining, {
           days: exp.daysRemaining
@@ -1346,9 +1744,9 @@ export class SafePocketAppShell {
         data-select-item="${this.escape(item.id)}"
       >
         <div class="sp-item-row-top">
-          <span class="sp-item-title">${item.favorite ? '★ ' : ''}${this.escape(
-            item.title
-          )}</span>
+          <span class="sp-item-title">${item.pinned ? '📌 ' : ''}${
+            item.favorite ? '★ ' : ''
+          }${this.escape(item.title)}</span>
         </div>
         <span class="sp-item-subtitle">${this.escape(
           item.subtitle || this.i18n.resolveCategoryName(item.category)
@@ -1359,10 +1757,16 @@ export class SafePocketAppShell {
   }
 
   private renderItemInspector(item: VaultItem): string {
-    const exp = computeExpiryStatus(item);
+    const exp = computeExpiryStatus(item, Date.now(), this.expiryWindowDays);
     const expiryField = item.fields.find((f) => f.labelKey === 'field_expiry_date');
     let expiryBadge = '';
-    if (exp.severity === 'warning') {
+    if (exp.severity === 'critical') {
+      expiryBadge = `<span class="sp-badge sp-badge-critical">⚡ ${this.escape(
+        this.i18n.plural('expiry_critical', exp.daysRemaining, {
+          days: exp.daysRemaining
+        })
+      )}</span>`;
+    } else if (exp.severity === 'warning') {
       expiryBadge = `<span class="sp-badge sp-badge-warn">⚠ ${this.escape(
         this.i18n.plural('expiry_warning', exp.daysRemaining, {
           days: exp.daysRemaining
@@ -1387,7 +1791,8 @@ export class SafePocketAppShell {
       item.category === 'BANK_ACCOUNT' ||
       item.category === 'INSURANCE_CARD' ||
       item.category === 'MEMBERSHIP_CARD' ||
-      item.category === 'OFFICIAL_DOCUMENT';
+      item.category === 'OFFICIAL_DOCUMENT' ||
+      (item.category === 'IDENTITY' && item.cardTheme?.showVisualCard !== false);
 
     return `
       <div>
@@ -1409,6 +1814,13 @@ export class SafePocketAppShell {
           </div>
 
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" id="sp-toggle-pin" class="sp-btn ${
+              item.pinned ? 'sp-btn-tonal' : ''
+            }">
+              📌 ${this.escape(
+                this.i18n.t(item.pinned ? 'action_unpin' : 'action_pin')
+              )}
+            </button>
             <button type="button" id="sp-toggle-fav" class="sp-btn">
               ${item.favorite ? '★' : '☆'} ${this.escape(this.i18n.t('action_favorite'))}
             </button>
@@ -1437,9 +1849,13 @@ export class SafePocketAppShell {
                ${item.tags
                  .map(
                    (tag) =>
-                     `<span class="sp-badge" style="background:var(--surface-card);border:1px solid var(--border-subtle);color:var(--text-secondary);">#${this.escape(
+                     `<button type="button" class="sp-tag-chip ${
+                       this.activeTagFilter?.toLowerCase() === tag.toLowerCase()
+                         ? 'is-active'
+                         : ''
+                     }" data-filter-tag="${this.escape(tag)}">#${this.escape(
                        tag
-                     )}</span>`
+                     )}</button>`
                  )
                  .join('')}
              </div>`
@@ -1450,24 +1866,23 @@ export class SafePocketAppShell {
     `;
   }
 
-  private renderMembershipBarcodeSvg(codeValue: string): string {
-    const seed = codeValue || 'SAFEPOCKET-MEMBER';
-    const bars: string[] = [];
-    let x = 6;
-    for (let i = 0; i < 42; i++) {
-      const code = seed.charCodeAt(i % seed.length) + i * 17;
-      const w = (code % 3) + 1.4;
-      const gap = ((code >> 2) % 3) + 1.8;
-      bars.push(
-        `<rect x="${x.toFixed(1)}" y="4" width="${w.toFixed(1)}" height="28" rx="0.6" fill="#0f172a" />`
-      );
-      x += w + gap;
-    }
-    return `<svg viewBox="0 0 ${Math.ceil(x + 6)} 36" width="100%" height="32" style="max-width:340px;" aria-hidden="true">${bars.join('')}</svg>`;
-  }
-
-  private renderVisualCardHero(item: VaultItem): string {
+  private renderVisualCardHero(item: VaultItem, isPresentation = false): string {
     const palette = item.cardTheme?.paletteId ?? 'obsidian_slate';
+    const customStyleAttr =
+      palette === 'custom'
+        ? ` style="${this.escape(
+            buildCustomCardStyle(item.cardTheme?.customColorHex).inlineStyleAttr
+          )}"`
+        : '';
+    const presentBtn = isPresentation
+      ? ''
+      : `<button
+           type="button"
+           class="sp-btn"
+           style="padding:4px 9px;min-height:26px;font-size:11.5px;"
+           data-present-card="${this.escape(item.id)}"
+         >⛶ ${this.escape(this.i18n.t('action_present_card'))}</button>`;
+
     if (item.category === 'PAYMENT_CARD') {
       const pan =
         item.fields.find((f) => f.labelKey === 'field_card_number')?.value ?? '';
@@ -1479,18 +1894,21 @@ export class SafePocketAppShell {
         item.fields.find((f) => f.labelKey === 'field_issuing_bank')?.value ?? '';
       const panFieldId =
         item.fields.find((f) => f.labelKey === 'field_card_number')?.id ?? '';
-      const revealed = this.revealedFieldIds.has(panFieldId);
+      const revealed = this.revealedFieldIds.has(panFieldId) || isPresentation;
       const maskedPan = revealed
         ? pan
         : `•••• •••• •••• ${pan.replace(/\s+/g, '').slice(-4)}`;
 
       return `
-        <div class="sp-visual-card" data-palette="${palette}">
+        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
             <div class="sp-emv-chip" aria-hidden="true"></div>
-            <span style="font-weight:650;font-size:13px;opacity:0.9;">${this.escape(
-              bank || item.cardTheme?.networkBrand || 'CARD'
-            )}</span>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-weight:650;font-size:13px;opacity:0.9;">${this.escape(
+                bank || item.cardTheme?.networkBrand || 'CARD'
+              )}</span>
+              ${presentBtn}
+            </div>
           </div>
           <div class="sp-card-pan">
             <span>${this.escape(maskedPan)}</span>
@@ -1529,7 +1947,7 @@ export class SafePocketAppShell {
       const rawIban = ibanField?.value ?? '';
       const compactIban = rawIban.replace(/\s+/g, '');
       const revealed = ibanField
-        ? this.revealedFieldIds.has(ibanField.id)
+        ? this.revealedFieldIds.has(ibanField.id) || isPresentation
         : false;
       const maskedIban = revealed
         ? rawIban
@@ -1549,7 +1967,7 @@ export class SafePocketAppShell {
         this.i18n.t('category_bank_account');
 
       return `
-        <div class="sp-visual-card" data-palette="${palette}">
+        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
             <div style="display:flex;align-items:center;gap:10px;">
               <div class="sp-card-emblem" aria-hidden="true">🏦</div>
@@ -1557,7 +1975,10 @@ export class SafePocketAppShell {
                 bank
               )}</span>
             </div>
-            <span class="sp-card-pill">${this.escape(acctType)}</span>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span class="sp-card-pill">${this.escape(acctType)}</span>
+              ${presentBtn}
+            </div>
           </div>
           <div class="sp-card-pan" style="font-size:17px;letter-spacing:0.08em;">
             <span>${this.escape(maskedIban)}</span>
@@ -1601,7 +2022,7 @@ export class SafePocketAppShell {
       );
       const rawNum = numField?.value ?? '';
       const revealed = numField
-        ? this.revealedFieldIds.has(numField.id)
+        ? this.revealedFieldIds.has(numField.id) || isPresentation
         : false;
       const maskedNum = revealed
         ? rawNum
@@ -1622,7 +2043,7 @@ export class SafePocketAppShell {
         item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
 
       return `
-        <div class="sp-visual-card" data-palette="${palette}">
+        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
             <div style="display:flex;align-items:center;gap:10px;">
               <div class="sp-card-emblem" aria-hidden="true">🩺</div>
@@ -1639,7 +2060,10 @@ export class SafePocketAppShell {
                 }
               </div>
             </div>
-            <span class="sp-card-pill">${this.escape(plan)}</span>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span class="sp-card-pill">${this.escape(plan)}</span>
+              ${presentBtn}
+            </div>
           </div>
           <div class="sp-card-pan">
             <span>${this.escape(maskedNum)}</span>
@@ -1689,9 +2113,14 @@ export class SafePocketAppShell {
         this.i18n.t('category_membership_card');
       const expiry =
         item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
+      const renderedCode = renderScannableBarcodeSvg(
+        memberId || item.id,
+        item.cardTheme?.barcodeFormat,
+        { heightPx: 44, maxWidthPx: 340, qrSizePx: 112 }
+      );
 
       return `
-        <div class="sp-visual-card" data-palette="${palette}">
+        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
           <div class="sp-card-top-row">
             <div style="display:flex;align-items:center;gap:10px;">
               <div class="sp-card-emblem" aria-hidden="true">🎫</div>
@@ -1699,7 +2128,10 @@ export class SafePocketAppShell {
                 org
               )}</span>
             </div>
-            <span class="sp-card-pill">${this.escape(tier)}</span>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span class="sp-card-pill">${this.escape(tier)}</span>
+              ${presentBtn}
+            </div>
           </div>
           <div class="sp-card-pan" style="font-size:17.5px;">
             <span>${this.escape(memberId)}</span>
@@ -1716,7 +2148,7 @@ export class SafePocketAppShell {
             }
           </div>
           <div class="sp-barcode-strip">
-            ${this.renderMembershipBarcodeSvg(memberId || item.id)}
+            ${renderedCode.svg}
           </div>
           <div class="sp-card-bottom-row">
             <div>
@@ -1738,6 +2170,81 @@ export class SafePocketAppShell {
       `;
     }
 
+    if (item.category === 'IDENTITY') {
+      const fullName =
+        item.fields.find((f) => f.labelKey === 'field_full_name')?.value ??
+        item.title;
+      const birthdate =
+        item.fields.find((f) => f.labelKey === 'field_birthdate')?.value ?? '';
+      const idField =
+        item.fields.find((f) => f.labelKey === 'field_tax_id') ??
+        item.fields.find((f) => f.labelKey === 'field_ssn');
+      const rawId = idField?.value ?? '';
+      const revealed = idField
+        ? this.revealedFieldIds.has(idField.id) || isPresentation
+        : false;
+      const maskedId = rawId
+        ? revealed
+          ? rawId
+          : rawId.length > 4
+            ? `••••• ${rawId.slice(-3)}`
+            : '••••'
+        : '—';
+      const contact =
+        item.fields.find((f) => f.labelKey === 'field_email')?.value ??
+        item.fields.find((f) => f.labelKey === 'field_phone')?.value ??
+        item.subtitle;
+
+      return `
+        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
+          <div class="sp-card-top-row">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="sp-card-emblem" aria-hidden="true">🪪</div>
+              <span style="font-weight:650;font-size:14px;">${this.escape(
+                fullName
+              )}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span class="sp-card-pill">${this.escape(
+                this.i18n.t('category_identity')
+              )}</span>
+              ${presentBtn}
+            </div>
+          </div>
+          <div class="sp-card-pan" style="font-size:17px;">
+            <span>${this.escape(maskedId)}</span>
+            ${
+              rawId
+                ? `<button
+                     type="button"
+                     class="sp-btn"
+                     style="padding:4px 10px;min-height:28px;"
+                     data-copy-value="${this.escape(rawId)}"
+                     data-copy-sensitive="true"
+                   >${this.escape(this.i18n.t('action_copy'))}</button>`
+                : ''
+            }
+          </div>
+          <div class="sp-card-bottom-row">
+            <div>
+              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+                this.i18n.t('field_email')
+              )}</div>
+              <div style="font-weight:600;">${this.escape(contact)}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+                this.i18n.t('field_birthdate')
+              )}</div>
+              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+                birthdate ? this.i18n.formatDate(birthdate) : '—'
+              )}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     const docNumField = item.fields.find(
       (f) => f.labelKey === 'field_document_number'
     );
@@ -1747,7 +2254,7 @@ export class SafePocketAppShell {
     const expiry =
       item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
     const isRevealed = docNumField
-      ? this.revealedFieldIds.has(docNumField.id)
+      ? this.revealedFieldIds.has(docNumField.id) || isPresentation
       : false;
     const docNumText = docNumField
       ? isRevealed
@@ -1756,12 +2263,15 @@ export class SafePocketAppShell {
       : '';
 
     return `
-      <div class="sp-visual-card" data-palette="${palette}">
+      <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
         <div class="sp-card-top-row">
           <span style="font-size:11.5px;font-family:var(--font-mono);letter-spacing:0.08em;opacity:0.86;">
             ICAO DOC 9303 • ${this.escape(item.documentSubtype ?? 'OFFICIAL_ID')}
           </span>
-          <span style="font-size:12px;opacity:0.9;">${this.escape(authority)}</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:12px;opacity:0.9;">${this.escape(authority)}</span>
+            ${presentBtn}
+          </div>
         </div>
         <div class="sp-card-pan">
           <span>${this.escape(docNumText)}</span>
@@ -1927,7 +2437,13 @@ export class SafePocketAppShell {
               this.i18n.plural('attachments_count', item.attachments.length)
             )}
           </div>
-          <div style="display:inline-flex;gap:4px;">
+          <div style="display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <button
+              type="button"
+              id="sp-camera-capture-doc-btn"
+              class="sp-btn sp-btn-primary"
+              style="min-height:28px;padding:3px 10px;font-size:11.5px;"
+            >📷 ${this.escape(this.i18n.t('camera_capture_photo_btn'))}</button>
             <button
               type="button"
               class="sp-btn ${
@@ -2046,6 +2562,329 @@ export class SafePocketAppShell {
             }
           </div>
         </div>
+      </div>
+    `;
+  }
+
+  private renderPresentationModal(): string {
+    if (!this.presentationState) return '';
+    const item = this.items.find(
+      (i) => i.id === this.presentationState?.itemId
+    );
+    if (!item) return '';
+
+    const memberId =
+      item.fields.find((f) => f.labelKey === 'field_membership_id')?.value ??
+      item.fields.find((f) => f.labelKey === 'field_insurance_number')?.value ??
+      item.fields.find((f) => f.labelKey === 'field_document_number')?.value ??
+      '';
+    const preferredFormat =
+      this.presentationState.formatOverride ?? item.cardTheme?.barcodeFormat;
+    const scannablePayload =
+      memberId ||
+      (item.category === 'BANK_ACCOUNT'
+        ? item.fields.find((f) => f.labelKey === 'field_iban')?.value ?? ''
+        : '');
+    const barcodeRendered = scannablePayload
+      ? renderScannableBarcodeSvg(scannablePayload, preferredFormat, {
+          heightPx: 84,
+          maxWidthPx: 440,
+          qrSizePx: 196
+        })
+      : null;
+
+    return `
+      <div class="sp-presentation-overlay" id="sp-presentation-backdrop" role="dialog" aria-modal="true">
+        <div class="sp-presentation-inner">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;color:#f8fafc;flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:700;font-size:17px;">${this.escape(
+                item.title
+              )}</div>
+              <div style="font-size:11.5px;opacity:0.78;">🔆 ${this.escape(
+                this.i18n.t('present_wake_lock_active')
+              )}</div>
+            </div>
+            <button type="button" id="sp-close-presentation-btn" class="sp-btn sp-btn-primary">
+              ✕ ${this.escape(this.i18n.t('present_close_btn'))}
+            </button>
+          </div>
+
+          ${this.renderVisualCardHero(item, true)}
+
+          ${
+            barcodeRendered
+              ? `<div class="sp-scanner-pad">
+                   <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;">
+                     ${(['CODE_128', 'EAN_13', 'QR_CODE'] as BarcodeFormat[])
+                       .map(
+                         (fmt) => `<button
+                           type="button"
+                           class="sp-btn ${
+                             barcodeRendered.format === fmt
+                               ? 'sp-btn-primary'
+                               : ''
+                           }"
+                           style="min-height:26px;padding:3px 10px;font-size:11px;"
+                           data-present-format="${fmt}"
+                         >${this.escape(
+                           fmt === 'CODE_128'
+                             ? this.i18n.t('barcode_format_code128')
+                             : fmt === 'EAN_13'
+                               ? this.i18n.t('barcode_format_ean13')
+                               : this.i18n.t('barcode_format_qr')
+                         )}</button>`
+                       )
+                       .join('')}
+                   </div>
+                   <div style="width:100%;display:flex;justify-content:center;padding:6px 0;">
+                     ${barcodeRendered.svg}
+                   </div>
+                   <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;letter-spacing:0.1em;color:#0f172a;word-break:break-all;">
+                     ${this.escape(scannablePayload)}
+                   </div>
+                 </div>`
+              : ''
+          }
+        </div>
+      </div>
+    `;
+  }
+
+  private renderCameraModal(): string {
+    if (!this.cameraModalState) return '';
+    const st = this.cameraModalState;
+    const isPhotoOrMrz = st.mode === 'document_photo' || st.mode === 'mrz';
+
+    return `
+      <div class="sp-overlay" id="sp-camera-backdrop" style="z-index:960;">
+        <div class="sp-camera-modal" role="dialog" aria-modal="true">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+            <h2 style="margin:0;font-size:16.5px;">📷 ${this.escape(
+              this.i18n.t('camera_modal_title')
+            )}</h2>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <button type="button" id="sp-camera-flip-btn" class="sp-btn">
+                ⇄ ${this.escape(this.i18n.t('camera_flip_btn'))}
+              </button>
+              <button type="button" id="sp-camera-close-btn" class="sp-btn">
+                ✕ ${this.escape(this.i18n.t('action_cancel'))}
+              </button>
+            </div>
+          </div>
+
+          ${
+            st.error
+              ? `<div class="sp-badge sp-badge-warn" style="padding:7px 10px;border-radius:var(--radius-sm);">
+                   ⚠ ${this.escape(st.error)}
+                 </div>`
+              : ''
+          }
+
+          <div class="sp-camera-viewport">
+            <video id="sp-camera-video" autoplay muted playsinline></video>
+            <div class="sp-camera-guide-box">
+              <span style="font-size:11px;font-weight:600;color:#fff;background:rgba(0,0,0,0.55);padding:2px 8px;border-radius:999px;">
+                ${
+                  st.mode === 'mrz'
+                    ? 'ICAO 2×44 / 3×30 MRZ Zone'
+                    : st.mode === 'document_photo'
+                      ? 'ISO/IEC 7810 ID-1 Card Frame'
+                      : 'Code 128 / EAN-13 / QR'
+                }
+              </span>
+            </div>
+          </div>
+
+          ${
+            st.mrzPreviewUrl
+              ? `<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:8px;display:flex;flex-direction:column;gap:6px;">
+                   <div style="font-size:11px;font-weight:600;color:var(--accent-primary);">✓ High-contrast MRZ strip isolated locally — verify or paste lines in editor</div>
+                   <img src="${this.escape(
+                     st.mrzPreviewUrl
+                   )}" alt="MRZ crop" style="width:100%;max-height:84px;object-fit:contain;border-radius:4px;background:#fff;" />
+                 </div>`
+              : ''
+          }
+
+          ${
+            isPhotoOrMrz
+              ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+                   <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:pointer;">
+                     <input
+                       type="checkbox"
+                       id="sp-camera-crisp-toggle"
+                       ${st.enhanceCrispDoc ? 'checked' : ''}
+                       style="accent-color:var(--accent-primary);"
+                     />
+                     <span>${this.escape(
+                       this.i18n.t('camera_crisp_doc_toggle')
+                     )}</span>
+                   </label>
+                   <button type="button" id="sp-camera-capture-frame-btn" class="sp-btn sp-btn-primary">
+                     📸 ${this.escape(this.i18n.t('camera_capture_now_btn'))}
+                   </button>
+                 </div>`
+              : ''
+          }
+
+          <div style="border-top:1px solid var(--border-subtle);padding-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+            <label class="sp-btn sp-btn-tonal" style="cursor:pointer;">
+              🖼 ${this.escape(this.i18n.t('camera_upload_image_fallback'))}
+              <input type="file" id="sp-camera-image-fallback" accept="image/*" style="display:none;" />
+            </label>
+            <span style="font-size:11px;color:var(--text-muted);">100% offline • Zero network frames</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderRestoreBackupModal(): string {
+    if (!this.restoreModalState) return '';
+    const st = this.restoreModalState;
+    return `
+      <div class="sp-overlay" id="sp-restore-backdrop" style="z-index:920;">
+        <form class="sp-modal-card" id="sp-restore-form" style="max-width:520px;">
+          <h2 style="margin:0;font-size:17.5px;">${this.escape(
+            this.i18n.t('restore_modal_title')
+          )}</h2>
+
+          <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 12px;font-size:12px;font-family:var(--font-mono);display:flex;flex-direction:column;gap:4px;">
+            <div style="color:var(--accent-primary);font-weight:650;">✓ SHA-256 Verified (${this.escape(
+              st.summary.sha256Hex.slice(0, 20)
+            )}…)</div>
+            <div> SafePocket v${this.escape(st.summary.appVersion)} • ${this.escape(
+              st.summary.exportedAtIso.slice(0, 19).replace('T', ' ')
+            )}</div>
+            ${
+              st.summary.itemCount !== undefined
+                ? `<div>Items: ${st.summary.itemCount} • Encrypted scans: ${
+                    st.summary.attachmentCount ?? 0
+                  }</div>`
+                : ''
+            }
+          </div>
+
+          ${
+            st.error
+              ? `<div class="sp-badge sp-badge-expired" style="padding:7px 10px;border-radius:var(--radius-sm);">
+                   ⚠ ${this.escape(st.error)}
+                 </div>`
+              : ''
+          }
+
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+              <input type="radio" name="sp-restore-mode" value="merge" ${
+                st.mode === 'merge' ? 'checked' : ''
+              } style="accent-color:var(--accent-primary);" />
+              <span>${this.escape(this.i18n.t('restore_mode_merge'))}</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+              <input type="radio" name="sp-restore-mode" value="replace" ${
+                st.mode === 'replace' ? 'checked' : ''
+              } style="accent-color:var(--accent-primary);" />
+              <span>${this.escape(this.i18n.t('restore_mode_replace'))}</span>
+            </label>
+          </div>
+
+          <label style="font-size:12px;color:var(--text-secondary);">
+            ${this.escape(this.i18n.t('security_master_password'))}
+            <input
+              id="sp-restore-password"
+              type="password"
+              class="sp-input"
+              required
+              value="${this.escape(st.masterPassword)}"
+              style="margin-top:4px;"
+            />
+          </label>
+
+          <label style="font-size:12px;color:var(--text-secondary);">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+              <span>${this.escape(this.i18n.t('security_secret_key'))}</span>
+              <button type="button" id="sp-restore-scan-qr-btn" class="sp-btn" style="min-height:24px;padding:2px 8px;font-size:11px;">
+                📷 ${this.escape(this.i18n.t('camera_scan_recovery_qr_btn'))}
+              </button>
+            </div>
+            <input
+              id="sp-restore-secret"
+              type="text"
+              class="sp-input"
+              required
+              value="${this.escape(st.secretKey)}"
+              style="margin-top:4px;font-family:var(--font-mono);font-size:12px;"
+            />
+          </label>
+
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;">
+            <button type="button" id="sp-cancel-restore-btn" class="sp-btn">
+              ${this.escape(this.i18n.t('action_cancel'))}
+            </button>
+            <button type="submit" class="sp-btn sp-btn-primary">
+              ⬆ ${this.escape(this.i18n.t('backup_restore_encrypted'))}
+            </button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
+  private renderPlainExportModal(): string {
+    if (!this.plainExportModalState) return '';
+    const st = this.plainExportModalState;
+    return `
+      <div class="sp-overlay" id="sp-plain-export-backdrop" style="z-index:920;">
+        <form class="sp-modal-card" id="sp-plain-export-form" style="max-width:460px;">
+          <h2 style="margin:0;font-size:17px;">${this.escape(
+            this.i18n.t('export_plain_modal_title')
+          )}</h2>
+
+          ${
+            st.error
+              ? `<div class="sp-badge sp-badge-expired" style="padding:7px 10px;border-radius:var(--radius-sm);">
+                   ⚠ ${this.escape(st.error)}
+                 </div>`
+              : ''
+          }
+
+          <div style="display:flex;gap:8px;">
+            <button
+              type="button"
+              class="sp-btn ${st.format === 'json' ? 'sp-btn-primary' : ''}"
+              data-plain-format="json"
+              style="flex:1;"
+            >JSON (.json)</button>
+            <button
+              type="button"
+              class="sp-btn ${st.format === 'csv' ? 'sp-btn-primary' : ''}"
+              data-plain-format="csv"
+              style="flex:1;"
+            >CSV (.csv)</button>
+          </div>
+
+          <label style="font-size:12px;color:var(--text-secondary);">
+            ${this.escape(this.i18n.t('security_master_password'))}
+            <input
+              id="sp-plain-export-password"
+              type="password"
+              class="sp-input"
+              required
+              value="${this.escape(st.password)}"
+              style="margin-top:4px;"
+            />
+          </label>
+
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;">
+            <button type="button" id="sp-cancel-plain-export-btn" class="sp-btn">
+              ${this.escape(this.i18n.t('action_cancel'))}
+            </button>
+            <button type="submit" class="sp-btn sp-btn-danger">
+              ${this.escape(this.i18n.t('backup_export_plain'))}
+            </button>
+          </div>
+        </form>
       </div>
     `;
   }
@@ -2447,7 +3286,7 @@ export class SafePocketAppShell {
         </div>
       </section>
 
-      <!-- 4. Zero-Knowledge Security, Auto-Lock & WebAuthn Biometrics -->
+      <!-- 4. Zero-Knowledge Security, Expiry Window, Auto-Lock & Emergency Kit v2 -->
       <section class="sp-settings-section">
         <h2>${this.escape(this.i18n.t('security_section_title'))}</h2>
         <div style="font-size:12.5px;font-family:var(--font-mono);color:var(--accent-primary);">
@@ -2457,6 +3296,27 @@ export class SafePocketAppShell {
           ${this.escape(this.i18n.t('security_secret_key'))}: ${this.escape(
             this.demoSecretKey
           )}
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <span style="font-size:12.5px;font-weight:600;color:var(--text-secondary);">
+            ${this.escape(this.i18n.t('expiry_window_setting_title'))}
+          </span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${EXPIRY_WINDOW_OPTIONS.map(
+              (days) => `
+              <button
+                type="button"
+                class="sp-btn ${
+                  this.expiryWindowDays === days ? 'sp-btn-primary' : ''
+                }"
+                data-expiry-window="${days}"
+              >${this.escape(
+                this.i18n.t('expiry_window_days_option', { days })
+              )}</button>
+            `
+            ).join('')}
+          </div>
         </div>
 
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
@@ -2482,13 +3342,28 @@ export class SafePocketAppShell {
           </div>
         </div>
 
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" id="sp-enroll-passkey" class="sp-btn">
-            🔑 ${this.escape(this.i18n.t('security_biometrics_toggle'))}
-          </button>
-          <button type="button" id="sp-settings-emergency-kit" class="sp-btn sp-btn-tonal">
-            ⬇ ${this.escape(this.i18n.t('onboarding_download_emergency_kit'))}
-          </button>
+        <div style="border-top:1px solid var(--border-subtle);padding-top:10px;display:flex;flex-direction:column;gap:8px;">
+          <input
+            id="sp-settings-kit-hint"
+            type="text"
+            class="sp-input"
+            value="${this.escape(this.emergencyKitHintDraft)}"
+            placeholder="${this.escape(
+              this.i18n.t('emergency_kit_hint_placeholder')
+            )}"
+            style="font-size:12px;"
+          />
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" id="sp-enroll-passkey" class="sp-btn">
+              🔑 ${this.escape(this.i18n.t('security_biometrics_toggle'))}
+            </button>
+            <button type="button" id="sp-settings-print-kit" class="sp-btn sp-btn-primary">
+              🖨 ${this.escape(this.i18n.t('emergency_kit_print_btn'))}
+            </button>
+            <button type="button" id="sp-settings-emergency-kit" class="sp-btn sp-btn-tonal">
+              ⬇ ${this.escape(this.i18n.t('onboarding_download_emergency_kit'))}
+            </button>
+          </div>
         </div>
       </section>
     `;
@@ -2623,12 +3498,21 @@ export class SafePocketAppShell {
       draft.category === 'BANK_ACCOUNT' ||
       draft.category === 'INSURANCE_CARD' ||
       draft.category === 'MEMBERSHIP_CARD' ||
+      draft.category === 'IDENTITY' ||
       draft.category === 'OFFICIAL_DOCUMENT';
-    const palettes: Array<{ id: CardThemePalette; key: string }> =
-      CARD_THEME_PALETTES.map((id) => ({
-        id,
+    const palettes: Array<{ id: CardThemePalette; key: string }> = [
+      ...CARD_THEME_PALETTES.map((id) => ({
+        id: id as CardThemePalette,
         key: `palette_${id}`
-      }));
+      })),
+      { id: 'custom', key: 'palette_custom' }
+    ];
+    const customSwatchStyle =
+      draft.paletteId === 'custom'
+        ? ` style="${this.escape(
+            buildCustomCardStyle(draft.customColorHex).inlineStyleAttr
+          )}"`
+        : '';
 
     return `
       <div class="sp-overlay" id="sp-modal-backdrop">
@@ -2693,6 +3577,22 @@ export class SafePocketAppShell {
           </div>
 
           ${
+            draft.category === 'IDENTITY'
+              ? `<label style="display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-primary);cursor:pointer;">
+                   <input
+                     type="checkbox"
+                     id="sp-edit-show-visual-card"
+                     ${draft.showVisualCard ? 'checked' : ''}
+                     style="accent-color:var(--accent-primary);"
+                   />
+                   <span>${this.escape(
+                     this.i18n.t('identity_show_visual_card')
+                   )}</span>
+                 </label>`
+              : ''
+          }
+
+          ${
             showPalette
               ? `<div>
                    <div style="font-size:12px;color:var(--text-secondary);">${this.escape(
@@ -2708,7 +3608,9 @@ export class SafePocketAppShell {
                            draft.paletteId === p.id ? 'is-selected' : ''
                          }"
                          data-palette="${p.id}"
-                         data-select-palette="${p.id}"
+                         data-select-palette="${p.id}"${
+                           p.id === 'custom' ? customSwatchStyle : ''
+                         }
                        >
                          <span>${this.escape(this.i18n.t(p.key))}</span>
                          ${draft.paletteId === p.id ? '<span>✓</span>' : ''}
@@ -2717,6 +3619,54 @@ export class SafePocketAppShell {
                        )
                        .join('')}
                    </div>
+                   ${
+                     draft.paletteId === 'custom'
+                       ? `<div class="sp-color-picker-row">
+                            <input
+                              type="color"
+                              id="sp-edit-custom-color-picker"
+                              class="sp-color-input"
+                              value="${this.escape(draft.customColorHex)}"
+                              aria-label="${this.escape(
+                                this.i18n.t('palette_custom')
+                              )}"
+                            />
+                            <input
+                              type="text"
+                              id="sp-edit-custom-color-hex"
+                              class="sp-input"
+                              value="${this.escape(draft.customColorHex)}"
+                              maxlength="7"
+                              style="font-family:var(--font-mono);max-width:128px;"
+                            />
+                            <span style="font-size:11.5px;color:var(--text-secondary);">WCAG Auto-Contrast</span>
+                          </div>`
+                       : ''
+                   }
+                 </div>`
+              : ''
+          }
+
+          ${
+            draft.category === 'MEMBERSHIP_CARD'
+              ? `<div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+                   <label style="font-size:12px;color:var(--text-secondary);flex:1;min-width:160px;">
+                     ${this.escape(this.i18n.t('barcode_format_label'))}
+                     <select id="sp-edit-barcode-format" class="sp-select" style="margin-top:4px;">
+                       <option value="CODE_128" ${
+                         draft.barcodeFormat === 'CODE_128' ? 'selected' : ''
+                       }>${this.escape(this.i18n.t('barcode_format_code128'))}</option>
+                       <option value="EAN_13" ${
+                         draft.barcodeFormat === 'EAN_13' ? 'selected' : ''
+                       }>${this.escape(this.i18n.t('barcode_format_ean13'))}</option>
+                       <option value="QR_CODE" ${
+                         draft.barcodeFormat === 'QR_CODE' ? 'selected' : ''
+                       }>${this.escape(this.i18n.t('barcode_format_qr'))}</option>
+                     </select>
+                   </label>
+                   <button type="button" id="sp-editor-scan-barcode-btn" class="sp-btn sp-btn-primary">
+                     📷 ${this.escape(this.i18n.t('camera_scan_barcode_btn'))}
+                   </button>
                  </div>`
               : ''
           }
@@ -2728,9 +3678,14 @@ export class SafePocketAppShell {
                      <span style="font-size:12px;font-weight:600;color:var(--accent-primary);">
                        🛂 ${this.escape(this.i18n.t('mrz_scanner_title'))}
                      </span>
-                     <button type="button" id="sp-mrz-sample-btn" class="sp-btn" style="min-height:26px;padding:3px 9px;font-size:11px;">
-                       ${this.escape(this.i18n.t('mrz_scanner_sample_btn'))}
-                     </button>
+                     <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                       <button type="button" id="sp-editor-scan-mrz-btn" class="sp-btn sp-btn-tonal" style="min-height:26px;padding:3px 9px;font-size:11px;">
+                         📷 ${this.escape(this.i18n.t('camera_scan_mrz_btn'))}
+                       </button>
+                       <button type="button" id="sp-mrz-sample-btn" class="sp-btn" style="min-height:26px;padding:3px 9px;font-size:11px;">
+                         ${this.escape(this.i18n.t('mrz_scanner_sample_btn'))}
+                       </button>
+                     </div>
                    </div>
                    <textarea
                      id="sp-mrz-input"
@@ -3147,7 +4102,17 @@ export class SafePocketAppShell {
           </label>
 
           <label style="font-size:12px;color:var(--text-secondary);">
-            ${this.escape(this.i18n.t('security_secret_key'))}
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+              <span>${this.escape(this.i18n.t('security_secret_key'))}</span>
+              <button
+                type="button"
+                id="sp-lock-scan-qr-btn"
+                class="sp-btn"
+                style="min-height:24px;padding:2px 8px;font-size:11px;"
+              >📷 ${this.escape(
+                this.i18n.t('camera_scan_recovery_qr_btn')
+              )}</button>
+            </div>
             <input
               id="sp-unlock-secret"
               type="text"
@@ -3182,6 +4147,16 @@ export class SafePocketAppShell {
         this.toggleQuickTheme();
       });
 
+    this.root
+      .querySelector('#sp-lock-scan-qr-btn')
+      ?.addEventListener('click', () => {
+        const sk =
+          this.root.querySelector<HTMLInputElement>('#sp-unlock-secret')
+            ?.value ?? '';
+        if (sk) this.demoSecretKey = sk;
+        this.openCameraModal('recovery_qr', 'lock');
+      });
+
     const form = this.root.querySelector<HTMLFormElement>('#sp-unlock-form');
     form?.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -3208,9 +4183,179 @@ export class SafePocketAppShell {
           );
         }
       });
+
+    this.wireCameraModalEvents();
+  }
+
+  private wireCameraModalEvents(): void {
+    if (!this.cameraModalState) return;
+
+    this.root
+      .querySelector('#sp-camera-close-btn')
+      ?.addEventListener('click', () => {
+        this.closeCameraModal();
+        this.render();
+      });
+
+    this.root
+      .querySelector('#sp-camera-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+          this.closeCameraModal();
+          this.render();
+        }
+      });
+
+    this.root
+      .querySelector('#sp-camera-flip-btn')
+      ?.addEventListener('click', () => {
+        const videoEl =
+          this.root.querySelector<HTMLVideoElement>('#sp-camera-video');
+        if (!videoEl || !this.cameraModalState) return;
+        const mode = this.cameraModalState.mode;
+        const needsBarcode = mode === 'barcode' || mode === 'recovery_qr';
+        void this.cameraController
+          .flipCamera(
+            videoEl,
+            needsBarcode
+              ? (res) => this.handleBarcodeDetectedFromCamera(res)
+              : undefined
+          )
+          .catch((err) => {
+            if (this.cameraModalState) {
+              this.cameraModalState.error =
+                err instanceof Error ? err.message : 'Camera flip failed';
+              this.render();
+            }
+          });
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-camera-crisp-toggle')
+      ?.addEventListener('change', (e) => {
+        if (!this.cameraModalState) return;
+        this.cameraModalState.enhanceCrispDoc = (
+          e.target as HTMLInputElement
+        ).checked;
+      });
+
+    this.root
+      .querySelector('#sp-camera-capture-frame-btn')
+      ?.addEventListener('click', async () => {
+        const st = this.cameraModalState;
+        const videoEl =
+          this.root.querySelector<HTMLVideoElement>('#sp-camera-video');
+        if (!st || !videoEl) return;
+        try {
+          const captured =
+            await this.cameraController.captureDocumentFrameBytes(
+              videoEl,
+              st.enhanceCrispDoc
+            );
+          if (st.mode === 'mrz') {
+            const mrz = analyzeMrzRegionFromCanvas(captured.canvas);
+            st.mrzPreviewUrl = mrz.mrzCropDataUrl;
+            this.render();
+            this.startActiveCameraStream();
+            this.showToast(
+              'MRZ strip isolated locally — verify or paste lines in editor'
+            );
+            return;
+          }
+          if (st.mode === 'document_photo') {
+            const target = this.items.find((i) => i.id === this.selectedItemId);
+            this.closeCameraModal();
+            if (target) {
+              await this.encryptAndAttachPayloads(target, [
+                {
+                  fileName: `scan-${this.uploadScanSide}-${Date.now()}.jpg`,
+                  mimeType: captured.mimeType,
+                  bytes: captured.bytes
+                }
+              ]);
+            } else {
+              this.render();
+            }
+          }
+        } catch (err) {
+          if (this.cameraModalState) {
+            this.cameraModalState.error =
+              err instanceof Error ? err.message : 'Frame capture unavailable';
+            this.render();
+          }
+        }
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-camera-image-fallback')
+      ?.addEventListener('change', async (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        const st = this.cameraModalState;
+        if (!file || !st) return;
+
+        if (st.mode === 'barcode' || st.mode === 'recovery_qr') {
+          const decoded =
+            await this.cameraController.decodeBarcodeFromImageFile(file);
+          if (decoded) {
+            this.handleBarcodeDetectedFromCamera(decoded);
+          } else if (this.cameraModalState) {
+            this.cameraModalState.error =
+              'No scannable Code 128 / EAN-13 / QR found in selected image';
+            this.render();
+            this.startActiveCameraStream();
+          }
+          return;
+        }
+
+        if (st.mode === 'document_photo') {
+          const target = this.items.find((i) => i.id === this.selectedItemId);
+          const raw = new Uint8Array(await file.arrayBuffer());
+          this.closeCameraModal();
+          if (target) {
+            await this.encryptAndAttachPayloads(target, [
+              {
+                fileName: file.name,
+                mimeType: file.type || 'image/jpeg',
+                bytes: raw
+              }
+            ]);
+          } else {
+            this.render();
+          }
+          return;
+        }
+
+        if (st.mode === 'mrz') {
+          const bmpUrl = URL.createObjectURL(file);
+          try {
+            const img = await new Promise<HTMLImageElement>(
+              (resolve, reject) => {
+                const el = new Image();
+                el.onload = () => resolve(el);
+                el.onerror = () => reject(new Error('Image load failed'));
+                el.src = bmpUrl;
+              }
+            );
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || 800;
+            canvas.height = img.naturalHeight || 500;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              const mrz = analyzeMrzRegionFromCanvas(canvas);
+              st.mrzPreviewUrl = mrz.mrzCropDataUrl;
+              this.render();
+            }
+          } finally {
+            URL.revokeObjectURL(bmpUrl);
+          }
+        }
+      });
   }
 
   private wireShellEvents(): void {
+    this.wireCameraModalEvents();
+
     // Quick theme toggle & Settings theme + Material Design accent selectors
     this.root
       .querySelector('#sp-quick-theme-toggle')
@@ -3275,7 +4420,7 @@ export class SafePocketAppShell {
         });
       });
 
-    // Instant Search
+    // Instant Search, Sort Mode & Tag Filter Chips
     const searchEl = this.root.querySelector<HTMLInputElement>(
       '#sp-global-search'
     );
@@ -3284,12 +4429,51 @@ export class SafePocketAppShell {
       this.render();
     });
 
+    this.root
+      .querySelector<HTMLSelectElement>('#sp-sort-mode')
+      ?.addEventListener('change', (e) => {
+        this.sortMode = (e.target as HTMLSelectElement).value as VaultSortMode;
+        this.render();
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-filter-tag]')
+      .forEach((chip) => {
+        chip.addEventListener('click', () => {
+          const clickedTag = chip.dataset.filterTag ?? '';
+          if (!clickedTag) return;
+          if (
+            this.activeTagFilter &&
+            this.activeTagFilter.toLowerCase() === clickedTag.toLowerCase()
+          ) {
+            this.activeTagFilter = null;
+          } else {
+            this.activeTagFilter = clickedTag;
+            if (this.selectedNav === 'SETTINGS') {
+              this.selectedNav = 'ALL';
+            }
+          }
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelector('#sp-clear-tag-filter')
+      ?.addEventListener('click', () => {
+        this.activeTagFilter = null;
+        this.render();
+      });
+
     // Item row selection
     this.root
       .querySelectorAll<HTMLElement>('[data-select-item]')
       .forEach((row) => {
         row.addEventListener('click', () => {
           this.selectedItemId = row.dataset.selectItem ?? null;
+          const selected = this.items.find((i) => i.id === this.selectedItemId);
+          if (selected) {
+            selected.lastAccessedAtEpochMs = Date.now();
+          }
           if (this.selectedNav === 'SETTINGS') {
             this.selectedNav = 'ALL';
           }
@@ -3305,6 +4489,10 @@ export class SafePocketAppShell {
         btn.addEventListener('click', async () => {
           const val = btn.dataset.copyValue ?? '';
           const sensitive = btn.dataset.copySensitive === 'true';
+          const selected = this.items.find((i) => i.id === this.selectedItemId);
+          if (selected) {
+            selected.lastAccessedAtEpochMs = Date.now();
+          }
           await this.clipboard.copyValue(val, sensitive);
           if (!sensitive) {
             this.showToast(this.i18n.t('action_copied'));
@@ -3360,7 +4548,57 @@ export class SafePocketAppShell {
         });
       });
 
-    // Inspector CRUD actions: Favorite, Edit, Duplicate, Delete
+    // Full-screen Card & Barcode Presentation Mode
+    this.root
+      .querySelectorAll<HTMLElement>('[data-present-card]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const itemId = btn.dataset.presentCard;
+          if (itemId) {
+            void this.openPresentationMode(itemId);
+          }
+        });
+      });
+
+    this.root
+      .querySelector('#sp-close-presentation-btn')
+      ?.addEventListener('click', () => {
+        this.closePresentationMode();
+        this.render();
+      });
+
+    this.root
+      .querySelector('#sp-presentation-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+          this.closePresentationMode();
+          this.render();
+        }
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-present-format]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (!this.presentationState) return;
+          this.presentationState.formatOverride = btn.dataset
+            .presentFormat as BarcodeFormat;
+          this.render();
+        });
+      });
+
+    // Inspector CRUD actions: Pin, Favorite, Edit, Duplicate, Delete
+    this.root
+      .querySelector('#sp-toggle-pin')
+      ?.addEventListener('click', async () => {
+        const target = this.items.find((i) => i.id === this.selectedItemId);
+        if (!target) return;
+        target.pinned = !target.pinned;
+        target.updatedAtEpochMs = Date.now();
+        await this.persistSingleItemEncrypted(target);
+        this.render();
+      });
+
     this.root
       .querySelector('#sp-toggle-fav')
       ?.addEventListener('click', async () => {
@@ -3427,8 +4665,11 @@ export class SafePocketAppShell {
       ?.addEventListener('change', (e) => {
         if (!this.editorDraft) return;
         this.syncDraftFromDom();
-        this.editorDraft.category = (e.target as HTMLSelectElement)
-          .value as VaultCategory;
+        const nextCat = (e.target as HTMLSelectElement).value as VaultCategory;
+        this.editorDraft.category = nextCat;
+        if (nextCat === 'IDENTITY' && this.editorDraft.editingItemId === null) {
+          this.editorDraft.showVisualCard = true;
+        }
         this.render();
       });
 
@@ -3442,6 +4683,66 @@ export class SafePocketAppShell {
             .selectPalette as CardThemePalette;
           this.render();
         });
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-edit-custom-color-picker')
+      ?.addEventListener('change', (e) => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        this.editorDraft.customColorHex = normalizeHexColor(
+          (e.target as HTMLInputElement).value,
+          this.editorDraft.customColorHex
+        );
+        this.render();
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-edit-custom-color-hex')
+      ?.addEventListener('change', (e) => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        this.editorDraft.customColorHex = normalizeHexColor(
+          (e.target as HTMLInputElement).value,
+          this.editorDraft.customColorHex
+        );
+        this.render();
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-edit-show-visual-card')
+      ?.addEventListener('change', (e) => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        this.editorDraft.showVisualCard = (
+          e.target as HTMLInputElement
+        ).checked;
+        this.render();
+      });
+
+    this.root
+      .querySelector<HTMLSelectElement>('#sp-edit-barcode-format')
+      ?.addEventListener('change', (e) => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        this.editorDraft.barcodeFormat = (e.target as HTMLSelectElement)
+          .value as BarcodeFormat;
+      });
+
+    this.root
+      .querySelector('#sp-editor-scan-barcode-btn')
+      ?.addEventListener('click', () => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        this.openCameraModal('barcode');
+      });
+
+    this.root
+      .querySelector('#sp-editor-scan-mrz-btn')
+      ?.addEventListener('click', () => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        this.openCameraModal('mrz');
       });
 
     this.root
@@ -3581,6 +4882,27 @@ export class SafePocketAppShell {
               ).networkBrand
             : undefined;
 
+        const buildCardTheme = (
+          prevNetwork?: VaultItem['cardTheme'] extends infer T
+            ? T extends { networkBrand?: infer N }
+              ? N
+              : undefined
+            : undefined
+        ): VaultItem['cardTheme'] => ({
+          paletteId: draft.paletteId,
+          customColorHex:
+            draft.paletteId === 'custom'
+              ? normalizeHexColor(draft.customColorHex)
+              : undefined,
+          showVisualCard:
+            draft.category === 'IDENTITY' ? draft.showVisualCard : undefined,
+          barcodeFormat:
+            draft.category === 'MEMBERSHIP_CARD'
+              ? draft.barcodeFormat
+              : undefined,
+          networkBrand: detectedNetwork ?? prevNetwork
+        });
+
         if (draft.editingItemId) {
           const existing = this.items.find(
             (i) => i.id === draft.editingItemId
@@ -3591,13 +4913,13 @@ export class SafePocketAppShell {
             existing.subtitle =
               draft.subtitle.trim() ||
               this.i18n.resolveCategoryName(draft.category);
-            existing.cardTheme = {
-              paletteId: draft.paletteId,
-              networkBrand: detectedNetwork ?? existing.cardTheme?.networkBrand
-            };
+            existing.cardTheme = buildCardTheme(
+              existing.cardTheme?.networkBrand
+            );
             existing.tags = tags;
             existing.fields = fields;
             existing.updatedAtEpochMs = now;
+            existing.lastAccessedAtEpochMs = now;
             await this.persistSingleItemEncrypted(existing);
             this.selectedItemId = existing.id;
           }
@@ -3612,14 +4934,12 @@ export class SafePocketAppShell {
               this.i18n.resolveCategoryName(draft.category),
             favorite: false,
             tags,
-            cardTheme: {
-              paletteId: draft.paletteId,
-              networkBrand: detectedNetwork
-            },
+            cardTheme: buildCardTheme(undefined),
             fields,
             attachments: [],
             createdAtEpochMs: now,
-            updatedAtEpochMs: now
+            updatedAtEpochMs: now,
+            lastAccessedAtEpochMs: now
           };
           this.items.unshift(created);
           this.selectedItemId = created.id;
@@ -3630,7 +4950,13 @@ export class SafePocketAppShell {
         this.render();
       });
 
-    // Scan side selector & Attachment Preview / Delete / Drag-and-Drop
+    // Scan side selector, Camera Document Capture & Attachment Preview / Delete / Drag-and-Drop
+    this.root
+      .querySelector('#sp-camera-capture-doc-btn')
+      ?.addEventListener('click', () => {
+        this.openCameraModal('document_photo');
+      });
+
     this.root
       .querySelectorAll<HTMLElement>('[data-scan-side]')
       .forEach((btn) => {
@@ -3693,112 +5019,19 @@ export class SafePocketAppShell {
       if (!target) return;
 
       const selectedFiles = Array.from(files);
-      const pendingUploadBlobs: Array<{
-        attachmentId: string;
-        sha256Hex: string;
-        encryptedBytes: Uint8Array;
+      const payloads: Array<{
+        fileName: string;
+        mimeType: string;
+        bytes: Uint8Array;
       }> = [];
-
-      for (let idx = 0; idx < selectedFiles.length; idx++) {
-        const f = selectedFiles[idx];
-        const raw = new Uint8Array(await f.arrayBuffer());
-        const attId = `att_${Date.now()}_${idx}`;
-        const encryptedAtt = await this.crypto.encryptBinaryAttachment(
-          attId,
-          f.name,
-          f.type || 'application/octet-stream',
-          raw,
-          this.uploadScanSide
-        );
-        await this.opfsStore.writeEncryptedBlob(
-          attId,
-          encryptedAtt.encryptedBytes
-        );
-        await this.sqliteDb.saveLocalEncryptedBlob(
-          'default-vault',
-          attId,
-          encryptedAtt.encryptedBytes,
-          encryptedAtt.sha256Hex,
-          false
-        );
-        pendingUploadBlobs.push({
-          attachmentId: attId,
-          sha256Hex: encryptedAtt.sha256Hex,
-          encryptedBytes: encryptedAtt.encryptedBytes
-        });
-        // Omit inline base64 above 16 KiB so Firestore CRDT rows never hit the 1 MiB document cap
-        target.attachments.push({
-          id: encryptedAtt.id,
-          fileName: encryptedAtt.fileName,
-          mimeType: encryptedAtt.mimeType,
-          side: encryptedAtt.side,
-          sizeBytes: encryptedAtt.sizeBytes,
-          sha256Hex: encryptedAtt.sha256Hex,
-          ivHex: encryptedAtt.ivHex,
-          ciphertextBase64:
-            encryptedAtt.encryptedBytes.byteLength <= 16_384
-              ? encryptedAtt.ciphertextBase64
-              : undefined,
-          blobSynced: false
+      for (const f of selectedFiles) {
+        payloads.push({
+          fileName: f.name,
+          mimeType: f.type || 'application/octet-stream',
+          bytes: new Uint8Array(await f.arrayBuffer())
         });
       }
-
-      if (this.syncCoordinator.isCloudSyncEnabled) {
-        try {
-          this.liveCloudConfig = this.firebaseService.toEndpointConfig(
-            this.liveCloudConfig.bearerToken
-          );
-          this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
-          this.gdriveAdapter.setLiveEndpointConfig(this.liveCloudConfig);
-
-          const uploadRes =
-            await this.syncCoordinator.uploadAttachmentBlobsIfEnabled(
-              'default-vault',
-              pendingUploadBlobs
-            );
-          if (uploadRes) {
-            for (const b of pendingUploadBlobs) {
-              await this.sqliteDb.markLocalBlobSynced(b.attachmentId);
-              const meta = target.attachments.find(
-                (a) => a.id === b.attachmentId
-              );
-              if (meta) {
-                meta.blobSynced = true;
-                meta.storageObjectPath = uploadRes.paths[b.attachmentId];
-              }
-            }
-          }
-        } catch (err) {
-          this.showToast(
-            err instanceof Error
-              ? `Saved locally (.enc queued for retry): ${err.message}`
-              : 'Saved locally (.enc queued for retry)'
-          );
-        }
-      }
-
-      target.updatedAtEpochMs = Date.now();
-      await this.persistSingleItemEncrypted(target);
-      if (this.syncCoordinator.isCloudSyncEnabled) {
-        try {
-          const allRows = await this.localDb.loadAllRowsIncludingTombstones();
-          await this.syncCoordinator.syncEncryptedRowsIfEnabled(
-            'default-vault',
-            allRows.filter((r) => r.id === target.id)
-          );
-        } catch {
-          // Offline-first: CRDT delta remains queued locally
-        }
-      }
-      this.render();
-      const syncedAll = pendingUploadBlobs.every((b) =>
-        target.attachments.find((a) => a.id === b.attachmentId)?.blobSynced
-      );
-      this.showToast(
-        syncedAll && this.syncCoordinator.isCloudSyncEnabled
-          ? `Encrypted & synced ${selectedFiles.length} .enc scan(s) → EU Storage`
-          : `Encrypted ${selectedFiles.length} scan(s) → Local OPFS + SQLite (AES-256-GCM)`
-      );
+      await this.encryptAndAttachPayloads(target, payloads);
     };
     dropzone?.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -4097,72 +5330,233 @@ export class SafePocketAppShell {
         this.showToast('Exported encrypted .safepocket backup (with .enc blobs)');
       });
 
+    // Encrypted .safepocket Backup Inspection & Cross-Vault Merge/Replace Modal
     this.root
       .querySelector<HTMLInputElement>('#sp-restore-safepocket')
       ?.addEventListener('change', async (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
+        const inputEl = e.target as HTMLInputElement;
+        const file = inputEl.files?.[0];
         if (!file) return;
         const rawText = await file.text();
-        const restored = await this.crypto.restoreSafePocketContainer(
-          rawText,
-          this.activeMasterPassword,
-          this.demoSecretKey
-        );
-        for (const item of restored) {
-          for (const att of item.attachments) {
-            if (att.ciphertextBase64) {
-              const binStr = atob(att.ciphertextBase64);
-              const bytes = new Uint8Array(binStr.length);
-              for (let i = 0; i < binStr.length; i++) {
-                bytes[i] = binStr.charCodeAt(i);
-              }
-              await this.opfsStore.writeEncryptedBlob(att.id, bytes);
-              await this.sqliteDb.saveLocalEncryptedBlob(
-                'default-vault',
-                att.id,
-                bytes,
-                att.sha256Hex,
-                false
-              );
-              if (bytes.byteLength > 16_384) {
-                att.ciphertextBase64 = undefined;
-              }
-            }
-          }
+        inputEl.value = '';
+        try {
+          const summary = await inspectSafePocketContainerHeader(rawText);
+          this.restoreModalState = {
+            rawJson: rawText,
+            summary,
+            mode: 'merge',
+            masterPassword: this.activeMasterPassword,
+            secretKey: this.demoSecretKey
+          };
+          this.render();
+        } catch (err) {
+          this.showToast(
+            err instanceof Error
+              ? err.message
+              : 'Invalid or tampered .safepocket container'
+          );
         }
-        this.items = restored;
-        await this.persistAllItemsEncrypted();
-        this.render();
-        this.showToast(`Restored ${restored.length} encrypted vault items & blobs`);
       });
 
     this.root
-      .querySelector('#sp-export-plain-csv')
-      ?.addEventListener('click', async () => {
-        const candidate = window.prompt(
-          `${this.i18n.t('security_master_password')}:`,
-          ''
-        );
-        if (!candidate) return;
-        const verified = await this.crypto.verifyMasterPassword(candidate);
-        if (!verified) {
-          this.showToast('Master Password verification failed');
-          return;
-        }
-        const csvLines = [
-          'id,category,title,subtitle,tags',
-          ...this.items.map(
-            (i) =>
-              `"${i.id}","${i.category}","${i.title.replaceAll('"', '""')}","${i.subtitle.replaceAll(
-                '"',
-                '""'
-              )}","${i.tags.join('|')}"`
-          )
-        ].join('\n');
-        this.downloadBlob(csvLines, 'safepocket-export.csv', 'text/csv');
+      .querySelectorAll<HTMLInputElement>('input[name="sp-restore-mode"]')
+      .forEach((radio) => {
+        radio.addEventListener('change', () => {
+          if (!this.restoreModalState) return;
+          this.restoreModalState.mode =
+            radio.value === 'replace' ? 'replace' : 'merge';
+        });
       });
 
-    // Settings: Auto-Lock Timeout & Biometrics & Emergency Kit
+    this.root
+      .querySelector('#sp-restore-scan-qr-btn')
+      ?.addEventListener('click', () => {
+        if (!this.restoreModalState) return;
+        const pwEl = this.root.querySelector<HTMLInputElement>(
+          '#sp-restore-password'
+        );
+        const skEl =
+          this.root.querySelector<HTMLInputElement>('#sp-restore-secret');
+        if (pwEl) this.restoreModalState.masterPassword = pwEl.value;
+        if (skEl) this.restoreModalState.secretKey = skEl.value;
+        this.openCameraModal('recovery_qr', 'restore');
+      });
+
+    this.root
+      .querySelector('#sp-cancel-restore-btn')
+      ?.addEventListener('click', () => {
+        this.restoreModalState = null;
+        this.render();
+      });
+
+    this.root
+      .querySelector('#sp-restore-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+          this.restoreModalState = null;
+          this.render();
+        }
+      });
+
+    this.root
+      .querySelector<HTMLFormElement>('#sp-restore-form')
+      ?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const st = this.restoreModalState;
+        if (!st) return;
+        const pw =
+          this.root.querySelector<HTMLInputElement>('#sp-restore-password')
+            ?.value ?? '';
+        const sk =
+          this.root.querySelector<HTMLInputElement>('#sp-restore-secret')
+            ?.value ?? '';
+        st.masterPassword = pw;
+        st.secretKey = sk;
+
+        try {
+          const incoming = await this.crypto.restoreSafePocketContainer(
+            st.rawJson,
+            pw,
+            sk
+          );
+          for (const item of incoming) {
+            for (const att of item.attachments) {
+              if (att.ciphertextBase64) {
+                const binStr = atob(att.ciphertextBase64);
+                const bytes = new Uint8Array(binStr.length);
+                for (let i = 0; i < binStr.length; i++) {
+                  bytes[i] = binStr.charCodeAt(i);
+                }
+                await this.opfsStore.writeEncryptedBlob(att.id, bytes);
+                await this.sqliteDb.saveLocalEncryptedBlob(
+                  'default-vault',
+                  att.id,
+                  bytes,
+                  att.sha256Hex,
+                  false
+                );
+                if (bytes.byteLength > 16_384) {
+                  att.ciphertextBase64 = undefined;
+                }
+              }
+            }
+          }
+
+          if (st.mode === 'replace') {
+            await this.localDb.clearAll();
+            this.items = incoming;
+            await this.persistAllItemsEncrypted();
+            this.restoreModalState = null;
+            this.selectedItemId = this.items[0]?.id ?? null;
+            this.render();
+            this.showToast(
+              `Replaced vault with ${incoming.length} encrypted items`
+            );
+          } else {
+            const report = mergeVaultSnapshots(this.items, incoming);
+            this.items = report.merged;
+            await this.persistAllItemsEncrypted();
+            this.restoreModalState = null;
+            this.selectedItemId = this.selectedItemId ?? this.items[0]?.id ?? null;
+            this.render();
+            this.showToast(
+              `Merged backup: +${report.addedCount} added • ${report.updatedCount} updated • ${report.unchangedCount} unchanged`
+            );
+          }
+        } catch (err) {
+          if (this.restoreModalState) {
+            this.restoreModalState.error =
+              err instanceof Error
+                ? err.message
+                : 'Backup decryption failed — verify Master Password & Secret Key';
+            this.render();
+          }
+        }
+      });
+
+    // Master-Password-Gated Plaintext JSON/CSV Export Modal
+    this.root
+      .querySelector('#sp-export-plain-csv')
+      ?.addEventListener('click', () => {
+        this.plainExportModalState = {
+          format: 'json',
+          password: ''
+        };
+        this.render();
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-plain-format]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (!this.plainExportModalState) return;
+          const pwEl = this.root.querySelector<HTMLInputElement>(
+            '#sp-plain-export-password'
+          );
+          if (pwEl) this.plainExportModalState.password = pwEl.value;
+          this.plainExportModalState.format =
+            btn.dataset.plainFormat === 'csv' ? 'csv' : 'json';
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelector('#sp-cancel-plain-export-btn')
+      ?.addEventListener('click', () => {
+        this.plainExportModalState = null;
+        this.render();
+      });
+
+    this.root
+      .querySelector('#sp-plain-export-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+          this.plainExportModalState = null;
+          this.render();
+        }
+      });
+
+    this.root
+      .querySelector<HTMLFormElement>('#sp-plain-export-form')
+      ?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const st = this.plainExportModalState;
+        if (!st) return;
+        const candidate =
+          this.root.querySelector<HTMLInputElement>('#sp-plain-export-password')
+            ?.value ?? '';
+        st.password = candidate;
+        const verified = await this.crypto.verifyMasterPassword(candidate);
+        if (!verified) {
+          st.error = 'Master Password verification failed';
+          this.render();
+          return;
+        }
+        const exported = formatUnencryptedVaultExport(this.items, st.format);
+        this.plainExportModalState = null;
+        this.render();
+        this.downloadBlob(
+          exported.content,
+          `safepocket-export.${exported.extension}`,
+          exported.mimeType
+        );
+        this.showToast(
+          `Exported unencrypted ${exported.extension.toUpperCase()} (${this.items.length} items)`
+        );
+      });
+
+    // Settings: Expiry Warning Horizon, Auto-Lock Timeout, Biometrics & Emergency Kit v2
+    this.root
+      .querySelectorAll<HTMLElement>('[data-expiry-window]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const days = Number(btn.dataset.expiryWindow) as ExpiryWindowDays;
+          if (EXPIRY_WINDOW_OPTIONS.includes(days)) {
+            this.setExpiryWindowDays(days);
+          }
+        });
+      });
+
     this.root
       .querySelectorAll<HTMLElement>('[data-autolock-min]')
       .forEach((btn) => {
@@ -4187,10 +5581,137 @@ export class SafePocketAppShell {
       });
 
     this.root
+      .querySelector<HTMLInputElement>('#sp-settings-kit-hint')
+      ?.addEventListener('input', (e) => {
+        this.emergencyKitHintDraft = (e.target as HTMLInputElement).value;
+      });
+
+    this.root
+      .querySelector('#sp-settings-print-kit')
+      ?.addEventListener('click', () => {
+        this.printEmergencyKit();
+      });
+
+    this.root
       .querySelector('#sp-settings-emergency-kit')
       ?.addEventListener('click', () => {
         this.downloadEmergencyKit();
       });
+  }
+
+  private async encryptAndAttachPayloads(
+    target: VaultItem,
+    payloads: Array<{
+      fileName: string;
+      mimeType: string;
+      bytes: Uint8Array;
+    }>
+  ): Promise<void> {
+    if (payloads.length === 0) return;
+
+    const pendingUploadBlobs: Array<{
+      attachmentId: string;
+      sha256Hex: string;
+      encryptedBytes: Uint8Array;
+    }> = [];
+
+    for (let idx = 0; idx < payloads.length; idx++) {
+      const p = payloads[idx];
+      const attId = `att_${Date.now()}_${idx}`;
+      const encryptedAtt = await this.crypto.encryptBinaryAttachment(
+        attId,
+        p.fileName,
+        p.mimeType || 'application/octet-stream',
+        p.bytes,
+        this.uploadScanSide
+      );
+      await this.opfsStore.writeEncryptedBlob(
+        attId,
+        encryptedAtt.encryptedBytes
+      );
+      await this.sqliteDb.saveLocalEncryptedBlob(
+        'default-vault',
+        attId,
+        encryptedAtt.encryptedBytes,
+        encryptedAtt.sha256Hex,
+        false
+      );
+      pendingUploadBlobs.push({
+        attachmentId: attId,
+        sha256Hex: encryptedAtt.sha256Hex,
+        encryptedBytes: encryptedAtt.encryptedBytes
+      });
+      // Omit inline base64 above 16 KiB so Firestore CRDT rows never hit the 1 MiB document cap
+      target.attachments.push({
+        id: encryptedAtt.id,
+        fileName: encryptedAtt.fileName,
+        mimeType: encryptedAtt.mimeType,
+        side: encryptedAtt.side,
+        sizeBytes: encryptedAtt.sizeBytes,
+        sha256Hex: encryptedAtt.sha256Hex,
+        ivHex: encryptedAtt.ivHex,
+        ciphertextBase64:
+          encryptedAtt.encryptedBytes.byteLength <= 16_384
+            ? encryptedAtt.ciphertextBase64
+            : undefined,
+        blobSynced: false
+      });
+    }
+
+    if (this.syncCoordinator.isCloudSyncEnabled) {
+      try {
+        this.liveCloudConfig = this.firebaseService.toEndpointConfig(
+          this.liveCloudConfig.bearerToken
+        );
+        this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+        this.gdriveAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+
+        const uploadRes =
+          await this.syncCoordinator.uploadAttachmentBlobsIfEnabled(
+            'default-vault',
+            pendingUploadBlobs
+          );
+        if (uploadRes) {
+          for (const b of pendingUploadBlobs) {
+            await this.sqliteDb.markLocalBlobSynced(b.attachmentId);
+            const meta = target.attachments.find((a) => a.id === b.attachmentId);
+            if (meta) {
+              meta.blobSynced = true;
+              meta.storageObjectPath = uploadRes.paths[b.attachmentId];
+            }
+          }
+        }
+      } catch (err) {
+        this.showToast(
+          err instanceof Error
+            ? `Saved locally (.enc queued for retry): ${err.message}`
+            : 'Saved locally (.enc queued for retry)'
+        );
+      }
+    }
+
+    target.updatedAtEpochMs = Date.now();
+    await this.persistSingleItemEncrypted(target);
+    if (this.syncCoordinator.isCloudSyncEnabled) {
+      try {
+        const allRows = await this.localDb.loadAllRowsIncludingTombstones();
+        await this.syncCoordinator.syncEncryptedRowsIfEnabled(
+          'default-vault',
+          allRows.filter((r) => r.id === target.id)
+        );
+      } catch {
+        // Offline-first: CRDT delta remains queued locally
+      }
+    }
+    this.render();
+    const syncedAll = pendingUploadBlobs.every(
+      (b) => target.attachments.find((a) => a.id === b.attachmentId)?.blobSynced
+    );
+    this.showToast(
+      syncedAll && this.syncCoordinator.isCloudSyncEnabled
+        ? `Encrypted & synced ${payloads.length} .enc scan(s) → EU Storage`
+        : `Encrypted ${payloads.length} scan(s) → Local OPFS + SQLite (AES-256-GCM)`
+    );
   }
 
   private downloadBlob(

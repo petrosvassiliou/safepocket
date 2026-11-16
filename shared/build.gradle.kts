@@ -72,9 +72,9 @@ kotlin {
 
 android {
     namespace = "com.safepocket.shared"
-    compileSdk = 36
+    compileSdk = (System.getenv("SAFEPOCKET_COMPILE_SDK") ?: "35").toInt()
     defaultConfig {
-        minSdk = 36
+        minSdk = (System.getenv("SAFEPOCKET_MIN_SDK") ?: "29").toInt()
     }
 }
 

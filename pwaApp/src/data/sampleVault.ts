@@ -15,6 +15,7 @@ export function createInitialSampleVaultItems(): VaultItem[] {
       title: 'N26 Metal World Elite',
       subtitle: 'Primary Eurozone Travel & Daily Debit',
       favorite: true,
+      pinned: true,
       tags: ['travel', 'sepa', 'metal', 'reise'],
       cardTheme: {
         paletteId: 'alpine_emerald',
@@ -158,6 +159,10 @@ export function createInitialSampleVaultItems(): VaultItem[] {
       subtitle: 'Primary European Tax & Civil Identity',
       favorite: true,
       tags: ['tax', 'health', 'resident', 'münchen'],
+      cardTheme: {
+        paletteId: 'forest_sage',
+        showVisualCard: true
+      },
       fields: [
         {
           id: 'i-name',
@@ -455,6 +460,7 @@ Home Insurance Policy: ALLIANZ-DE-9940218
       tags: ['mitgliedschaft', 'adac', 'mobilitaet', 'club'],
       cardTheme: {
         paletteId: 'pearl_ivory',
+        barcodeFormat: 'CODE_128',
         networkBrand: 'PLUS MEMBER'
       },
       fields: [

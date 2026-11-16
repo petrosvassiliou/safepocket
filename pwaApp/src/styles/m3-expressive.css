@@ -1245,3 +1245,211 @@ body {
   transition: width 160ms ease;
 }
 
+/* Custom Hex Card Palette & Contrast Tokens */
+.sp-visual-card[data-palette='custom'] .sp-btn {
+  background: var(--sp-card-pill-bg, rgba(255, 255, 255, 0.14));
+  border-color: var(--sp-card-pill-border, rgba(255, 255, 255, 0.24));
+  color: var(--sp-card-ink, #f8fafc);
+}
+
+.sp-visual-card[data-palette='custom'] .sp-btn:hover {
+  filter: brightness(1.08);
+}
+
+.sp-visual-card[data-palette='custom'] .sp-card-emblem,
+.sp-visual-card[data-palette='custom'] .sp-card-pill {
+  background: var(--sp-card-pill-bg, rgba(255, 255, 255, 0.14));
+  border-color: var(--sp-card-pill-border, rgba(255, 255, 255, 0.22));
+  color: var(--sp-card-ink, #f8fafc);
+}
+
+.sp-palette-swatch[data-palette='custom'] {
+  background: linear-gradient(135deg, hsl(262, 42%, 34%), hsl(196, 56%, 24%));
+}
+
+.sp-color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.sp-color-input {
+  appearance: none;
+  width: 38px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Critical Expiry Badge (<= 30 days) & Renewal Summary Banner */
+.sp-badge-critical {
+  background: hsla(14, 88%, 52%, 0.16);
+  color: hsl(12, 82%, 42%);
+  border: 1px solid hsla(14, 88%, 52%, 0.28);
+}
+
+[data-theme='dark'] .sp-badge-critical {
+  background: hsla(14, 88%, 56%, 0.22);
+  color: hsl(18, 95%, 74%);
+  border-color: hsla(14, 88%, 58%, 0.36);
+}
+
+.sp-expiry-banner {
+  margin: 8px 10px 2px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-fg);
+  font-size: 11.8px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Sort Control & Tag Filter Chips */
+.sp-sort-select {
+  appearance: auto;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11.8px;
+  font-weight: 550;
+  cursor: pointer;
+  max-width: 158px;
+}
+
+.sp-tag-filter-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 4px;
+  scrollbar-width: thin;
+}
+
+.sp-tag-chip {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.sp-tag-chip:hover {
+  border-color: var(--accent-border);
+  color: var(--text-primary);
+}
+
+.sp-tag-chip.is-active {
+  background: var(--accent-primary);
+  color: var(--accent-primary-ink);
+  border-color: transparent;
+}
+
+/* Fullscreen Card & High-Luminance Optical Barcode Presentation Mode */
+.sp-presentation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  background: rgba(9, 13, 22, 0.94);
+  backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  gap: 18px;
+  overflow-y: auto;
+}
+
+.sp-presentation-inner {
+  width: 100%;
+  max-width: 540px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sp-scanner-pad {
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: var(--radius-lg);
+  padding: 22px 20px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+/* Offline Camera Viewfinder Modal */
+.sp-camera-modal {
+  width: 100%;
+  max-width: 560px;
+  background: var(--bg-list);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 92vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-elevated);
+}
+
+.sp-camera-viewport {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: #0b0f17;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.sp-camera-viewport video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sp-camera-guide-box {
+  position: absolute;
+  width: 82%;
+  aspect-ratio: 1.586 / 1;
+  max-height: 82%;
+  border: 2px solid rgba(255, 255, 255, 0.86);
+  border-radius: 12px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.38);
+  pointer-events: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 8px;
+}
+
+

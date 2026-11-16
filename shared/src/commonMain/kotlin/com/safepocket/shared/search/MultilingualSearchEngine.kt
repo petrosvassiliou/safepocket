@@ -3,6 +3,7 @@ package com.safepocket.shared.search
 import com.safepocket.shared.i18n.LocalizationEngine
 import com.safepocket.shared.model.VaultCategory
 import com.safepocket.shared.model.VaultItemPayload
+import com.safepocket.shared.model.VaultSortMode
 
 /**
  * Instant (< 50ms) Multilingual Vault Search Engine.
@@ -18,6 +19,7 @@ import com.safepocket.shared.model.VaultItemPayload
  * - German umlaut & Eszett expansions (`ä` matches both `"ae"` and `"a"`, `ö` -> `"oe"`/`"o"`, `ü` -> `"ue"`/`"u"`, `ß` -> `"ss"`)
  * - Greek monotonic/polytonic accents (`ά` -> `"α"` and Latin `"a"`, `έ` -> `"ε"`/`"e"`, etc.)
  */
+
 class MultilingualSearchEngine(
     private val i18n: LocalizationEngine
 ) {
@@ -25,11 +27,14 @@ class MultilingualSearchEngine(
         items: List<VaultItemPayload>,
         rawQuery: String,
         categoryFilter: VaultCategory? = null,
-        favoritesOnly: Boolean = false
+        favoritesOnly: Boolean = false,
+        tagFilter: String? = null
     ): List<VaultItemPayload> {
+        val normTag = tagFilter?.trim()?.takeIf { it.isNotEmpty() }?.let { stripAccentsOnly(it) }
         val baseFiltered = items.asSequence().filter { item ->
             (categoryFilter == null || item.category == categoryFilter) &&
-                (!favoritesOnly || item.favorite)
+                (!favoritesOnly || item.favorite) &&
+                (normTag == null || item.tags.any { stripAccentsOnly(it.trim()) == normTag })
         }
 
         val trimmed = rawQuery.trim()
@@ -46,6 +51,27 @@ class MultilingualSearchEngine(
                 corpus.any { indexedForm -> indexedForm.contains(token) }
             }
         }.toList()
+    }
+
+    fun sortItems(
+        items: List<VaultItemPayload>,
+        mode: VaultSortMode = VaultSortMode.PINNED_RECENT
+    ): List<VaultItemPayload> = when (mode) {
+        VaultSortMode.PINNED_RECENT -> items.sortedWith(
+            compareByDescending<VaultItemPayload> { it.pinned }
+                .thenByDescending { it.favorite }
+                .thenByDescending { it.lastAccessedAtEpochMs ?: it.updatedAtEpochMs }
+        )
+        VaultSortMode.ALPHABETICAL -> items.sortedWith(
+            compareByDescending<VaultItemPayload> { it.pinned }
+                .thenBy { it.title.lowercase() }
+        )
+        VaultSortMode.EXPIRING_SOON -> items.sortedWith(
+            compareBy<VaultItemPayload> { it.expiryIsoDate() == null }
+                .thenBy { it.expiryIsoDate() ?: "9999-99-99" }
+                .thenBy { it.title.lowercase() }
+        )
+        VaultSortMode.UPDATED_DESC -> items.sortedByDescending { it.updatedAtEpochMs }
     }
 
     private fun buildIndexableCorpus(item: VaultItemPayload): List<String> {

@@ -33,37 +33,50 @@ object EmergencyKitGenerator {
         return PasswordEntropyReport(bits, rating)
     }
 
+    fun buildRecoverySecretKeyUri(vaultId: String, secretKeyFormatted: String): String =
+        "safepocket-recovery://v1?vaultId=${vaultId.trim()}&secretKey=${secretKeyFormatted.trim().uppercase()}"
+
     fun buildPrintableEmergencyKitHtml(
         vaultId: String,
         createdAtIso: String,
         secretKeyFormatted: String,
-        kdfParams: Argon2idParameters
-    ): String = """
+        kdfParams: Argon2idParameters,
+        passwordHint: String? = null
+    ): String {
+        val hintSection = if (!passwordHint.isNullOrBlank()) {
+            "<div style=\"margin-top:8px;font-size:12.5px;color:#334155;\"><strong>Memory Hint:</strong> $passwordHint</div>"
+        } else ""
+        val recoveryUri = buildRecoverySecretKeyUri(vaultId, secretKeyFormatted)
+        return """
         <!DOCTYPE html>
         <html lang="en">
         <head>
           <meta charset="UTF-8" />
-          <title>SafePocket Emergency Kit — $vaultId</title>
+          <title>SafePocket v0.1 Emergency Kit — $vaultId</title>
           <style>
-            body { font-family: system-ui, -apple-system, sans-serif; color: #111827; max-width: 680px; margin: 36px auto; padding: 24px; border: 2px solid #111827; border-radius: 14px; }
-            h1 { margin: 0 0 6px; font-size: 22px; }
+            @page { size: A4 portrait; margin: 14mm; }
+            body { font-family: system-ui, -apple-system, sans-serif; color: #111827; max-width: 700px; margin: 28px auto; padding: 24px; border: 2px solid #111827; border-radius: 14px; }
+            h1 { margin: 0 0 6px; font-size: 21px; }
             .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; letter-spacing: 0.06em; background: #f3f4f6; padding: 14px; border-radius: 8px; border: 1px solid #d1d5db; }
             .write-box { height: 54px; border: 2px dashed #6b7280; border-radius: 8px; margin-top: 8px; }
-            .meta { font-size: 12px; color: #4b5563; margin-top: 18px; }
+            .meta { font-size: 11.5px; font-family: ui-monospace, monospace; color: #4b5563; margin-top: 18px; }
           </style>
         </head>
         <body>
-          <h1>SafePocket — Zero-Knowledge Emergency Kit</h1>
+          <h1>SafePocket v0.1 — Zero-Knowledge Emergency Kit</h1>
           <p>Store this sheet in a physical safe. SafePocket operates with strict zero-knowledge local encryption; neither SafePocket nor any cloud provider can recover your Secret Key or Master Password.</p>
           <h3>1. Local Secret Key (Required on New Devices)</h3>
           <div class="mono">$secretKeyFormatted</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:4px;font-family:ui-monospace,monospace;">Recovery URI: $recoveryUri</div>
           <h3>2. Master Password (Write by Hand — Never Stored Here)</h3>
           <div class="write-box"></div>
+          $hintSection
           <div class="meta">
-            Vault ID: $vaultId • Created: $createdAtIso<br/>
+            Vault ID: $vaultId • Created: $createdAtIso • SafePocket v0.1 (Build 1)<br/>
             KDF: Argon2id (${kdfParams.memoryKiB} KiB, t=${kdfParams.iterations}, p=${kdfParams.parallelism}) → HKDF-SHA256 → AES-256-GCM
           </div>
         </body>
         </html>
-    """.trimIndent()
+        """.trimIndent()
+    }
 }

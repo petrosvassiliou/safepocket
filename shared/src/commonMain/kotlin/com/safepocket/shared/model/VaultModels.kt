@@ -142,8 +142,26 @@ object CardPalettes {
 }
 
 @Serializable
+enum class BarcodeFormat {
+    CODE_128,
+    EAN_13,
+    QR_CODE
+}
+
+@Serializable
+enum class VaultSortMode {
+    PINNED_RECENT,
+    ALPHABETICAL,
+    EXPIRING_SOON,
+    UPDATED_DESC
+}
+
+@Serializable
 data class CardVisualTheme(
-    val paletteId: String = "obsidian_slate", // Any ID in CardPalettes.ALL
+    val paletteId: String = "obsidian_slate", // Any ID in CardPalettes.ALL or "custom"
+    val customColorHex: String? = null,       // #RRGGBB user-picked card color
+    val showVisualCard: Boolean = true,       // Default true for cards, official docs & identities
+    val barcodeFormat: BarcodeFormat? = null,
     val networkBrand: String? = null          // Visa | Mastercard | Amex | SEPA
 )
 
@@ -155,6 +173,8 @@ data class VaultItemPayload(
     val title: String,
     val subtitle: String = "",
     val favorite: Boolean = false,
+    val pinned: Boolean = false,
+    val lastAccessedAtEpochMs: Long? = null,
     val tags: List<String> = emptyList(),
     val regionHint: String? = null, // Optional ISO country override ("DE", "IT", "GR", "FR", "ES")
     val cardTheme: CardVisualTheme? = null,
@@ -171,7 +191,8 @@ data class VaultItemPayload(
 enum class ExpirySeverity {
     NONE,
     VALID,
-    EXPIRING_SOON, // <= 90 days remaining
+    EXPIRING_SOON, // <= warningWindowDays (default 90d)
+    CRITICAL_SOON, // <= 30 days remaining
     EXPIRED
 }
 

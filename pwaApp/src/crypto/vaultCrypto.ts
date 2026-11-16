@@ -10,11 +10,30 @@ export interface Argon2idKdfConfig {
 
 export interface SafePocketEncryptedContainer {
   magic: 'SAFEPOCKET-CONTAINER-V1';
+  appVersion?: string;
   exportedAtIso: string;
+  itemCount?: number;
+  attachmentCount?: number;
   kdf: Argon2idKdfConfig;
   ivHex: string;
   ciphertextHex: string;
   sha256Hex: string;
+}
+
+export interface BackupInspectionSummary {
+  exportedAtIso: string;
+  appVersion: string;
+  itemCount?: number;
+  attachmentCount?: number;
+  sha256Hex: string;
+  kdf: Argon2idKdfConfig;
+}
+
+export interface VaultMergeReport {
+  merged: VaultItem[];
+  addedCount: number;
+  updatedCount: number;
+  unchangedCount: number;
 }
 
 export function bytesToHex(bytes: Uint8Array): string {
@@ -407,10 +426,17 @@ export class ZeroKnowledgeVaultCrypto {
     );
     const cipherBytes = new Uint8Array(cipherBuf);
     const digestHex = await sha256Hex(cipherBytes);
+    const attachmentCount = items.reduce(
+      (sum, item) => sum + item.attachments.length,
+      0
+    );
 
     const container: SafePocketEncryptedContainer = {
       magic: 'SAFEPOCKET-CONTAINER-V1',
+      appVersion: '0.1',
       exportedAtIso,
+      itemCount: items.length,
+      attachmentCount,
       kdf,
       ivHex: bytesToHex(iv),
       ciphertextHex: bytesToHex(cipherBytes),
@@ -424,30 +450,189 @@ export class ZeroKnowledgeVaultCrypto {
     masterPassword: string,
     secretKeyFormatted: string
   ): Promise<VaultItem[]> {
-    const parsed = JSON.parse(rawJson) as SafePocketEncryptedContainer;
-    if (parsed.magic !== 'SAFEPOCKET-CONTAINER-V1') {
-      throw new Error('Invalid .safepocket container header');
-    }
-    const cipherBytes = hexToBytes(parsed.ciphertextHex);
-    const computedSha = await sha256Hex(cipherBytes);
-    if (!constantTimeHexEquals(computedSha, parsed.sha256Hex)) {
-      throw new Error('Backup integrity check failed: SHA-256 mismatch');
-    }
-    const key = await deriveTwoSecretAes256GcmKey(
-      masterPassword,
-      secretKeyFormatted,
-      parsed.kdf,
-      'safepocket-container-backup-v1'
-    );
-    const iv = hexToBytes(parsed.ivHex);
+    const summary = await inspectSafePocketContainerHeader(rawJson);
+    const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+    const cipherBytes = hexToBytes(String(parsed.ciphertextHex));
+    const iv = hexToBytes(String(parsed.ivHex));
     const aad = new TextEncoder().encode(
-      `SAFEPOCKET-CONTAINER-V1:${parsed.exportedAtIso}`
+      `SAFEPOCKET-CONTAINER-V1:${summary.exportedAtIso}`
     );
-    const plainBuf = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: iv as BufferSource, additionalData: aad, tagLength: 128 },
-      key,
-      cipherBytes as BufferSource
-    );
-    return JSON.parse(new TextDecoder().decode(plainBuf)) as VaultItem[];
+
+    const domains = ['safepocket-container-backup-v1', 'safepocket-backup-v1'];
+    let lastErr: unknown = null;
+    for (const domain of domains) {
+      try {
+        const key = await deriveTwoSecretAes256GcmKey(
+          masterPassword,
+          secretKeyFormatted,
+          summary.kdf,
+          domain
+        );
+        const plainBuf = await crypto.subtle.decrypt(
+          {
+            name: 'AES-GCM',
+            iv: iv as BufferSource,
+            additionalData: aad,
+            tagLength: 128
+          },
+          key,
+          cipherBytes as BufferSource
+        );
+        return JSON.parse(new TextDecoder().decode(plainBuf)) as VaultItem[];
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error('Backup decryption failed — verify Master Password & Secret Key');
   }
+}
+
+export async function inspectSafePocketContainerHeader(
+  rawJson: string
+): Promise<BackupInspectionSummary> {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(rawJson) as Record<string, unknown>;
+  } catch {
+    throw new Error('Invalid .safepocket file: malformed JSON');
+  }
+  if (parsed.magic !== 'SAFEPOCKET-CONTAINER-V1') {
+    throw new Error('Invalid .safepocket container header');
+  }
+  const cipherHex = String(parsed.ciphertextHex ?? '');
+  const expectedSha = String(
+    parsed.sha256Hex ?? parsed.containerSha256Hex ?? ''
+  );
+  if (!cipherHex || !expectedSha) {
+    throw new Error('Invalid .safepocket container: missing ciphertext or SHA-256');
+  }
+  const cipherBytes = hexToBytes(cipherHex);
+  const computedSha = await sha256Hex(cipherBytes);
+  if (!constantTimeHexEquals(computedSha, expectedSha)) {
+    throw new Error('Backup integrity check failed: SHA-256 mismatch');
+  }
+
+  const rawKdf = (parsed.kdf ?? parsed.kdfParams ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const kdf: Argon2idKdfConfig = {
+    memorySizeKiB: Number(rawKdf.memorySizeKiB ?? rawKdf.memoryKiB ?? 16_384),
+    iterations: Number(rawKdf.iterations ?? 3),
+    parallelism: Number(rawKdf.parallelism ?? 2),
+    saltHex: String(rawKdf.saltHex ?? '')
+  };
+  if (!kdf.saltHex) {
+    throw new Error('Invalid .safepocket container: missing Argon2id salt');
+  }
+
+  return {
+    exportedAtIso: String(parsed.exportedAtIso ?? ''),
+    appVersion: String(parsed.appVersion ?? '0.1'),
+    itemCount:
+      typeof parsed.itemCount === 'number' ? parsed.itemCount : undefined,
+    attachmentCount:
+      typeof parsed.attachmentCount === 'number'
+        ? parsed.attachmentCount
+        : undefined,
+    sha256Hex: expectedSha,
+    kdf
+  };
+}
+
+export function mergeVaultSnapshots(
+  existing: ReadonlyArray<VaultItem>,
+  incoming: ReadonlyArray<VaultItem>
+): VaultMergeReport {
+  const byId = new Map<string, VaultItem>();
+  for (const item of existing) {
+    byId.set(item.id, structuredClone(item));
+  }
+
+  let addedCount = 0;
+  let updatedCount = 0;
+  let unchangedCount = 0;
+
+  for (const inc of incoming) {
+    const current = byId.get(inc.id);
+    if (!current) {
+      byId.set(inc.id, structuredClone(inc));
+      addedCount++;
+    } else if (inc.updatedAtEpochMs > current.updatedAtEpochMs) {
+      byId.set(inc.id, structuredClone(inc));
+      updatedCount++;
+    } else {
+      unchangedCount++;
+    }
+  }
+
+  const merged = Array.from(byId.values()).sort(
+    (a, b) => b.updatedAtEpochMs - a.updatedAtEpochMs
+  );
+  return { merged, addedCount, updatedCount, unchangedCount };
+}
+
+export function formatUnencryptedVaultExport(
+  items: ReadonlyArray<VaultItem>,
+  format: 'json' | 'csv'
+): { content: string; mimeType: string; extension: 'json' | 'csv' } {
+  if (format === 'json') {
+    const sanitized = items.map((item) => ({
+      id: item.id,
+      category: item.category,
+      title: item.title,
+      subtitle: item.subtitle,
+      favorite: item.favorite,
+      pinned: Boolean(item.pinned),
+      tags: item.tags,
+      fields: item.fields.map((f) => ({
+        labelKey: f.labelKey,
+        isCustomLabel: Boolean(f.isCustomLabel),
+        value: f.value,
+        valueType: f.valueType
+      })),
+      updatedAtIso: new Date(item.updatedAtEpochMs).toISOString()
+    }));
+    return {
+      content: JSON.stringify(
+        {
+          exportedFrom: 'SafePocket v0.1',
+          exportedAtIso: new Date().toISOString(),
+          warning: 'UNENCRYPTED PLAINTEXT EXPORT — HANDLE WITH EXTREME CARE',
+          items: sanitized
+        },
+        null,
+        2
+      ),
+      mimeType: 'application/json;charset=utf-8',
+      extension: 'json'
+    };
+  }
+
+  const escCsv = (val: string) => `"${val.replaceAll('"', '""')}"`;
+  const lines = [
+    'id,category,title,subtitle,favorite,pinned,tags,fields_summary',
+    ...items.map((item) => {
+      const fieldsSummary = item.fields
+        .map((f) => `${f.labelKey}=${f.value}`)
+        .join('; ');
+      return [
+        escCsv(item.id),
+        escCsv(item.category),
+        escCsv(item.title),
+        escCsv(item.subtitle),
+        String(item.favorite),
+        String(Boolean(item.pinned)),
+        escCsv(item.tags.join('|')),
+        escCsv(fieldsSummary)
+      ].join(',');
+    })
+  ];
+  return {
+    content: lines.join('\n'),
+    mimeType: 'text/csv;charset=utf-8',
+    extension: 'csv'
+  };
 }

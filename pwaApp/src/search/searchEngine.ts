@@ -1,5 +1,10 @@
 import type { SafePocketI18n } from '../i18n/l10n';
-import type { VaultCategory, VaultItem } from '../types';
+import type {
+  ExpiryWindowDays,
+  VaultCategory,
+  VaultItem,
+  VaultSortMode
+} from '../types';
 
 const GREEK_ACCENT_MAP: Record<string, string> = {
   ά: 'α',
@@ -80,28 +85,45 @@ export function foldGreekToLatin(input: string): string {
 }
 
 export interface ExpiryComputation {
-  severity: 'none' | 'valid' | 'warning' | 'expired';
+  severity: 'none' | 'valid' | 'warning' | 'critical' | 'expired';
   daysRemaining: number;
+}
+
+export interface VaultExpirySummary {
+  expiredCount: number;
+  criticalCount: number;
+  warningCount: number;
+  totalAttentionCount: number;
+}
+
+export function parseExpiryDateUtc(rawDate: string): Date | null {
+  const raw = rawDate.trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}$/.test(raw)) {
+    const [y, m] = raw.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m, 0, 23, 59, 59));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (/^(0[1-9]|1[0-2])\/\d{2}$/.test(raw)) {
+    const [m, yy] = raw.split('/').map(Number);
+    const d = new Date(Date.UTC(2000 + yy, m, 0, 23, 59, 59));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const iso = new Date(`${raw}T23:59:59Z`);
+  return Number.isNaN(iso.getTime()) ? null : iso;
 }
 
 export function computeExpiryStatus(
   item: VaultItem,
-  referenceEpochMs = Date.now()
+  referenceEpochMs = Date.now(),
+  warningWindowDays: ExpiryWindowDays = 90
 ): ExpiryComputation {
   const expiryField = item.fields.find((f) => f.labelKey === 'field_expiry_date');
   if (!expiryField || !expiryField.value.trim()) {
     return { severity: 'none', daysRemaining: 0 };
   }
-  const raw = expiryField.value.trim();
-  let targetDate: Date;
-  if (/^\d{4}-\d{2}$/.test(raw)) {
-    const [y, m] = raw.split('-').map(Number);
-    // Last day of expiry month
-    targetDate = new Date(Date.UTC(y, m, 0, 23, 59, 59));
-  } else {
-    targetDate = new Date(`${raw}T23:59:59Z`);
-  }
-  if (Number.isNaN(targetDate.getTime())) {
+  const targetDate = parseExpiryDateUtc(expiryField.value);
+  if (!targetDate) {
     return { severity: 'none', daysRemaining: 0 };
   }
   const diffDays = Math.ceil(
@@ -110,10 +132,109 @@ export function computeExpiryStatus(
   if (diffDays < 0) {
     return { severity: 'expired', daysRemaining: diffDays };
   }
-  if (diffDays <= 90) {
+  if (diffDays <= 30) {
+    return { severity: 'critical', daysRemaining: diffDays };
+  }
+  if (diffDays <= warningWindowDays) {
     return { severity: 'warning', daysRemaining: diffDays };
   }
   return { severity: 'valid', daysRemaining: diffDays };
+}
+
+export function summarizeVaultExpiries(
+  items: ReadonlyArray<VaultItem>,
+  referenceEpochMs = Date.now(),
+  warningWindowDays: ExpiryWindowDays = 90
+): VaultExpirySummary {
+  let expiredCount = 0;
+  let criticalCount = 0;
+  let warningCount = 0;
+  for (const item of items) {
+    const res = computeExpiryStatus(item, referenceEpochMs, warningWindowDays);
+    if (res.severity === 'expired') expiredCount++;
+    else if (res.severity === 'critical') criticalCount++;
+    else if (res.severity === 'warning') warningCount++;
+  }
+  return {
+    expiredCount,
+    criticalCount,
+    warningCount,
+    totalAttentionCount: expiredCount + criticalCount + warningCount
+  };
+}
+
+export function extractVaultTags(
+  items: ReadonlyArray<VaultItem>
+): Array<{ tag: string; count: number }> {
+  const counts = new Map<string, { display: string; count: number }>();
+  for (const item of items) {
+    const seenInItem = new Set<string>();
+    for (const rawTag of item.tags) {
+      const cleaned = rawTag.trim();
+      if (!cleaned) continue;
+      const key = stripAccents(cleaned);
+      if (seenInItem.has(key)) continue;
+      seenInItem.add(key);
+      const existing = counts.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        counts.set(key, { display: cleaned, count: 1 });
+      }
+    }
+  }
+  return Array.from(counts.values())
+    .map((entry) => ({ tag: entry.display, count: entry.count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
+export function sortVaultItems(
+  items: ReadonlyArray<VaultItem>,
+  mode: VaultSortMode,
+  locale = 'en',
+  referenceEpochMs = Date.now(),
+  warningWindowDays: ExpiryWindowDays = 90
+): VaultItem[] {
+  const copy = [...items];
+  const collator = new Intl.Collator(locale, {
+    sensitivity: 'base',
+    numeric: true
+  });
+
+  copy.sort((a, b) => {
+    if (mode === 'pinned_recent') {
+      const pinDiff = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
+      if (pinDiff !== 0) return pinDiff;
+      const favDiff = Number(Boolean(b.favorite)) - Number(Boolean(a.favorite));
+      if (favDiff !== 0) return favDiff;
+      const aRec = a.lastAccessedAtEpochMs ?? a.updatedAtEpochMs;
+      const bRec = b.lastAccessedAtEpochMs ?? b.updatedAtEpochMs;
+      return bRec - aRec;
+    }
+
+    if (mode === 'alphabetical') {
+      const pinDiff = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
+      if (pinDiff !== 0) return pinDiff;
+      return collator.compare(a.title, b.title);
+    }
+
+    if (mode === 'expiring_soon') {
+      const expA = computeExpiryStatus(a, referenceEpochMs, warningWindowDays);
+      const expB = computeExpiryStatus(b, referenceEpochMs, warningWindowDays);
+      const hasA = expA.severity !== 'none';
+      const hasB = expB.severity !== 'none';
+      if (hasA !== hasB) return hasA ? -1 : 1;
+      if (hasA && hasB && expA.daysRemaining !== expB.daysRemaining) {
+        return expA.daysRemaining - expB.daysRemaining;
+      }
+      return collator.compare(a.title, b.title);
+    }
+
+    // updated_desc
+    return b.updatedAtEpochMs - a.updatedAtEpochMs;
+  });
+
+  return copy;
 }
 
 /**
@@ -128,14 +249,33 @@ export function searchVaultItems(
     category?: VaultCategory | null;
     favoritesOnly?: boolean;
     expiringOnly?: boolean;
+    tag?: string | null;
+    warningWindowDays?: ExpiryWindowDays;
+    referenceEpochMs?: number;
   } = {}
 ): VaultItem[] {
+  const normalizedTagFilter = filter.tag ? stripAccents(filter.tag.trim()) : null;
+  const windowDays = filter.warningWindowDays ?? 90;
+  const refMs = filter.referenceEpochMs ?? Date.now();
+
   const subset = items.filter((item) => {
     if (filter.category && item.category !== filter.category) return false;
     if (filter.favoritesOnly && !item.favorite) return false;
+    if (normalizedTagFilter) {
+      const hasTag = item.tags.some(
+        (t) => stripAccents(t.trim()) === normalizedTagFilter
+      );
+      if (!hasTag) return false;
+    }
     if (filter.expiringOnly) {
-      const exp = computeExpiryStatus(item);
-      if (exp.severity !== 'warning' && exp.severity !== 'expired') return false;
+      const exp = computeExpiryStatus(item, refMs, windowDays);
+      if (
+        exp.severity !== 'warning' &&
+        exp.severity !== 'critical' &&
+        exp.severity !== 'expired'
+      ) {
+        return false;
+      }
     }
     return true;
   });

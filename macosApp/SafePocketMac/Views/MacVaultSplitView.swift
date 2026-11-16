@@ -119,6 +119,10 @@ struct MacSettingsAndAboutView: View {
                         Text("Update Ready: v\(next) • SHA-256 Verified")
                             .font(.caption)
                             .foregroundStyle(.green)
+                    } else if !updater.statusText.isEmpty {
+                        Text(updater.statusText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

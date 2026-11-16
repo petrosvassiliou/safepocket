@@ -45,7 +45,24 @@ export type FieldValueType =
   | 'MULTILINE_ADDRESS'
   | 'MARKDOWN';
 
-export type CardThemePalette =
+export type BarcodeFormat = 'CODE_128' | 'EAN_13' | 'QR_CODE';
+
+export type VaultSortMode =
+  | 'pinned_recent'
+  | 'alphabetical'
+  | 'expiring_soon'
+  | 'updated_desc';
+
+export type ExpiryWindowDays = 30 | 60 | 90 | 180;
+
+export const EXPIRY_WINDOW_OPTIONS: ReadonlyArray<ExpiryWindowDays> = [
+  30,
+  60,
+  90,
+  180
+];
+
+export type PresetCardThemePalette =
   | 'obsidian_slate'
   | 'alpine_emerald'
   | 'aegean_cobalt'
@@ -59,7 +76,9 @@ export type CardThemePalette =
   | 'titanium_silver'
   | 'pearl_ivory';
 
-export const CARD_THEME_PALETTES: ReadonlyArray<CardThemePalette> = [
+export type CardThemePalette = PresetCardThemePalette | 'custom';
+
+export const CARD_THEME_PALETTES: ReadonlyArray<PresetCardThemePalette> = [
   'obsidian_slate',
   'alpine_emerald',
   'aegean_cobalt',
@@ -119,9 +138,14 @@ export interface VaultItem {
   title: string;
   subtitle: string;
   favorite: boolean;
+  pinned?: boolean;
+  lastAccessedAtEpochMs?: number;
   tags: string[];
   cardTheme?: {
     paletteId: CardThemePalette;
+    customColorHex?: string;
+    showVisualCard?: boolean;
+    barcodeFormat?: BarcodeFormat;
     networkBrand?: string;
   };
   documentSubtype?: DocumentSubtype;

@@ -45,7 +45,7 @@ class VaultPortabilityService(
                 pwBytes, salt, params.memoryKiB, params.iterations, params.parallelism
             )
             val backupKey = primitives.hkdfSha256Combine(
-                argon, secretKeyRaw, "safepocket-backup-v1".encodeToByteArray()
+                argon, secretKeyRaw, "safepocket-container-backup-v1".encodeToByteArray()
             )
             argon.fill(0)
             val plaintext = json.encodeToString(items).encodeToByteArray()
@@ -91,7 +91,7 @@ class VaultPortabilityService(
                 container.kdfParams.parallelism
             )
             val backupKey = primitives.hkdfSha256Combine(
-                argon, secretKeyRaw, "safepocket-backup-v1".encodeToByteArray()
+                argon, secretKeyRaw, "safepocket-container-backup-v1".encodeToByteArray()
             )
             argon.fill(0)
             val aad = "SAFEPOCKET-CONTAINER-V1:${container.exportedAtIso}".encodeToByteArray()
@@ -102,6 +102,20 @@ class VaultPortabilityService(
         } finally {
             pwBytes.fill(0)
         }
+    }
+
+    fun mergeSnapshots(
+        existing: List<VaultItemPayload>,
+        incoming: List<VaultItemPayload>
+    ): List<VaultItemPayload> {
+        val map = existing.associateBy { it.id }.toMutableMap()
+        for (inc in incoming) {
+            val cur = map[inc.id]
+            if (cur == null || inc.updatedAtEpochMs > cur.updatedAtEpochMs) {
+                map[inc.id] = inc
+            }
+        }
+        return map.values.sortedByDescending { it.updatedAtEpochMs }
     }
 
     /**
