@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-16T12:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:e0b25de9b9128684e050655b1258e09bc12c7dc5d86f3a157d6e047fb2a112229192e6363b3e8c225e112c1ec0d471575ddcaeb1b04f67c586f67ddcba3a5a0e",
+  "manifestSignature": "ed25519:4710b56ac5dadc90a1fad884364b4546621531dafacb4a614eabebc80dc0ca10c71d35f4800505dc9ea5c57c0a5c86ba8331e9a7e433c22404a5eba7faccbe03",
   "releaseNotes": {
     "en": "• SafePocket v0.1.2 permanent release-signed Android APK (v1+v2+v3), bundled 6-locale ARB display names & live Screenshot toggle.\n• Offline live camera scanner with Code 128B, EAN-13 & QR encoders, full-screen presentation mode, and ICAO MRZ assist.\n• Configurable expiry alerts, Pin-to-Top & tag filters, cross-vault .safepocket merge/restore, and printable Emergency Recovery Kit with QR.",
     "de": "• SafePocket v0.1.2 permanent signierte Release-APK (v1+v2+v3), gebündelte 6-Sprachen-Anzeigenamen & Live-Screenshot-Schalter.\n• Offline-Kamerascanner mit Code-128B-, EAN-13- & QR-Generator, Vollbild-Präsentationsmodus und ICAO-MRZ-Assistent.\n• Konfigurierbare Ablaufwarnungen, Anheften & Tag-Filter, .safepocket-Zusammenführung sowie druckbares Notfall-Kit mit QR-Code.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.1.2/SafePocket-v0.1.2-b3-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "7c205a3bb57dc82298d64caf8b538e116cd7a18273b7dbe59bd3ac8e6c15ddf0",
+      "sizeBytes": 36954810,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
