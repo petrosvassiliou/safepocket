@@ -121,7 +121,7 @@ jobs:
   build-macos-dmg:
     name: Build Native macOS Universal App & DMG (Apple Silicon + Intel)
     needs: build-pwa
-    runs-on: macos-15
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
