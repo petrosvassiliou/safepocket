@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-16T12:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:cdc9d37b1969464840d461fa4e1c43a9d96b19ec62deb7d7bad2327feca33bd97c7fad973442deed2364854353d59e6df89e362c7581a56fa64bce32ef46a302",
+  "manifestSignature": "ed25519:69daaa191085d1d959594c21b42ab07467ae2b89b446597a5fba79450a73ca6fe7cbc117358ea2323607d05ccb7d0165fdbf94aba7d1d5a1064c69a8ad939a0c",
   "releaseNotes": {
     "en": "• SafePocket v0.1.1 initial zero-knowledge vault release (Light default, Dark & System themes, custom card colors).\n• Offline live camera scanner with Code 128B, EAN-13 & QR encoders, full-screen presentation mode, and ICAO MRZ assist.\n• Configurable expiry alerts, Pin-to-Top & tag filters, cross-vault .safepocket merge/restore, and printable Emergency Recovery Kit with QR.",
     "de": "• SafePocket v0.1.1 erste Zero-Knowledge-Tresor-Version (Helles Standarddesign, Dunkel- & Systemdesign, eigene Kartenfarben).\n• Offline-Kamerascanner mit Code-128B-, EAN-13- & QR-Generator, Vollbild-Präsentationsmodus und ICAO-MRZ-Assistent.\n• Konfigurierbare Ablaufwarnungen, Anheften & Tag-Filter, .safepocket-Zusammenführung sowie druckbares Notfall-Kit mit QR-Code.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.1.1/SafePocket-v0.1.1-b2-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "4b6d29461bdc97617eb43af6d74a532bcb9a6b1d379940a3b8c370755c1c31a2",
+      "sizeBytes": 36908832,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",

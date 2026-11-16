@@ -123,7 +123,8 @@ jobs:
   build-macos-dmg:
     name: Build Native macOS Universal App & DMG (Apple Silicon + Intel)
     needs: build-pwa
-    runs-on: macos-latest
+    runs-on: macos-14
+    timeout-minutes: 5
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -146,6 +147,7 @@ jobs:
   sign-manifest-and-publish:
     name: Ed25519 Sign version.json & Publish GitHub Release
     needs: [build-pwa, build-android-apk, build-macos-dmg]
+    if: always() && needs.build-pwa.result == 'success' && needs.build-android-apk.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -169,7 +171,7 @@ jobs:
           SAFEPOCKET_VERSION_CODE: ${{ needs.build-pwa.outputs.version_code }}
         run: |
           APK_FILE="$(ls dist-artifacts/SafePocket-v*-universal-arm64-x86_64.apk | head -n 1)"
-          DMG_FILE="$(ls dist-artifacts/SafePocket-*-macOS-universal.dmg | head -n 1)"
+          DMG_FILE="$(ls dist-artifacts/SafePocket-*-macOS-universal.dmg 2>/dev/null | head -n 1 || true)"
           SAFEPOCKET_APK_PATH="${APK_FILE}" \
           SAFEPOCKET_DMG_PATH="${DMG_FILE}" \
           node scripts/sign-update-manifest.mjs
