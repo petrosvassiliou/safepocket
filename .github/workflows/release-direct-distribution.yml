@@ -139,7 +139,7 @@ jobs:
     name: Build Native macOS Universal App & DMG (Apple Silicon + Intel)
     needs: build-pwa
     runs-on: macos-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     continue-on-error: true
     steps:
       - name: Checkout repository

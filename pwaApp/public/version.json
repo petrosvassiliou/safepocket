@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-17T09:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:74a0620854c28050b59e4e80793fa9b72e8ce60b0fe8ec8f79d16627b4cdbe1dd0c38efeef0ac0b430ecb7a6e9a3bb2eda9b458412ac606976216da43d1c4504",
+  "manifestSignature": "ed25519:05127f0c477e0371e59d2c6f76b65fd91d57e0e0d7f73023feccbae0876e3a920460d33a9831f46e31f5a877c3134830305e7ee93b6bf434a1a5caa772be340f",
   "releaseNotes": {
     "en": "• SafePocket v0.3.3 opens Settings in a dedicated modal window from the sidebar without replacing the active detail pane.\n• Country-flag language selector directly in the main app, solid red swipe-to-delete button, complete localized display names (no raw enum or key strings), and Lock on Standby / Never Lock options.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.",
     "de": "• SafePocket v0.3.3 öffnet die Einstellungen aus der Seitenleiste in einem eigenen Modalfenster statt im rechten Detailbereich.\n• Sprachauswahl mit Länderflaggen direkt in der Haupt-App, rote Wisch-Löschschaltfläche, saubere lokalisierte Anzeigenamen sowie Sperre bei Standby / Nie sperren.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.3/SafePocket-v0.3.3-b8-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "af6650893fd0801a28153370d0c72f2cd86cdff4041225404e193d997451f41c",
+      "sizeBytes": 38187257,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.3/SafePocket-0.3.3-8-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "64eb064743b2e2fde8b65d7a4cb93696695f535c692c7d48cd19966d8c939b97",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 3171032,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
