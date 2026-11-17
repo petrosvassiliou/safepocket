@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.4').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.5').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '9');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '10');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-17T09:00:00Z',
+    publishedAt: '2026-11-17T14:15:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} opens Settings in a dedicated modal window from the sidebar without replacing the active detail pane.\n• Country-flag language selector directly in the main app, solid red swipe-to-delete button, complete localized display names (no raw enum or key strings), and Lock on Standby / Never Lock options.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.`,
-      de: `• SafePocket v${latestVersion} öffnet die Einstellungen aus der Seitenleiste in einem eigenen Modalfenster statt im rechten Detailbereich.\n• Sprachauswahl mit Länderflaggen direkt in der Haupt-App, rote Wisch-Löschschaltfläche, saubere lokalisierte Anzeigenamen sowie Sperre bei Standby / Nie sperren.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.`,
-      it: `• SafePocket v${latestVersion} apre le Impostazioni dalla barra laterale in una finestra modale dedicata senza sostituire il pannello dettagli.\n• Selettore lingua con bandiere nell'app principale, pulsante Elimina rosso allo scorrimento, nomi localizzati completi e opzioni Blocca in standby / Mai.\n• Piena parità multipiattaforma su macOS, Android / Googlebook OS e ChromeOS / Web PWA.`,
-      fr: `• SafePocket v${latestVersion} ouvre les Paramètres depuis la barre latérale dans une fenêtre modale dédiée sans remplacer le panneau de détails.\n• Sélecteur de langue avec drapeaux dans l'application principale, bouton Supprimer rouge au balayage, libellés localisés complets et options Verrouiller en veille / Jamais.\n• Parité complète sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.`,
-      es: `• SafePocket v${latestVersion} abre Ajustes desde la barra lateral en una ventana modal dedicada sin reemplazar el panel de detalles.\n• Selector de idioma con banderas en la aplicación principal, botón Eliminar en rojo al deslizar, nombres mostrados totalmente localizados y opciones Bloquear en suspensión / Nunca.\n• Paridad total entre macOS, Android / Googlebook OS y ChromeOS / Web PWA.`,
-      el: `• Το SafePocket v${latestVersion} ανοίγει τις Ρυθμίσεις από την πλαϊνή μπάρα σε ξεχωριστό modal παράθυρο χωρίς να αντικαθιστά την προβολή λεπτομερειών.\n• Επιλογέας γλώσσας με σημαίες στην κύρια εφαρμογή, κόκκινο κουμπί Διαγραφής κατά την κύλιση, πλήρως μεταφρασμένα ονόματα εμφάνισης και επιλογές Κλείδωμα σε αναμονή / Ποτέ.\n• Πλήρης ισοτιμία σε macOS, Android / Googlebook OS και ChromeOS / Web PWA.`
+      en: `• SafePocket v${latestVersion} refines 3-column UI alignment across sidebar, toolbar, list, and inspector field cards.\n• Moves the Cloud-Sync status into a compact, unobtrusive bottom status bar so it never overlaps vault fields or buttons.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.`,
+      de: `• SafePocket v${latestVersion} verbessert die 3-Spalten-UI-Ausrichtung über Seitenleiste, Symbolleiste, Eintragsliste und Detailfelder hinweg.\n• Kompakter, dezenter Cloud-Sync-Status in einer eigenen unteren Statusleiste mit klarem Abstand zum Inhalt.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.`,
+      it: `• SafePocket v${latestVersion} perfeziona l'allineamento UI a 3 colonne tra barra laterale, barra superiore, elenco e schede campi.\n• Stato Cloud-Sync compatto in una barra di stato inferiore dedicata senza mai sovrapporsi ai contenuti.\n• Piena parità multipiattaforma su macOS, Android / Googlebook OS e ChromeOS / Web PWA.`,
+      fr: `• SafePocket v${latestVersion} affine l'alignement de l'interface à 3 colonnes entre barre latérale, barre d'outils, liste et champs.\n• Indicateur Cloud-Sync compact intégré dans une barre d'état inférieure dédiée sans jamais chevaucher le contenu.\n• Parité complète sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.`,
+      es: `• SafePocket v${latestVersion} perfecciona la alineación de la interfaz de 3 columnas en barra lateral, barra superior, lista y tarjetas.\n• Indicador Cloud-Sync compacto en una barra de estado inferior dedicada sin superponerse nunca al contenido.\n• Paridad total entre macOS, Android / Googlebook OS y ChromeOS / Web PWA.`,
+      el: `• Το SafePocket v${latestVersion} βελτιώνει τη στοίχιση του 3-στήλου περιβάλλοντος σε πλαϊνή μπάρα, εργαλειοθήκη, λίστα και πεδία.\n• Συμπαγής ένδειξη Cloud-Sync σε διακριτή κάτω γραμμή κατάστασης χωρίς επικάλυψη περιεχομένου.\n• Πλήρης ισοτιμία σε macOS, Android / Googlebook OS και ChromeOS / Web PWA.`
     },
     artifacts: {
       'android-universal': {

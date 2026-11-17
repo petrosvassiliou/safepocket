@@ -299,9 +299,9 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.4 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.4');
-    expect(APP_BUILD_INFO.versionCode).toBe(9);
+  it('7. Cross-Platform v0.3.5 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.5');
+    expect(APP_BUILD_INFO.versionCode).toBe(10);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -327,7 +327,8 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
     expect(androidShell).toContain('PointerEventType.Press');
     expect(androidShell).toContain('isSecondaryPressed');
     expect(androidShell).toContain('onDeleteAllExampleData');
-    expect(androidShell).toContain('Alignment.BottomEnd');
+    expect(androidShell).toContain('BottomRightSyncStatusPill');
+    expect(androidShell).toContain('Arrangement.End');
 
     const androidSmartFields = fs.readFileSync(
       path.join(
@@ -375,7 +376,7 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.4 (Build 9)');
+    expect(macApp).toContain('SafePocket v0.3.5 (Build 10)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
@@ -720,5 +721,55 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
     expect(monitor.handleSystemStandbyEvent()).toBe(false);
     expect(lockCount).toBe(1);
     monitor.stop();
+  });
+
+  it('12. v0.3.5 Crisp 3-Column UI Alignment & Compact Non-Overlapping Bottom Cloud-Sync Status Bar', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const macApp = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const pwaShell = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/ui/appShell.ts'),
+      'utf-8'
+    );
+    const pwaCss = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/styles/m3-expressive.css'),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+
+    // 1) macOS unified compact toolbar + native root List sidebar/list + safeAreaInset non-overlapping status bar
+    expect(macApp).toContain('.windowToolbarStyle(.unifiedCompact(showsTitle: true))');
+    expect(macApp).toContain('var selectedCategoryTitle: String');
+    expect(macApp).toContain('var cloudProviderDisplayName: String');
+    expect(macSplit).not.toContain('ZStack(alignment: .bottomTrailing)');
+    expect(macSplit).not.toContain('Section(vaultState.t("app_name"))');
+    expect(macSplit).toContain('.navigationTitle(vaultState.selectedCategoryTitle)');
+    expect(macSplit).toContain('macBottomStatusFooter');
+    expect(macSplit).toContain('.font(.system(size: 10.5, weight: .medium))');
+
+    // 2) PWA dedicated non-overlapping bottom status bar + compact 10.5px pill + aligned 34px toolbar controls
+    expect(pwaShell).toContain('class="sp-bottom-status-bar"');
+    expect(pwaShell).toContain("? 'Google Drive'");
+    expect(pwaCss).toContain('.sp-bottom-status-bar');
+    expect(pwaCss).toContain('position: static;');
+    expect(pwaCss).toContain('font-size: 10.5px;');
+    expect(pwaCss).toContain('min-height: 34px;');
+
+    // 3) Android dedicated non-overlapping bottom status bar + compact 10.5.sp zero-shadow status pill
+    expect(androidShell).not.toContain('.align(Alignment.BottomEnd)');
+    expect(androidShell).toContain('fontSize = 10.5.sp');
+    expect(androidShell).toContain('shadowElevation = 0.dp');
   });
 });

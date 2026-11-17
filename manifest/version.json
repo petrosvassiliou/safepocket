@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
-  "latestVersion": "0.3.4",
-  "versionCode": 9,
+  "latestVersion": "0.3.5",
+  "versionCode": 10,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-17T09:00:00Z",
+  "publishedAt": "2026-11-17T14:15:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:4bb7f111ae2cb3d79351b08d5d87fa2090ac72cb7850d36652e4c7a792a7a8de37da3006b86e7f61aa95fc43dd1babf97b2d0f6e986660690949a3bde6166d03",
+  "manifestSignature": "ed25519:a3ebf9971a3cc5534114908c20c3eb97ef987af21dac8d56c96a8484e341d87bab779d06a6a63fe4521d681b277f3327c20b635eb2c7a1f45e84255bec85ff03",
   "releaseNotes": {
-    "en": "• SafePocket v0.3.4 opens Settings in a dedicated modal window from the sidebar without replacing the active detail pane.\n• Country-flag language selector directly in the main app, solid red swipe-to-delete button, complete localized display names (no raw enum or key strings), and Lock on Standby / Never Lock options.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.",
-    "de": "• SafePocket v0.3.4 öffnet die Einstellungen aus der Seitenleiste in einem eigenen Modalfenster statt im rechten Detailbereich.\n• Sprachauswahl mit Länderflaggen direkt in der Haupt-App, rote Wisch-Löschschaltfläche, saubere lokalisierte Anzeigenamen sowie Sperre bei Standby / Nie sperren.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.",
-    "it": "• SafePocket v0.3.4 apre le Impostazioni dalla barra laterale in una finestra modale dedicata senza sostituire il pannello dettagli.\n• Selettore lingua con bandiere nell'app principale, pulsante Elimina rosso allo scorrimento, nomi localizzati completi e opzioni Blocca in standby / Mai.\n• Piena parità multipiattaforma su macOS, Android / Googlebook OS e ChromeOS / Web PWA.",
-    "fr": "• SafePocket v0.3.4 ouvre les Paramètres depuis la barre latérale dans une fenêtre modale dédiée sans remplacer le panneau de détails.\n• Sélecteur de langue avec drapeaux dans l'application principale, bouton Supprimer rouge au balayage, libellés localisés complets et options Verrouiller en veille / Jamais.\n• Parité complète sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.",
-    "es": "• SafePocket v0.3.4 abre Ajustes desde la barra lateral en una ventana modal dedicada sin reemplazar el panel de detalles.\n• Selector de idioma con banderas en la aplicación principal, botón Eliminar en rojo al deslizar, nombres mostrados totalmente localizados y opciones Bloquear en suspensión / Nunca.\n• Paridad total entre macOS, Android / Googlebook OS y ChromeOS / Web PWA.",
-    "el": "• Το SafePocket v0.3.4 ανοίγει τις Ρυθμίσεις από την πλαϊνή μπάρα σε ξεχωριστό modal παράθυρο χωρίς να αντικαθιστά την προβολή λεπτομερειών.\n• Επιλογέας γλώσσας με σημαίες στην κύρια εφαρμογή, κόκκινο κουμπί Διαγραφής κατά την κύλιση, πλήρως μεταφρασμένα ονόματα εμφάνισης και επιλογές Κλείδωμα σε αναμονή / Ποτέ.\n• Πλήρης ισοτιμία σε macOS, Android / Googlebook OS και ChromeOS / Web PWA."
+    "en": "• SafePocket v0.3.5 refines 3-column UI alignment across sidebar, toolbar, list, and inspector field cards.\n• Moves the Cloud-Sync status into a compact, unobtrusive bottom status bar so it never overlaps vault fields or buttons.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.",
+    "de": "• SafePocket v0.3.5 verbessert die 3-Spalten-UI-Ausrichtung über Seitenleiste, Symbolleiste, Eintragsliste und Detailfelder hinweg.\n• Kompakter, dezenter Cloud-Sync-Status in einer eigenen unteren Statusleiste mit klarem Abstand zum Inhalt.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.",
+    "it": "• SafePocket v0.3.5 perfeziona l'allineamento UI a 3 colonne tra barra laterale, barra superiore, elenco e schede campi.\n• Stato Cloud-Sync compatto in una barra di stato inferiore dedicata senza mai sovrapporsi ai contenuti.\n• Piena parità multipiattaforma su macOS, Android / Googlebook OS e ChromeOS / Web PWA.",
+    "fr": "• SafePocket v0.3.5 affine l'alignement de l'interface à 3 colonnes entre barre latérale, barre d'outils, liste et champs.\n• Indicateur Cloud-Sync compact intégré dans une barre d'état inférieure dédiée sans jamais chevaucher le contenu.\n• Parité complète sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.",
+    "es": "• SafePocket v0.3.5 perfecciona la alineación de la interfaz de 3 columnas en barra lateral, barra superior, lista y tarjetas.\n• Indicador Cloud-Sync compacto en una barra de estado inferior dedicada sin superponerse nunca al contenido.\n• Paridad total entre macOS, Android / Googlebook OS y ChromeOS / Web PWA.",
+    "el": "• Το SafePocket v0.3.5 βελτιώνει τη στοίχιση του 3-στήλου περιβάλλοντος σε πλαϊνή μπάρα, εργαλειοθήκη, λίστα και πεδία.\n• Συμπαγής ένδειξη Cloud-Sync σε διακριτή κάτω γραμμή κατάστασης χωρίς επικάλυψη περιεχομένου.\n• Πλήρης ισοτιμία σε macOS, Android / Googlebook OS και ChromeOS / Web PWA."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.4/SafePocket-v0.3.4-b9-universal-arm64-x86_64.apk",
-      "sha256": "51799287dc546c705dfc8c02c677d2430b9ef5b558c5bd7284fe236f203a1816",
-      "sizeBytes": 38187252,
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.5/SafePocket-v0.3.5-b10-universal-arm64-x86_64.apk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 18432960,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -34,17 +34,17 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.4/SafePocket-0.3.4-9-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.5/SafePocket-0.3.5-10-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "6688911f581f1350ac5a8f9fd5364c80e812409603bed655ba25b027f915ac02",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 3102118,
+      "sizeBytes": 14208512,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "295e0675a4567e5f88de8b5c0f7974d57ee05ec2228153557d07a01ddd1a548e",
+      "sha256": "1765ee7fc02c8c8bd1ffde7070d21ac6e06ffe3f88b910a52c739a66b479a0e2",
       "sizeBytes": 2709
     }
   }

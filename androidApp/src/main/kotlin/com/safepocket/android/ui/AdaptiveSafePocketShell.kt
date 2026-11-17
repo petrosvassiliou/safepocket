@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.safepocket.android.R
 import com.safepocket.android.data.BidirectionalSyncReport
@@ -358,13 +359,13 @@ fun AdaptiveSafePocketShell(
                                             Row(modifier = Modifier.fillMaxSize()) {
                                                 PermanentDrawerSheet(
                                                     modifier = Modifier
-                                                        .width(276.dp)
+                                                        .width(272.dp)
                                                         .fillMaxHeight()
                                                 ) {
                                                     Column(
                                                         modifier = Modifier
                                                             .fillMaxSize()
-                                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                                            .padding(horizontal = 14.dp, vertical = 16.dp),
                                                         verticalArrangement = Arrangement.SpaceBetween
                                                     ) {
                                                         Column(
@@ -375,7 +376,7 @@ fun AdaptiveSafePocketShell(
                                                         ) {
                                                             // Crisp Studio App Icon + SafePocket Title
                                                             BrandHeaderRow(title = i18n.t("app_name"))
-                                                            Spacer(Modifier.height(4.dp))
+                                                            Spacer(Modifier.height(6.dp))
                                                             CategoryDrawerDestinations(
                                                                 i18n = i18n,
                                                                 selectedCategory = selectedCategory,
@@ -385,9 +386,6 @@ fun AdaptiveSafePocketShell(
                                                             )
                                                         }
 
-                                                        // Fixed Non-Truncated Sidebar Footer:
-                                                        // Row 1: Full-width Settings button (opens modal dialog)
-                                                        // Row 2: Theme Toggle + Flag Language Selector + Lock + Version
                                                         Column(
                                                             modifier = Modifier.padding(top = 8.dp),
                                                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -432,7 +430,7 @@ fun AdaptiveSafePocketShell(
                                                     modifier = Modifier
                                                         .width(356.dp)
                                                         .fillMaxHeight()
-                                                        .padding(12.dp),
+                                                        .padding(horizontal = 14.dp, vertical = 16.dp),
                                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                                 ) {
                                                     SearchAndCreateHeader(
@@ -465,7 +463,7 @@ fun AdaptiveSafePocketShell(
                                                     )
                                                 }
 
-                                                // Column 3: Detail Inspector (with bottom clearance for Sync Status Pill)
+                                                // Column 3: Detail Inspector (dedicated bottom status bar sits outside below)
                                                 Box(
                                                     modifier = Modifier
                                                         .weight(1f)
@@ -479,7 +477,7 @@ fun AdaptiveSafePocketShell(
                                                                 }
                                                             }
                                                         )
-                                                        .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 52.dp)
+                                                        .padding(horizontal = 24.dp, vertical = 20.dp)
                                                 ) {
                                                     VaultDetailInspectorPane(
                                                         i18n = i18n,
@@ -783,28 +781,33 @@ fun AdaptiveSafePocketShell(
                                             }
                                         }
                                     }
+                                }
+                            }
 
-                                    // Persistent Bottom-Right Sync Status Pill on Tablet/Foldable/Desktop (`widthDp >= 600`)
-                                    if (widthDp >= 600) {
-                                        Box(
-                                            modifier = Modifier
-                                                .align(Alignment.BottomEnd)
-                                                .padding(end = 16.dp, bottom = 12.dp)
-                                        ) {
-                                            BottomRightSyncStatusPill(
-                                                i18n = i18n,
-                                                snapshot = syncIndicator,
-                                                onClick = {
-                                                    if (syncIndicator.storageMode == VaultStorageMode.CLOUD_SYNC) {
-                                                        coroutineScope.launch {
-                                                            runCatching { onSyncNow() }.onFailure { onOpenSettings() }
-                                                        }
-                                                    } else {
-                                                        onOpenSettings()
+                            // Dedicated Non-Overlapping Slim Bottom Status Bar on Tablet/Foldable/Desktop (`widthDp >= 600`)
+                            if (!isVaultLocked && widthDp >= 600) {
+                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                                Surface(color = MaterialTheme.colorScheme.surface) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        BottomRightSyncStatusPill(
+                                            i18n = i18n,
+                                            snapshot = syncIndicator,
+                                            onClick = {
+                                                if (syncIndicator.storageMode == VaultStorageMode.CLOUD_SYNC) {
+                                                    coroutineScope.launch {
+                                                        runCatching { onSyncNow() }.onFailure { onOpenSettings() }
                                                     }
+                                                } else {
+                                                    onOpenSettings()
                                                 }
-                                            )
-                                        }
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -1005,57 +1008,52 @@ private fun BottomRightSyncStatusPill(
     snapshot: SyncIndicatorSnapshot,
     onClick: () -> Unit
 ) {
-    val (icon, label, dotColor) = when (snapshot.status) {
-        SyncBadgeStatus.LOCAL_ONLY -> Triple(
-            "💾",
+    val (label, dotColor) = when (snapshot.status) {
+        SyncBadgeStatus.LOCAL_ONLY -> Pair(
             i18n.t("sync_pill_local_only"),
             Color(0xFF0A8F6A)
         )
-        SyncBadgeStatus.CLOUD_SYNCED -> Triple(
-            "☁",
-            i18n.t("sync_pill_cloud_synced", mapOf("detail" to "Live")),
+        SyncBadgeStatus.CLOUD_SYNCED -> Pair(
+            i18n.t("sync_pill_cloud_synced", mapOf("detail" to "Firebase")),
             Color(0xFF0A8F6A)
         )
-        SyncBadgeStatus.SYNCING -> Triple(
-            "↻",
+        SyncBadgeStatus.SYNCING -> Pair(
             i18n.t("sync_pill_syncing"),
             Color(0xFF2563EB)
         )
-        SyncBadgeStatus.CLOUD_OFFLINE_ARMED -> Triple(
-            "⚡",
+        SyncBadgeStatus.CLOUD_OFFLINE_ARMED -> Pair(
             i18n.t("sync_pill_cloud_offline_armed", mapOf("queued" to snapshot.queuedMutationCount)),
             Color(0xFFD97706)
         )
-        SyncBadgeStatus.SYNC_ERROR -> Triple(
-            "⚠",
+        SyncBadgeStatus.SYNC_ERROR -> Pair(
             i18n.t("sync_pill_error"),
             MaterialTheme.colorScheme.error
         )
     }
 
     Surface(
-        tonalElevation = 4.dp,
-        shadowElevation = 3.dp,
+        tonalElevation = 1.dp,
+        shadowElevation = 0.dp,
         shape = RoundedCornerShape(999.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f)
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
     ) {
         SmoothTextButton(
             onClick = onClick,
             shape = RoundedCornerShape(999.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 3.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(8.dp)
+                    .size(6.dp)
                     .clip(CircleShape)
                     .background(dotColor)
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(5.dp))
             Text(
-                text = "$icon $label",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
+                text = label,
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

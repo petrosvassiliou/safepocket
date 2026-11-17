@@ -1726,12 +1726,16 @@ export class SafePocketAppShell {
     const snap = this.syncCoordinator.indicatorSnapshot;
     let dotClass = 'is-local';
     let label = this.i18n.t('sync_pill_local_only');
+    const providerDisplay =
+      this.syncCoordinator.cloudService === 'GDRIVE_APPDATA'
+        ? 'Google Drive'
+        : 'Firebase';
 
     if (snap.phase === 'SYNCING') {
       dotClass = 'is-syncing';
       label = this.i18n.t('sync_pill_syncing');
     } else if (snap.phase === 'SYNC_ATTENTION') {
-      dotClass = 'is-error';
+      dotClass = 'is-attention';
       label = this.i18n.t('sync_pill_error');
     } else if (snap.phase === 'CLOUD_OFFLINE_READY') {
       dotClass = 'is-offline';
@@ -1739,23 +1743,25 @@ export class SafePocketAppShell {
         queued: snap.queuedMutationsCount
       });
     } else if (snap.phase === 'CLOUD_SYNCED') {
-      dotClass = 'is-cloud';
+      dotClass = 'is-synced';
       label = this.i18n.t('sync_pill_cloud_synced', {
-        detail: this.syncCoordinator.cloudService
+        detail: providerDisplay
       });
     }
 
     return `
-      <button
-        type="button"
-        id="sp-sync-status-pill"
-        class="sp-sync-status-pill"
-        title="${this.escape(snap.lastError || label)}"
-        aria-label="${this.escape(label)}"
-      >
-        <span class="sp-sync-dot ${dotClass}" aria-hidden="true"></span>
-        <span>${this.escape(label)}</span>
-      </button>
+      <div class="sp-bottom-status-bar" role="status">
+        <button
+          type="button"
+          id="sp-sync-status-pill"
+          class="sp-sync-status-pill"
+          title="${this.escape(snap.lastError || label)}"
+          aria-label="${this.escape(label)}"
+        >
+          <span class="sp-sync-status-dot ${dotClass}" aria-hidden="true"></span>
+          <span>${this.escape(label)}</span>
+        </button>
+      </div>
     `;
   }
 

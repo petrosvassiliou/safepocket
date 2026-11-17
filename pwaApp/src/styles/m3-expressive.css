@@ -224,7 +224,7 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 18px 14px 14px;
+  padding: 16px 14px 12px;
   overflow-y: auto;
 }
 
@@ -233,7 +233,7 @@ body {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 4px 8px 16px;
+  padding: 0 6px 14px;
 }
 
 .sp-brand-left {
@@ -1357,9 +1357,10 @@ body {
   border: 1px solid var(--border-subtle);
   color: var(--text-primary);
   border-radius: var(--radius-sm);
-  padding: 5px 8px;
+  min-height: 34px;
+  padding: 6px 10px;
   font: inherit;
-  font-size: 11.8px;
+  font-size: 12px;
   font-weight: 550;
   cursor: pointer;
   max-width: 158px;
@@ -1619,41 +1620,52 @@ body {
   display: none !important;
 }
 
-/* Persistent Bottom-Right Sync Status Pill */
+/* Dedicated Slim Non-Overlapping Bottom Status Bar & Compact Sync Status Pill */
+.sp-bottom-status-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 18px;
+  min-height: 28px;
+  background: var(--bg-sidebar);
+  border-top: 1px solid var(--border-subtle);
+  z-index: 20;
+}
+
 .sp-sync-status-pill {
-  position: fixed;
-  right: 18px;
-  bottom: 16px;
-  z-index: 750;
+  position: static;
   appearance: none;
-  border: 1px solid var(--border-strong);
-  background-color: var(--surface-elevated);
-  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--surface-card);
+  color: var(--text-secondary);
   border-radius: var(--radius-pill);
-  padding: 6px 13px;
+  padding: 2px 9px;
+  min-height: 22px;
   font: inherit;
-  font-size: 11.8px;
-  font-weight: 620;
+  font-size: 10.5px;
+  font-weight: 520;
+  line-height: 1.3;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
+  gap: 6px;
+  box-shadow: none;
   transition:
     background-color 150ms cubic-bezier(0.2, 0, 0, 1),
     border-color 150ms cubic-bezier(0.2, 0, 0, 1),
-    transform 120ms cubic-bezier(0.2, 0, 0, 1);
+    color 150ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .sp-sync-status-pill:hover {
   background-color: var(--surface-card-hover);
-  border-color: var(--accent-primary);
-  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
 }
 
 .sp-sync-status-dot {
-  width: 8px;
-  height: 8px;
+  width: 6.5px;
+  height: 6.5px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -1679,9 +1691,9 @@ body {
 }
 
 @media (max-width: 639px) {
-  .sp-sync-status-pill {
-    bottom: 64px;
-    right: 12px;
+  .sp-bottom-status-bar {
+    padding: 3px 12px;
+    min-height: 24px;
   }
 }
 

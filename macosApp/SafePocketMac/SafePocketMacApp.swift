@@ -69,7 +69,7 @@ struct SafePocketMacApp: App {
                     await updater.performAutomaticStartupCheckIfEnabled()
                 }
         }
-        .windowToolbarStyle(.unified(showsTitle: true))
+        .windowToolbarStyle(.unifiedCompact(showsTitle: true))
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button(vaultState.t("nav_settings") + "…") {
@@ -142,9 +142,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3.4"
-    let currentVersionCode = 9
-    let currentVersionDisplay = "SafePocket v0.3.4 (Build 9)"
+    let currentVersionName = "0.3.5"
+    let currentVersionCode = 10
+    let currentVersionDisplay = "SafePocket v0.3.5 (Build 10)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -557,6 +557,28 @@ final class MacVaultViewModel: ObservableObject {
         i18n.resolveDisplaySubtitle(subtitle: entry.subtitle, category: entry.category, localeCode: localeOverrideCode)
     }
 
+    var selectedCategoryTitle: String {
+        switch selectedCategory {
+        case "all": return t("nav_all_items")
+        case "favorites": return t("nav_favorites")
+        case "PAYMENT_CARD": return t("category_payment_card")
+        case "BANK_ACCOUNT": return t("category_bank_account")
+        case "INSURANCE_CARD": return t("category_insurance_card")
+        case "MEMBERSHIP_CARD": return t("category_membership_card")
+        case "IDENTITY": return t("category_identity")
+        case "OFFICIAL_DOCUMENT": return t("category_official_document")
+        case "SECURE_NOTE": return t("category_secure_note")
+        default: return t("nav_all_items")
+        }
+    }
+
+    var cloudProviderDisplayName: String {
+        switch cloudProvider {
+        case .firebase: return "Firebase"
+        case .googleDrive: return "Google Drive"
+        }
+    }
+
     var sampleEntriesCount: Int {
         entries.filter(\.isSampleItem).count
     }
@@ -576,7 +598,7 @@ final class MacVaultViewModel: ObservableObject {
             return t("sync_pill_local_only")
         case .cloudSync:
             if !isCloudAuthenticated {
-                return "Cloud Sync • \(t("cloud_auth_signin_btn"))"
+                return "Cloud Sync · \(t("cloud_auth_signin_btn"))"
             }
             if isReconcilingCloud {
                 return t("sync_pill_syncing")
@@ -584,7 +606,7 @@ final class MacVaultViewModel: ObservableObject {
             if !isNetworkOnline || !pendingOfflineOutboxIds.isEmpty {
                 return t("sync_pill_cloud_offline_armed", ["queued": String(pendingOfflineOutboxIds.count)])
             }
-            return t("sync_pill_cloud_synced", ["detail": cloudProvider.rawValue])
+            return t("sync_pill_cloud_synced", ["detail": cloudProviderDisplayName])
         }
     }
 

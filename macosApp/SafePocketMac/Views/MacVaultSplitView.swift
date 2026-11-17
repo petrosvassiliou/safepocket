@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.3 (Build 8) with 100% Cross-Platform Parity.
+/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.5 (Build 10) with 100% Cross-Platform Parity.
 struct MacVaultSplitView: View {
     @ObservedObject var vaultState: MacVaultViewModel
     @ObservedObject var updater: MacSparkleUpdateController
@@ -20,7 +20,7 @@ struct MacVaultSplitView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        Group {
             if vaultState.isLocked {
                 macLockedOverlay
             } else {
@@ -31,6 +31,7 @@ struct MacVaultSplitView: View {
                 } detail: {
                     detailContent
                 }
+                .navigationSplitViewStyle(.balanced)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
                         MacFlagLanguageMenu(vaultState: vaultState)
@@ -54,29 +55,6 @@ struct MacVaultSplitView: View {
                         }
                     }
                 }
-
-                // Persistent Bottom-Right Sync Status Pill
-                Button {
-                    if vaultState.storageMode == .cloudSync && vaultState.isCloudAuthenticated {
-                        Task { await vaultState.reconcileCloudSessionAutomatically() }
-                    } else {
-                        vaultState.presentSettingsSheet = true
-                    }
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: vaultState.syncPillSystemImage)
-                            .foregroundStyle(vaultState.storageMode == .cloudSync ? (vaultState.isCloudAuthenticated ? .green : .orange) : vaultState.materialAccent.swiftUIColor)
-                        Text(vaultState.syncPillLabel)
-                            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
-                }
-                .buttonStyle(.plain)
-                .padding(16)
             }
         }
         .sheet(isPresented: $vaultState.presentSettingsSheet) {
@@ -162,317 +140,409 @@ struct MacVaultSplitView: View {
         .background(.ultraThinMaterial)
     }
 
-    // MARK: - Column 1: Localized Sidebar (Settings Opens Modal Window)
+    // MARK: - Column 1: Native AppKit-Aligned Sidebar (Root List + SafeAreaInset Footer)
 
     private var sidebarContent: some View {
-        VStack(spacing: 0) {
-            List(selection: $vaultState.selectedCategory) {
-                Section(vaultState.t("app_name")) {
-                    Label("\(vaultState.t("nav_all_items")) (\(vaultState.entries.count))", systemImage: "tray.full")
-                        .tag("all")
-                    Label(vaultState.t("nav_favorites"), systemImage: "star")
-                        .tag("favorites")
-                }
-                Section {
-                    Label(vaultState.t("category_payment_card"), systemImage: "creditcard")
-                        .tag("PAYMENT_CARD")
-                    Label(vaultState.t("category_bank_account"), systemImage: "building.columns")
-                        .tag("BANK_ACCOUNT")
-                    Label(vaultState.t("category_insurance_card"), systemImage: "cross.case")
-                        .tag("INSURANCE_CARD")
-                    Label(vaultState.t("category_membership_card"), systemImage: "person.crop.rectangle.stack")
-                        .tag("MEMBERSHIP_CARD")
-                    Label(vaultState.t("category_identity"), systemImage: "person.text.rectangle")
-                        .tag("IDENTITY")
-                    Label(vaultState.t("category_official_document"), systemImage: "doc.badge.gearshape")
-                        .tag("OFFICIAL_DOCUMENT")
-                    Label(vaultState.t("category_secure_note"), systemImage: "lock.doc")
-                        .tag("SECURE_NOTE")
-                }
+        List(selection: $vaultState.selectedCategory) {
+            Section {
+                Label(vaultState.t("nav_all_items"), systemImage: "tray.full")
+                    .badge(vaultState.entries.count)
+                    .tag("all")
+                Label(vaultState.t("nav_favorites"), systemImage: "star")
+                    .tag("favorites")
             }
-            .listStyle(.sidebar)
-
-            Divider()
-
+            Section {
+                Label(vaultState.t("category_payment_card"), systemImage: "creditcard")
+                    .tag("PAYMENT_CARD")
+                Label(vaultState.t("category_bank_account"), systemImage: "building.columns")
+                    .tag("BANK_ACCOUNT")
+                Label(vaultState.t("category_insurance_card"), systemImage: "cross.case")
+                    .tag("INSURANCE_CARD")
+                Label(vaultState.t("category_membership_card"), systemImage: "person.crop.rectangle.stack")
+                    .tag("MEMBERSHIP_CARD")
+                Label(vaultState.t("category_identity"), systemImage: "person.text.rectangle")
+                    .tag("IDENTITY")
+                Label(vaultState.t("category_official_document"), systemImage: "doc.badge.gearshape")
+                    .tag("OFFICIAL_DOCUMENT")
+                Label(vaultState.t("category_secure_note"), systemImage: "lock.doc")
+                    .tag("SECURE_NOTE")
+            }
+        }
+        .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
+                Divider()
                 HStack(spacing: 6) {
                     Button {
                         cycleTheme()
                     } label: {
                         Image(systemName: themeMode == "dark" ? "moon.stars.fill" : (themeMode == "system" ? "circle.lefthalf.filled" : "sun.max.fill"))
+                            .frame(width: 18)
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .help(vaultState.t("settings_theme_title"))
 
                     MacFlagLanguageMenu(vaultState: vaultState)
+                        .controlSize(.small)
+
+                    Spacer(minLength: 2)
 
                     Button {
                         vaultState.lockVault()
                     } label: {
                         Label(vaultState.t("action_lock_vault"), systemImage: "lock.fill")
                             .lineLimit(1)
-                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
+                .padding(.horizontal, 14)
 
-                HStack {
+                HStack(spacing: 5) {
                     Image(systemName: "checkmark.shield.fill")
                         .foregroundStyle(.secondary)
-                        .imageScale(.small)
+                        .font(.system(size: 10))
                     Text(updater.currentVersionDisplay)
-                        .font(.caption2)
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                     Spacer()
                 }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .background(.bar)
         }
-        .background(.ultraThinMaterial)
-        .navigationSplitViewColumnWidth(min: 235, ideal: 260, max: 320)
+        .navigationSplitViewColumnWidth(min: 230, ideal: 252, max: 310)
     }
 
-    // MARK: - Column 2: Vault List with Swipe Actions, Context Menus & Expiry Badges
+    // MARK: - Column 2: Native Inset Vault List with Aligned Toolbar Title & Banners
+
+    private var hasListTopBanners: Bool {
+        vaultState.lastErrorBanner != nil || vaultState.statusNotice != nil || vaultState.sampleEntriesCount > 0
+    }
 
     private var vaultListContent: some View {
-        VStack(spacing: 0) {
-            if let err = vaultState.lastErrorBanner {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(err)
-                        .font(.caption)
-                        .lineLimit(2)
-                    Spacer()
-                    Button("✕") {
-                        vaultState.lastErrorBanner = nil
+        List(selection: $vaultState.selectedEntryId) {
+            ForEach(vaultState.filteredEntries) { entry in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if entry.pinned {
+                            Image(systemName: "pin.fill")
+                                .font(.caption2)
+                                .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                        }
+                        if entry.favorite {
+                            Image(systemName: "star.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.yellow)
+                        }
+                        Text(entry.title)
+                            .font(.body.weight(.semibold))
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        if let days = entry.daysUntilExpiry(), days <= vaultState.expiryWindowDays {
+                            Text(days < 0 ? vaultState.t("badge_expired") : "\(days)d")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background((days < 0 ? Color.red : Color.orange).opacity(0.18), in: Capsule())
+                                .foregroundStyle(days < 0 ? .red : .orange)
+                        }
                     }
-                    .buttonStyle(.plain)
-                }
-                .padding(8)
-                .background(Color.orange.opacity(0.14))
-            }
-
-            if let notice = vaultState.statusNotice {
-                HStack(spacing: 8) {
-                    Text(notice)
+                    Text(vaultState.displaySubtitle(for: entry))
                         .font(.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Spacer()
-                    Button("✕") {
-                        vaultState.statusNotice = nil
-                    }
-                    .buttonStyle(.plain)
                 }
-                .padding(8)
-                .background(vaultState.materialAccent.swiftUIColor.opacity(0.12))
-            }
-
-            if vaultState.sampleEntriesCount > 0 {
-                HStack {
-                    Text(vaultState.t("action_delete_example_data", ["count": String(vaultState.sampleEntriesCount)]))
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    Spacer()
-                    Button(role: .destructive) {
-                        confirmDeleteSamples = true
+                .padding(.vertical, 4)
+                .tag(entry.id)
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    Button {
+                        vaultState.togglePin(entry.id)
                     } label: {
-                        Text(vaultState.t("action_delete"))
-                            .font(.caption)
+                        Label(entry.pinned ? vaultState.t("context_unpin") : vaultState.t("context_pin"), systemImage: "pin.fill")
                     }
-                    .buttonStyle(.bordered)
+                    .tint(vaultState.materialAccent.swiftUIColor)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.red.opacity(0.08))
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        vaultState.deleteEntry(entry.id)
+                    } label: {
+                        Label(vaultState.t("action_delete"), systemImage: "trash")
+                    }
+                    .tint(.red)
+                    Button {
+                        vaultState.openEditEditor(entry)
+                    } label: {
+                        Label(vaultState.t("action_edit"), systemImage: "pencil")
+                    }
+                    .tint(.blue)
+                    Button {
+                        vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
+                    } label: {
+                        Label(vaultState.t("action_copy"), systemImage: "doc.on.doc")
+                    }
+                    .tint(.indigo)
+                }
+                .contextMenu {
+                    Button {
+                        vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
+                    } label: {
+                        Label(vaultState.t("context_copy_primary"), systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        vaultState.openEditEditor(entry)
+                    } label: {
+                        Label(vaultState.t("action_edit"), systemImage: "pencil")
+                    }
+                    Button {
+                        vaultState.togglePin(entry.id)
+                    } label: {
+                        Label(entry.pinned ? vaultState.t("context_unpin") : vaultState.t("context_pin"), systemImage: "pin")
+                    }
+                    Button {
+                        vaultState.toggleFavorite(entry.id)
+                    } label: {
+                        Label(vaultState.t("nav_favorites"), systemImage: "star")
+                    }
+                    Button {
+                        vaultState.duplicateEntry(entry.id)
+                    } label: {
+                        Label(vaultState.t("context_duplicate"), systemImage: "plus.square.on.square")
+                    }
+                    Divider()
+                    Button(role: .destructive) {
+                        vaultState.deleteEntry(entry.id)
+                    } label: {
+                        Label(vaultState.t("action_delete"), systemImage: "trash")
+                    }
+                }
             }
+        }
+        .listStyle(.inset)
+        .navigationTitle(vaultState.selectedCategoryTitle)
+        .searchable(text: $vaultState.searchQuery, placement: .toolbar, prompt: vaultState.t("search_placeholder"))
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if hasListTopBanners {
+                VStack(spacing: 0) {
+                    if let err = vaultState.lastErrorBanner {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(err)
+                                .font(.caption)
+                                .lineLimit(2)
+                            Spacer()
+                            Button("✕") {
+                                vaultState.lastErrorBanner = nil
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.orange.opacity(0.14))
+                    }
 
-            List(selection: $vaultState.selectedEntryId) {
-                ForEach(vaultState.filteredEntries) { entry in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            if entry.pinned {
-                                Image(systemName: "pin.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(vaultState.materialAccent.swiftUIColor)
-                            }
-                            if entry.favorite {
-                                Image(systemName: "star.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(.yellow)
-                            }
-                            Text(entry.title)
-                                .font(.body.weight(.semibold))
+                    if let notice = vaultState.statusNotice {
+                        HStack(spacing: 8) {
+                            Text(notice)
+                                .font(.caption)
                                 .lineLimit(1)
                             Spacer()
-                            if let days = entry.daysUntilExpiry(), days <= vaultState.expiryWindowDays {
-                                Text(days < 0 ? vaultState.t("badge_expired") : "\(days)d")
-                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background((days < 0 ? Color.red : Color.orange).opacity(0.18), in: Capsule())
-                                    .foregroundStyle(days < 0 ? .red : .orange)
+                            Button("✕") {
+                                vaultState.statusNotice = nil
                             }
+                            .buttonStyle(.plain)
                         }
-                        Text(vaultState.displaySubtitle(for: entry))
-                            .font(.caption)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(vaultState.materialAccent.swiftUIColor.opacity(0.12))
+                    }
+
+                    if vaultState.sampleEntriesCount > 0 {
+                        HStack(spacing: 8) {
+                            Text(vaultState.t("action_delete_example_data", ["count": String(vaultState.sampleEntriesCount)]))
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                            Spacer()
+                            Button(role: .destructive) {
+                                confirmDeleteSamples = true
+                            } label: {
+                                Text(vaultState.t("action_delete"))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.red.opacity(0.06))
+                    }
+                    Divider()
+                }
+            }
+        }
+        .navigationSplitViewColumnWidth(min: 280, ideal: 328, max: 420)
+    }
+
+    // MARK: - Column 3: Aligned Detail Inspector + Slim Non-Overlapping Bottom Status Bar
+
+    private var macBottomStatusFooter: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack {
+                Spacer()
+                Button {
+                    if vaultState.storageMode == .cloudSync && vaultState.isCloudAuthenticated {
+                        Task { await vaultState.reconcileCloudSessionAutomatically() }
+                    } else {
+                        vaultState.presentSettingsSheet = true
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: vaultState.syncPillSystemImage)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(
+                                vaultState.storageMode == .cloudSync
+                                    ? (vaultState.isCloudAuthenticated ? .green : .orange)
+                                    : vaultState.materialAccent.swiftUIColor
+                            )
+                        Text(vaultState.syncPillLabel)
+                            .font(.system(size: 10.5, weight: .medium))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .tag(entry.id)
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        Button {
-                            vaultState.togglePin(entry.id)
-                        } label: {
-                            Label(entry.pinned ? vaultState.t("context_unpin") : vaultState.t("context_pin"), systemImage: "pin.fill")
-                        }
-                        .tint(vaultState.materialAccent.swiftUIColor)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            vaultState.deleteEntry(entry.id)
-                        } label: {
-                            Label(vaultState.t("action_delete"), systemImage: "trash")
-                        }
-                        .tint(.red)
-                        Button {
-                            vaultState.openEditEditor(entry)
-                        } label: {
-                            Label(vaultState.t("action_edit"), systemImage: "pencil")
-                        }
-                        .tint(.blue)
-                        Button {
-                            vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
-                        } label: {
-                            Label(vaultState.t("action_copy"), systemImage: "doc.on.doc")
-                        }
-                        .tint(.indigo)
-                    }
-                    .contextMenu {
-                        Button {
-                            vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
-                        } label: {
-                            Label(vaultState.t("context_copy_primary"), systemImage: "doc.on.doc")
-                        }
-                        Button {
-                            vaultState.openEditEditor(entry)
-                        } label: {
-                            Label(vaultState.t("action_edit"), systemImage: "pencil")
-                        }
-                        Button {
-                            vaultState.togglePin(entry.id)
-                        } label: {
-                            Label(entry.pinned ? vaultState.t("context_unpin") : vaultState.t("context_pin"), systemImage: "pin")
-                        }
-                        Button {
-                            vaultState.toggleFavorite(entry.id)
-                        } label: {
-                            Label(vaultState.t("nav_favorites"), systemImage: "star")
-                        }
-                        Button {
-                            vaultState.duplicateEntry(entry.id)
-                        } label: {
-                            Label(vaultState.t("context_duplicate"), systemImage: "plus.square.on.square")
-                        }
-                        Divider()
-                        Button(role: .destructive) {
-                            vaultState.deleteEntry(entry.id)
-                        } label: {
-                            Label(vaultState.t("action_delete"), systemImage: "trash")
-                        }
-                    }
+                    .background(Color.primary.opacity(0.045), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75))
                 }
+                .buttonStyle(.plain)
             }
-            .searchable(text: $vaultState.searchQuery, prompt: vaultState.t("search_placeholder"))
+            .padding(.horizontal, 20)
+            .padding(.vertical, 5)
+            .background(.bar)
         }
-        .navigationSplitViewColumnWidth(min: 280, ideal: 335, max: 440)
     }
-
-    // MARK: - Column 3: Detail Inspector (Dual-Brand Card Header + All Category Fields)
 
     @ViewBuilder
     private var detailContent: some View {
-        if let selected = vaultState.entries.first(where: { $0.id == vaultState.selectedEntryId }) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    macVisualBrandCard(for: selected)
+        Group {
+            if let selected = vaultState.entries.first(where: { $0.id == vaultState.selectedEntryId }) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        macVisualBrandCard(for: selected)
 
-                    HStack(spacing: 8) {
-                        Button(vaultState.t("action_edit")) {
-                            vaultState.openEditEditor(selected)
+                        HStack(alignment: .center, spacing: 8) {
+                            Button(vaultState.t("action_edit")) {
+                                vaultState.openEditEditor(selected)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.regular)
+
+                            Button(vaultState.t("context_duplicate")) {
+                                vaultState.duplicateEntry(selected.id)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+
+                            Button(selected.pinned ? vaultState.t("context_unpin") : vaultState.t("context_pin")) {
+                                vaultState.togglePin(selected.id)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+
+                            Spacer()
+
+                            Button(role: .destructive) {
+                                vaultState.deleteEntry(selected.id)
+                            } label: {
+                                Text(vaultState.t("action_delete"))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
                         }
-                        .buttonStyle(.borderedProminent)
 
-                        Button(vaultState.t("context_duplicate")) {
-                            vaultState.duplicateEntry(selected.id)
-                        }
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(selected.fields.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { field in
+                                let label = vaultState.resolveFieldLabel(
+                                    key: field.labelKey,
+                                    isCustom: field.isCustomLabel,
+                                    category: selected.category
+                                )
+                                let isRevealed = !field.isSensitive || revealedFieldIds.contains(field.id)
 
-                        Button(selected.pinned ? vaultState.t("context_unpin") : vaultState.t("context_pin")) {
-                            vaultState.togglePin(selected.id)
-                        }
-
-                        Spacer()
-
-                        Button(role: .destructive) {
-                            vaultState.deleteEntry(selected.id)
-                        } label: {
-                            Text(vaultState.t("action_delete"))
-                        }
-                    }
-
-                    ForEach(selected.fields.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { field in
-                        let label = vaultState.resolveFieldLabel(
-                            key: field.labelKey,
-                            isCustom: field.isCustomLabel,
-                            category: selected.category
-                        )
-                        let isRevealed = !field.isSensitive || revealedFieldIds.contains(field.id)
-                        GroupBox(label) {
-                            HStack(spacing: 10) {
-                                Text(isRevealed ? field.value : String(repeating: "•", count: min(14, max(6, field.value.count))))
-                                    .font(.system(.body, design: .monospaced))
-                                    .textSelection(.enabled)
-                                Spacer()
-                                if field.isSensitive {
-                                    Button(isRevealed ? vaultState.t("action_hide") : vaultState.t("action_reveal")) {
-                                        if revealedFieldIds.contains(field.id) {
-                                            revealedFieldIds.remove(field.id)
-                                        } else {
-                                            revealedFieldIds.insert(field.id)
-                                        }
+                                HStack(alignment: .center, spacing: 14) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(label)
+                                            .font(.system(size: 11.5, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text(isRevealed ? field.value : String(repeating: "•", count: min(14, max(6, field.value.count))))
+                                            .font(.system(size: 13.5, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(.primary)
+                                            .textSelection(.enabled)
                                     }
-                                    .buttonStyle(.bordered)
+
+                                    Spacer(minLength: 12)
+
+                                    HStack(spacing: 8) {
+                                        if field.isSensitive {
+                                            Button(isRevealed ? vaultState.t("action_hide") : vaultState.t("action_reveal")) {
+                                                if revealedFieldIds.contains(field.id) {
+                                                    revealedFieldIds.remove(field.id)
+                                                } else {
+                                                    revealedFieldIds.insert(field.id)
+                                                }
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                        }
+                                        Button(vaultState.t("action_copy")) {
+                                            vaultState.copyFieldWithClipboardHygiene(field.value, isSensitive: field.isSensitive)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    }
                                 }
-                                Button(vaultState.t("action_copy")) {
-                                    vaultState.copyFieldWithClipboardHygiene(field.value, isSensitive: field.isSensitive)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .background(
+                                    Color(nsColor: .controlBackgroundColor),
+                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .strokeBorder(Color.primary.opacity(0.09), lineWidth: 1)
+                                )
+                                .contextMenu {
+                                    Button("\(vaultState.t("action_copy")) \(label)") {
+                                        vaultState.copyFieldWithClipboardHygiene(field.value, isSensitive: field.isSensitive)
+                                    }
                                 }
-                                .buttonStyle(.bordered)
-                            }
-                            .padding(.vertical, 4)
-                        }
-                        .contextMenu {
-                            Button("\(vaultState.t("action_copy")) \(label)") {
-                                vaultState.copyFieldWithClipboardHygiene(field.value, isSensitive: field.isSensitive)
                             }
                         }
                     }
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 22)
+                    .padding(.bottom, 32)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .padding(24)
-                .padding(.bottom, 44)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else {
-            VStack(spacing: 12) {
-                Text(vaultState.t("app_name"))
-                    .font(.title3.weight(.semibold))
-                Button(vaultState.t("action_new_item")) {
-                    vaultState.openCreateEditor()
+            } else {
+                VStack(spacing: 12) {
+                    Text(vaultState.t("app_name"))
+                        .font(.title3.weight(.semibold))
+                    Button(vaultState.t("action_new_item")) {
+                        vaultState.openCreateEditor()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            macBottomStatusFooter
         }
     }
 
