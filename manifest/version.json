@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-17T00:45:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:49603dba47bec70a6c5618bab574c40fd756d921930742bafbdd8f7256bdd26d297e82731de3111846734b88c662110695d57046abcffbd31ec20c95bbd1f806",
+  "manifestSignature": "ed25519:313b0ec2bfcb3bd5bc348a4e8ea416bcf76638a612d495d5b448bba20ba3955521ad29278a3b685b1d60bcbf3945280727b9eb087517dba31907171bc742ad0b",
   "releaseNotes": {
     "en": "• SafePocket v0.3 delivers intelligent field dropdowns, international phone prefixes, live HTTPS website verification, and IBAN cross-field autofill.\n• Mutually exclusive Local Storage Only vs Cloud Sync Only with 100% automatic zero-input offline support, bottom-right sync status pill, swipe actions, right-click menus, and one-tap Delete Example Data.\n• Play Protect compliant Android/Googlebook OS updates, in-app macOS Ed25519+SHA-256 DMG updates, studio app icon, zero-artifact button hover, and privacy-scrubbed diagnostics.",
     "de": "• SafePocket v0.3 bietet intelligente Auswahlfelder (z. B. Kontoart), internationale Telefonvorwahlen, Live-HTTPS-Webseitenprüfung und IBAN-Auto-Ausfüllung.\n• Strikte Trennung zwischen Nur lokaler Speicher und Nur Cloud-Sync mit 100 % automatischer Offline-Unterstützung ohne Benutzereingriff, Sync-Status unten rechts, Wischgesten, Rechtsklick-Menüs und Beispieldaten-Löschung.\n• Play-Protect-konforme Updates für Android/Googlebook OS, automatische In-App-Updates unter macOS, neues App-Icon, nahtloser Button-Hover ohne graue Linie und datenschutzbereinigte Diagnose.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3/SafePocket-v0.3-b5-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "2427eb418a8d4b805fc26ab01e6175fce9845e07f08919c898f60d987af11bb1",
+      "sizeBytes": 38117952,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3/SafePocket-0.3-5-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "9ce3ccf41ff7d90ab3ae6c8a01816824e16c250d4c01505b58673481f4e4b30c",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 2036163,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
