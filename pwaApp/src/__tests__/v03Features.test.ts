@@ -298,9 +298,9 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.1 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.1');
-    expect(APP_BUILD_INFO.versionCode).toBe(6);
+  it('7. Cross-Platform v0.3.2 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.2');
+    expect(APP_BUILD_INFO.versionCode).toBe(7);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -374,7 +374,7 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.1 (Build 6)');
+    expect(macApp).toContain('SafePocket v0.3.2 (Build 7)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
@@ -495,5 +495,46 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
     expect(androidShell).toContain('expiry_window_setting_title');
     expect(androidShell).toContain('security_auto_lock');
     expect(androidShell).toContain('export_json_btn');
+  });
+
+  it('9. macOS Foreground App Activation, Bordered Text Inputs Everywhere & Active Non-Grayed-Out Buttons', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const macApp = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const macDmgScript = fs.readFileSync(
+      path.join(repoRoot, 'scripts/package-macos-dmg.sh'),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+
+    // 1) SwiftPM executable foreground GUI activation & Info.plist NSPrincipalClass
+    expect(macApp).toContain('SafePocketMacAppDelegate');
+    expect(macApp).toContain('setActivationPolicy(.regular)');
+    expect(macApp).toContain('makeKeyAndOrderFront');
+    expect(macDmgScript).toContain('<key>NSPrincipalClass</key>');
+    expect(macDmgScript).toContain('<string>NSApplication</string>');
+
+    // 2) Zero .formStyle(.grouped) anywhere in macOS views; explicit .textFieldStyle(.roundedBorder) everywhere
+    expect(macSplit).not.toContain('.formStyle(.grouped)');
+    expect(macSplit).toContain('MacLabeledTextField');
+    expect(macSplit).toContain('MacLabeledSecureField');
+    expect(macSplit).toContain('.textFieldStyle(.roundedBorder)');
+
+    // 3) Login, Create Account, Backup & Security buttons never pre-disabled on empty input strings
+    expect(macSplit).not.toContain('!cloudEmailInput.contains("@")');
+    expect(macSplit).not.toContain('cloudPasswordInput.count < 6');
+    expect(androidShell).not.toContain('&& cloudEmail.contains("@")');
   });
 });

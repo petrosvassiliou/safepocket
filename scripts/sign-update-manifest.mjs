@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.1').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.2').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '6');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '7');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-17T07:00:00Z',
+    publishedAt: '2026-11-17T08:00:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} delivers 100% Settings & Feature Parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.\n• Full Firebase Zero-Knowledge Cloud Sync login, account creation, and endpoint configuration on macOS, plus clean radio-button Storage Mode selection.\n• Bundled 6-language selection (EN, DE, IT, FR, ES, EL + System Default) on macOS alongside encrypted .safepocket backup/restore, 1Password & CSV portability, and security controls.`,
-      de: `• SafePocket v${latestVersion} bietet 100 % Funktions- und Einstellungsparität über macOS, Android / Googlebook OS und ChromeOS / Web PWA hinweg.\n• Vollständige Firebase-Zero-Knowledge-Cloud-Sync-Anmeldung, Kontoerstellung und Endpunktkonfiguration unter macOS sowie klare Optionsfelder für den Tresor-Speichermodus.\n• Integrierte 6-Sprachen-Auswahl (EN, DE, IT, FR, ES, EL + Systemstandard) unter macOS inklusive verschlüsseltem .safepocket-Backup, 1Password-/CSV-Portabilität und Sicherheitsoptionen.`,
-      it: `• SafePocket v${latestVersion} offre il 100% di parità di funzioni e impostazioni tra macOS, Android / Googlebook OS e ChromeOS / Web PWA.\n• Accesso completo a Firebase Cloud Sync Zero-Knowledge, creazione account e configurazione endpoint su macOS, con pulsanti radio puliti per la modalità di archiviazione.\n• Selezione di 6 lingue (EN, DE, IT, FR, ES, EL + Predefinita di sistema) su macOS con backup cifrato .safepocket, portabilità 1Password/CSV e controlli di sicurezza.`,
-      fr: `• SafePocket v${latestVersion} assure une parité à 100 % des options et fonctionnalités sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.\n• Connexion Firebase Cloud Sync Zero-Knowledge complète, création de compte et configuration des points de terminaison sur macOS, avec boutons radio épurés pour le mode de stockage.\n• Sélection de 6 langues intégrée sur macOS avec sauvegarde chiffrée .safepocket, import/export 1Password et CSV, et options de sécurité.`,
-      es: `• SafePocket v${latestVersion} ofrece un 100 % de paridad de funciones y ajustes en macOS, Android / Googlebook OS y ChromeOS / Web PWA.\n• Inicio de sesión completo en Firebase Cloud Sync Zero-Knowledge, creación de cuenta y configuración de endpoints en macOS, además de botones de opción limpios para el modo de almacenamiento.\n• Selector de 6 idiomas integrado en macOS junto con copia cifrada .safepocket, portabilidad 1Password/CSV y controles de seguridad.`,
-      el: `• Το SafePocket v${latestVersion} προσφέρει 100% ισοτιμία ρυθμίσεων και λειτουργιών σε macOS, Android / Googlebook OS και ChromeOS / Web PWA.\n• Πλήρης σύνδεση, δημιουργία λογαριασμού και ρύθμιση παραμέτρων Firebase Zero-Knowledge Cloud Sync στο macOS, καθώς και καθαρά κουμπιά επιλογής (radio buttons) για τη λειτουργία αποθήκευσης.\n• Ενσωματωμένη επιλογή 6 γλωσσών (EN, DE, IT, FR, ES, EL + Προεπιλογή συστήματος) στο macOS μαζί με κρυπτογραφημένο αντίγραφο .safepocket, φορητότητα 1Password/CSV και ρυθμίσεις ασφαλείας.`
+      en: `• SafePocket v${latestVersion} fixes macOS foreground window activation, bordered text inputs across all views/dialogs, and clickable non-grayed-out action buttons.\n• Explicit rounded-border input boxes, automatic focus, and inline validation across Cloud Sync Login, Live Endpoint Config, Item Editor, Backup, and Security.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.`,
+      de: `• SafePocket v${latestVersion} behebt die macOS-Fensteraktivierung, sichtbare umrandete Eingabefelder in allen Ansichten/Dialogen sowie klickbare (nicht ausgegraute) Aktionsschaltflächen.\n• Klare Eingabefelder mit Fokusring, Auto-Fokus und direkter Validierung für Cloud-Sync-Login, Endpunktkonfiguration, Eintrags-Editor, Backup und Sicherheit.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.`,
+      it: `• SafePocket v${latestVersion} risolve l'attivazione in primo piano su macOS, i campi di testo bordati in tutte le viste e i pulsanti sempre cliccabili.\n• Campi di input con bordo visibile, auto-focus e convalida immediata per Cloud Sync Login, Configurazione Endpoint, Editor Elementi, Backup e Sicurezza.\n• Piena parità multipiattaforma su macOS, Android / Googlebook OS e ChromeOS / Web PWA.`,
+      fr: `• SafePocket v${latestVersion} corrige l'activation au premier plan sur macOS, les champs de saisie encadrés dans toutes les vues et les boutons toujours cliquables.\n• Champs de saisie bordés explicites, focus automatique et validation intégrée pour Cloud Sync, Configuration Endpoint, Éditeur, Sauvegarde et Sécurité.\n• Parité complète sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.`,
+      es: `• SafePocket v${latestVersion} corrige la activación en primer plano en macOS, los campos de texto con borde en todas las vistas y los botones activos sin atenuar.\n• Campos de entrada con borde visible, enfoque automático y validación integrada en Cloud Sync, Configuración de Endpoints, Editor, Copia de Seguridad y Seguridad.\n• Paridad total entre macOS, Android / Googlebook OS y ChromeOS / Web PWA.`,
+      el: `• Το SafePocket v${latestVersion} επιδιορθώνει την ενεργοποίηση παραθύρου στο macOS, τα εμφανή πεδία εισαγωγής με περίγραμμα σε όλες τις προβολές και τα ενεργά κουμπιά.\n• Ευδιάκριτα πεδία κειμένου, αυτόματη εστίαση και άμεση επικύρωση σε Cloud Sync Login, Ρυθμίσεις Endpoint, Επεξεργαστή, Αντίγραφα Ασφαλείας και Ασφάλεια.\n• Πλήρης ισοτιμία σε macOS, Android / Googlebook OS και ChromeOS / Web PWA.`
     },
     artifacts: {
       'android-universal': {

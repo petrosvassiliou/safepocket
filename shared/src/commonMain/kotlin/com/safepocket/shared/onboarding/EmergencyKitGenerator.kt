@@ -72,7 +72,7 @@ object EmergencyKitGenerator {
           <div class="write-box"></div>
           $hintSection
           <div class="meta">
-            Vault ID: $vaultId • Created: $createdAtIso • SafePocket v0.3.1 (Build 6)<br/>
+            Vault ID: $vaultId • Created: $createdAtIso • SafePocket v0.3.2 (Build 7)<br/>
             KDF: Argon2id (${kdfParams.memoryKiB} KiB, t=${kdfParams.iterations}, p=${kdfParams.parallelism}) → HKDF-SHA256 → AES-256-GCM
           </div>
         </body>

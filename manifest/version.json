@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
-  "latestVersion": "0.3.1",
-  "versionCode": 6,
+  "latestVersion": "0.3.2",
+  "versionCode": 7,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-17T07:00:00Z",
+  "publishedAt": "2026-11-17T08:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:f90fe23cb4cc5a00aac73fe3d19bdab0ea4c44114b2c2c26f9bcad85b25f323d370c4816c34b9304bae26f7dbb519500265a79991496617a351d39ae3418d604",
+  "manifestSignature": "ed25519:fd7195dfe5913f1ad37aeb6a94072cbea590616bd5b25daa8b9ceda4c7b54a1d04b77f69d07a83950476f759092a9c4c9ab0256c05faf3f590586d4140d48308",
   "releaseNotes": {
-    "en": "• SafePocket v0.3.1 delivers 100% Settings & Feature Parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.\n• Full Firebase Zero-Knowledge Cloud Sync login, account creation, and endpoint configuration on macOS, plus clean radio-button Storage Mode selection.\n• Bundled 6-language selection (EN, DE, IT, FR, ES, EL + System Default) on macOS alongside encrypted .safepocket backup/restore, 1Password & CSV portability, and security controls.",
-    "de": "• SafePocket v0.3.1 bietet 100 % Funktions- und Einstellungsparität über macOS, Android / Googlebook OS und ChromeOS / Web PWA hinweg.\n• Vollständige Firebase-Zero-Knowledge-Cloud-Sync-Anmeldung, Kontoerstellung und Endpunktkonfiguration unter macOS sowie klare Optionsfelder für den Tresor-Speichermodus.\n• Integrierte 6-Sprachen-Auswahl (EN, DE, IT, FR, ES, EL + Systemstandard) unter macOS inklusive verschlüsseltem .safepocket-Backup, 1Password-/CSV-Portabilität und Sicherheitsoptionen.",
-    "it": "• SafePocket v0.3.1 offre il 100% di parità di funzioni e impostazioni tra macOS, Android / Googlebook OS e ChromeOS / Web PWA.\n• Accesso completo a Firebase Cloud Sync Zero-Knowledge, creazione account e configurazione endpoint su macOS, con pulsanti radio puliti per la modalità di archiviazione.\n• Selezione di 6 lingue (EN, DE, IT, FR, ES, EL + Predefinita di sistema) su macOS con backup cifrato .safepocket, portabilità 1Password/CSV e controlli di sicurezza.",
-    "fr": "• SafePocket v0.3.1 assure une parité à 100 % des options et fonctionnalités sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.\n• Connexion Firebase Cloud Sync Zero-Knowledge complète, création de compte et configuration des points de terminaison sur macOS, avec boutons radio épurés pour le mode de stockage.\n• Sélection de 6 langues intégrée sur macOS avec sauvegarde chiffrée .safepocket, import/export 1Password et CSV, et options de sécurité.",
-    "es": "• SafePocket v0.3.1 ofrece un 100 % de paridad de funciones y ajustes en macOS, Android / Googlebook OS y ChromeOS / Web PWA.\n• Inicio de sesión completo en Firebase Cloud Sync Zero-Knowledge, creación de cuenta y configuración de endpoints en macOS, además de botones de opción limpios para el modo de almacenamiento.\n• Selector de 6 idiomas integrado en macOS junto con copia cifrada .safepocket, portabilidad 1Password/CSV y controles de seguridad.",
-    "el": "• Το SafePocket v0.3.1 προσφέρει 100% ισοτιμία ρυθμίσεων και λειτουργιών σε macOS, Android / Googlebook OS και ChromeOS / Web PWA.\n• Πλήρης σύνδεση, δημιουργία λογαριασμού και ρύθμιση παραμέτρων Firebase Zero-Knowledge Cloud Sync στο macOS, καθώς και καθαρά κουμπιά επιλογής (radio buttons) για τη λειτουργία αποθήκευσης.\n• Ενσωματωμένη επιλογή 6 γλωσσών (EN, DE, IT, FR, ES, EL + Προεπιλογή συστήματος) στο macOS μαζί με κρυπτογραφημένο αντίγραφο .safepocket, φορητότητα 1Password/CSV και ρυθμίσεις ασφαλείας."
+    "en": "• SafePocket v0.3.2 fixes macOS foreground window activation, bordered text inputs across all views/dialogs, and clickable non-grayed-out action buttons.\n• Explicit rounded-border input boxes, automatic focus, and inline validation across Cloud Sync Login, Live Endpoint Config, Item Editor, Backup, and Security.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.",
+    "de": "• SafePocket v0.3.2 behebt die macOS-Fensteraktivierung, sichtbare umrandete Eingabefelder in allen Ansichten/Dialogen sowie klickbare (nicht ausgegraute) Aktionsschaltflächen.\n• Klare Eingabefelder mit Fokusring, Auto-Fokus und direkter Validierung für Cloud-Sync-Login, Endpunktkonfiguration, Eintrags-Editor, Backup und Sicherheit.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.",
+    "it": "• SafePocket v0.3.2 risolve l'attivazione in primo piano su macOS, i campi di testo bordati in tutte le viste e i pulsanti sempre cliccabili.\n• Campi di input con bordo visibile, auto-focus e convalida immediata per Cloud Sync Login, Configurazione Endpoint, Editor Elementi, Backup e Sicurezza.\n• Piena parità multipiattaforma su macOS, Android / Googlebook OS e ChromeOS / Web PWA.",
+    "fr": "• SafePocket v0.3.2 corrige l'activation au premier plan sur macOS, les champs de saisie encadrés dans toutes les vues et les boutons toujours cliquables.\n• Champs de saisie bordés explicites, focus automatique et validation intégrée pour Cloud Sync, Configuration Endpoint, Éditeur, Sauvegarde et Sécurité.\n• Parité complète sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.",
+    "es": "• SafePocket v0.3.2 corrige la activación en primer plano en macOS, los campos de texto con borde en todas las vistas y los botones activos sin atenuar.\n• Campos de entrada con borde visible, enfoque automático y validación integrada en Cloud Sync, Configuración de Endpoints, Editor, Copia de Seguridad y Seguridad.\n• Paridad total entre macOS, Android / Googlebook OS y ChromeOS / Web PWA.",
+    "el": "• Το SafePocket v0.3.2 επιδιορθώνει την ενεργοποίηση παραθύρου στο macOS, τα εμφανή πεδία εισαγωγής με περίγραμμα σε όλες τις προβολές και τα ενεργά κουμπιά.\n• Ευδιάκριτα πεδία κειμένου, αυτόματη εστίαση και άμεση επικύρωση σε Cloud Sync Login, Ρυθμίσεις Endpoint, Επεξεργαστή, Αντίγραφα Ασφαλείας και Ασφάλεια.\n• Πλήρης ισοτιμία σε macOS, Android / Googlebook OS και ChromeOS / Web PWA."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.1/SafePocket-v0.3.1-b6-universal-arm64-x86_64.apk",
-      "sha256": "5d032a97ff5a6cc6423b5233b3bf11774bfedb144afa1378d7aa220dd5ea60c0",
-      "sizeBytes": 38150678,
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.2/SafePocket-v0.3.2-b7-universal-arm64-x86_64.apk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 18432960,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -34,17 +34,17 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.1/SafePocket-0.3.1-6-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.2/SafePocket-0.3.2-7-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "751b429cacfa9438da0214e07d8ae09685478b4c110ee7af7f137626234ac8b3",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 3016826,
+      "sizeBytes": 14208512,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "72644dd3167171d62d4fde4b0cdf466021162c264a30618b7dd71b47f12c0c61",
+      "sha256": "d2f5efa1a17f0f32cf6b5ad0de44ebe8effab7cfa60cb99b236cdd965f4befa7",
       "sizeBytes": 2709
     }
   }

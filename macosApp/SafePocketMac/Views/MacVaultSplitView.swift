@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.1 (Build 6) with 100% Cross-Platform Parity.
+/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.2 (Build 7) with 100% Cross-Platform Parity.
 struct MacVaultSplitView: View {
     @ObservedObject var vaultState: MacVaultViewModel
     @ObservedObject var updater: MacSparkleUpdateController
@@ -531,7 +531,86 @@ struct MacVaultSplitView: View {
     }
 }
 
-// MARK: - Full Multi-Field Smart Item Editor Sheet (All 7 Categories + Custom Fields)
+// MARK: - Native Bordered macOS Input & Card Primitives Across All Views
+
+struct MacSectionCard<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 13.5, weight: .bold))
+                .foregroundStyle(.primary)
+
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            )
+        }
+    }
+}
+
+struct MacLabeledTextField: View {
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    var onSubmitAction: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !label.isEmpty {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+            }
+            TextField("", text: $text, prompt: Text(placeholder))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .onSubmit {
+                    onSubmitAction?()
+                }
+        }
+    }
+}
+
+struct MacLabeledSecureField: View {
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    var onSubmitAction: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !label.isEmpty {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+            }
+            SecureField("", text: $text, prompt: Text(placeholder))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .onSubmit {
+                    onSubmitAction?()
+                }
+        }
+    }
+}
+
+// MARK: - Full Multi-Field Smart Item Editor Sheet (All 7 Categories + Custom Fields — Explicit Bordered Inputs)
 
 struct MacSmartItemEditorSheet: View {
     @ObservedObject var vaultState: MacVaultViewModel
@@ -548,76 +627,117 @@ struct MacSmartItemEditorSheet: View {
     @State private var customFields: [MacVaultField] = []
     @State private var websiteStatus: String = ""
     @State private var autofillNotice: String = ""
+    @FocusState private var titleFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(existing == nil ? vaultState.t("action_new_item") : vaultState.t("action_edit"))
-                .font(.headline)
+                .font(.title3.weight(.bold))
 
-            Form {
-                Section {
-                    Picker("Category", selection: $category) {
-                        Text(vaultState.t("category_payment_card")).tag("PAYMENT_CARD")
-                        Text(vaultState.t("category_bank_account")).tag("BANK_ACCOUNT")
-                        Text(vaultState.t("category_insurance_card")).tag("INSURANCE_CARD")
-                        Text(vaultState.t("category_membership_card")).tag("MEMBERSHIP_CARD")
-                        Text(vaultState.t("category_identity")).tag("IDENTITY")
-                        Text(vaultState.t("category_official_document")).tag("OFFICIAL_DOCUMENT")
-                        Text(vaultState.t("category_secure_note")).tag("SECURE_NOTE")
-                    }
-                    TextField("Title / Institution", text: $title)
-                    TextField("Subtitle", text: $subtitle)
-                    HStack {
-                        TextField("Brand Color Hex (optional, e.g. #0018A8)", text: $customColorHex)
-                        TextField("Tags (comma-separated)", text: $tagsInput)
-                    }
-                }
-
-                Section("Structured Category Fields") {
-                    ForEach(MacCategoryTemplates.specs(for: category), id: \.key) { spec in
-                        smartEditorRow(for: spec)
-                    }
-                }
-
-                Section("Custom Fields") {
-                    ForEach($customFields) { $cf in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    MacSectionCard(title: vaultState.t("app_name")) {
                         HStack {
-                            TextField("Field Label", text: $cf.labelKey)
-                                .frame(width: 160)
-                            TextField("Value", text: $cf.value)
-                            Toggle("Secret", isOn: $cf.isSensitive)
-                                .toggleStyle(.checkbox)
-                            Button(role: .destructive) {
-                                customFields.removeAll { $0.id == cf.id }
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
+                            Text("Category")
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            Picker("", selection: $category) {
+                                Text(vaultState.t("category_payment_card")).tag("PAYMENT_CARD")
+                                Text(vaultState.t("category_bank_account")).tag("BANK_ACCOUNT")
+                                Text(vaultState.t("category_insurance_card")).tag("INSURANCE_CARD")
+                                Text(vaultState.t("category_membership_card")).tag("MEMBERSHIP_CARD")
+                                Text(vaultState.t("category_identity")).tag("IDENTITY")
+                                Text(vaultState.t("category_official_document")).tag("OFFICIAL_DOCUMENT")
+                                Text(vaultState.t("category_secure_note")).tag("SECURE_NOTE")
                             }
-                            .buttonStyle(.plain)
+                            .labelsHidden()
+                            .frame(maxWidth: 320)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Title / Institution")
+                                .font(.system(size: 12, weight: .semibold))
+                            TextField("", text: $title, prompt: Text("e.g. Deutsche Bank, Visa, Allianz"))
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .controlSize(.large)
+                                .focused($titleFocused)
+                        }
+
+                        MacLabeledTextField(
+                            label: "Subtitle",
+                            placeholder: "e.g. Girokonto, Platinum Card",
+                            text: $subtitle
+                        )
+
+                        HStack(spacing: 12) {
+                            MacLabeledTextField(
+                                label: "Brand Color Hex (optional)",
+                                placeholder: "#0018A8",
+                                text: $customColorHex
+                            )
+                            MacLabeledTextField(
+                                label: "Tags (comma-separated)",
+                                placeholder: "banking, personal",
+                                text: $tagsInput
+                            )
                         }
                     }
-                    Button("+ Add Custom Field") {
-                        customFields.append(
-                            MacVaultField(
-                                id: "cf-\(UUID().uuidString.prefix(8))",
-                                labelKey: "Custom Field",
-                                isCustomLabel: true,
-                                value: ""
+
+                    MacSectionCard(title: "Structured Category Fields") {
+                        ForEach(MacCategoryTemplates.specs(for: category), id: \.key) { spec in
+                            smartEditorRow(for: spec)
+                        }
+                    }
+
+                    MacSectionCard(title: "Custom Fields") {
+                        ForEach($customFields) { $cf in
+                            HStack(spacing: 8) {
+                                TextField("", text: $cf.labelKey, prompt: Text("Field Label"))
+                                    .labelsHidden()
+                                    .textFieldStyle(.roundedBorder)
+                                    .controlSize(.large)
+                                    .frame(width: 170)
+                                TextField("", text: $cf.value, prompt: Text("Value"))
+                                    .labelsHidden()
+                                    .textFieldStyle(.roundedBorder)
+                                    .controlSize(.large)
+                                Toggle("Secret", isOn: $cf.isSensitive)
+                                    .toggleStyle(.checkbox)
+                                Button(role: .destructive) {
+                                    customFields.removeAll { $0.id == cf.id }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        Button("+ Add Custom Field") {
+                            customFields.append(
+                                MacVaultField(
+                                    id: "cf-\(UUID().uuidString.prefix(8))",
+                                    labelKey: "Custom Field",
+                                    isCustomLabel: true,
+                                    value: ""
+                                )
                             )
-                        )
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
+                .padding(.trailing, 4)
             }
-            .formStyle(.grouped)
 
             if !autofillNotice.isEmpty {
                 Text("✨ \(autofillNotice)")
-                    .font(.caption)
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(vaultState.materialAccent.swiftUIColor)
             }
 
             HStack {
                 Spacer()
                 Button(vaultState.t("action_cancel")) { dismiss() }
+                    .buttonStyle(.bordered)
                 Button(vaultState.t("action_save")) {
                     saveConstructedEntry()
                 }
@@ -625,8 +745,9 @@ struct MacSmartItemEditorSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 660, height: 640)
+        .frame(width: 680, height: 660)
         .onAppear {
+            NSApplication.shared.activate(ignoringOtherApps: true)
             if let ex = existing {
                 category = ex.category
                 title = ex.title
@@ -640,6 +761,9 @@ struct MacSmartItemEditorSheet: View {
                         fieldDrafts[f.labelKey] = f.value
                     }
                 }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                titleFocused = true
             }
         }
     }
@@ -658,16 +782,22 @@ struct MacSmartItemEditorSheet: View {
             i18n: vaultState.i18n,
             localeCode: vaultState.localeOverrideCode
         ) {
-            Picker(label, selection: Binding<String>(
-                get: {
-                    let cur = fieldDrafts[spec.key] ?? ""
-                    return options.contains(cur) ? cur : (options.first ?? "")
-                },
-                set: { selected in fieldDrafts[spec.key] = selected }
-            )) {
-                ForEach(options, id: \.self) { opt in
-                    Text(opt).tag(opt)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                Picker("", selection: Binding<String>(
+                    get: {
+                        let cur = fieldDrafts[spec.key] ?? ""
+                        return options.contains(cur) ? cur : (options.first ?? "")
+                    },
+                    set: { selected in fieldDrafts[spec.key] = selected }
+                )) {
+                    ForEach(options, id: \.self) { opt in
+                        Text(opt).tag(opt)
+                    }
                 }
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else if spec.valueType == .phone {
             let prefixBinding = Binding<String>(
@@ -680,24 +810,39 @@ struct MacSmartItemEditorSheet: View {
                     }
                 }
             )
-            HStack {
-                Picker(label, selection: prefixBinding) {
-                    ForEach(MacSmartIntelligence.dialPrefixes, id: \.self) { p in
-                        Text(p).tag(p)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                HStack(spacing: 8) {
+                    Picker("", selection: prefixBinding) {
+                        ForEach(MacSmartIntelligence.dialPrefixes, id: \.self) { p in
+                            Text(p).tag(p)
+                        }
                     }
+                    .labelsHidden()
+                    .frame(width: 96)
+
+                    TextField("", text: binding, prompt: Text(spec.placeholder))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
                 }
-                .frame(width: 220)
-                TextField(spec.placeholder, text: binding)
             }
         } else if spec.valueType == .url {
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    TextField(label, text: binding, prompt: Text(spec.placeholder))
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                HStack(spacing: 8) {
+                    TextField("", text: binding, prompt: Text(spec.placeholder))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
                     Button("Verify HTTPS") {
                         let normalized = MacVaultViewModel.normalizeHttpsUrl(fieldDrafts[spec.key] ?? "")
                         fieldDrafts[spec.key] = normalized
                         verifyHttpsReachability(normalized)
                     }
+                    .buttonStyle(.bordered)
                 }
                 if !websiteStatus.isEmpty {
                     Text(websiteStatus)
@@ -706,9 +851,9 @@ struct MacSmartItemEditorSheet: View {
                 }
             }
         } else if spec.valueType == .sensitiveSecret {
-            SecureField(label, text: binding, prompt: Text(spec.placeholder))
+            MacLabeledSecureField(label: label, placeholder: spec.placeholder, text: binding)
         } else {
-            TextField(label, text: binding, prompt: Text(spec.placeholder))
+            MacLabeledTextField(label: label, placeholder: spec.placeholder, text: binding)
         }
     }
 
@@ -815,384 +960,663 @@ struct MacSmartItemEditorSheet: View {
     }
 }
 
-// MARK: - Full Cross-Platform Parity Settings View (Language, Clean Radio Storage Mode + Cloud Auth/Config, Portability, Security, Updates, Diagnostics)
+// MARK: - Full Cross-Platform Parity Settings View (Explicit Bordered Inputs + Always-Active Buttons + Inline Validation)
 
 struct MacSettingsAndAboutView: View {
     @ObservedObject var vaultState: MacVaultViewModel
     @ObservedObject var updater: MacSparkleUpdateController
     @AppStorage("safepocket.theme_mode") private var themeMode: String = "light"
 
+    private enum SettingsInputFocus: Hashable {
+        case cloudEmail
+        case cloudPassword
+        case gdriveToken
+        case backupPassword
+        case masterPassword
+    }
+
+    @FocusState private var focusedInput: SettingsInputFocus?
+
     @State private var cloudEmailInput: String = ""
     @State private var cloudPasswordInput: String = ""
+    @State private var cloudValidationMessage: String?
     @State private var showEndpointAdvanced: Bool = false
 
     @State private var newMasterPasswordInput: String = ""
     @State private var pairSecretKeyInput: String = ""
+    @State private var securityValidationMessage: String?
 
     @State private var backupPasswordInput: String = ""
     @State private var restoreSecretKeyInput: String = ""
     @State private var plainExportConfirmPassword: String = ""
+    @State private var backupValidationMessage: String?
+
+    private func triggerCloudAuth(isSignUp: Bool) {
+        let cleanEmail = cloudEmailInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleanEmail.contains("@"), cleanEmail.contains(".") else {
+            cloudValidationMessage = "⚠ \(vaultState.t("cloud_auth_email")): name@example.com"
+            focusedInput = .cloudEmail
+            return
+        }
+        guard cloudPasswordInput.count >= 6 else {
+            cloudValidationMessage = "⚠ \(vaultState.t("cloud_auth_password")): min. 6 characters"
+            focusedInput = .cloudPassword
+            return
+        }
+        cloudValidationMessage = nil
+        let pw = cloudPasswordInput
+        Task {
+            if isSignUp {
+                await vaultState.createFirebaseAccount(email: cleanEmail, password: pw)
+            } else {
+                await vaultState.signInFirebaseAccount(email: cleanEmail, password: pw)
+            }
+            if vaultState.cloudSession != nil {
+                cloudPasswordInput = ""
+            }
+        }
+    }
 
     var body: some View {
-        Form {
-            // 1. APPEARANCE, ACCENT COLOR & 6-LANGUAGE SELECTOR
-            Section(vaultState.t("settings_theme_title") + " & " + vaultState.t("settings_language_title")) {
-                Picker(vaultState.t("settings_theme_title"), selection: $themeMode) {
-                    Text(vaultState.t("theme_light")).tag("light")
-                    Text(vaultState.t("theme_dark")).tag("dark")
-                    Text(vaultState.t("theme_system")).tag("system")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let err = vaultState.lastErrorBanner {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(err)
+                            .font(.system(size: 12, weight: .medium))
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button("✕") {
+                            vaultState.lastErrorBanner = nil
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(10)
+                    .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
                 }
-                .pickerStyle(.segmented)
 
-                Picker("Accent Color", selection: $vaultState.materialAccent) {
-                    ForEach(MacMaterialAccent.allCases) { accent in
-                        Text(vaultState.t(accent.labelKey)).tag(accent)
+                if let notice = vaultState.statusNotice {
+                    HStack(spacing: 8) {
+                        Text(notice)
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Button("✕") {
+                            vaultState.statusNotice = nil
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(10)
+                    .background(vaultState.materialAccent.swiftUIColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+                }
+
+                // 1. APPEARANCE, ACCENT COLOR & 6-LANGUAGE SELECTOR
+                MacSectionCard(title: vaultState.t("settings_theme_title") + " & " + vaultState.t("settings_language_title")) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(vaultState.t("settings_theme_title"))
+                            .font(.system(size: 12, weight: .semibold))
+                        Picker("", selection: $themeMode) {
+                            Text(vaultState.t("theme_light")).tag("light")
+                            Text(vaultState.t("theme_dark")).tag("dark")
+                            Text(vaultState.t("theme_system")).tag("system")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Material Accent")
+                            .font(.system(size: 12, weight: .semibold))
+                        Picker("", selection: $vaultState.materialAccent) {
+                            ForEach(MacMaterialAccent.allCases) { accent in
+                                Text(vaultState.t(accent.labelKey)).tag(accent)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                    }
+
+                    HStack {
+                        Text(vaultState.t("settings_language_title"))
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Picker("", selection: $vaultState.localeOverrideCode) {
+                            Text(vaultState.t("settings_language_system", ["locale": MacLocalizationEngine.detectedSystemLocale.nativeDisplayName]))
+                                .tag("__system__")
+                            ForEach(MacSupportedLocale.allCases) { loc in
+                                Text("\(loc.nativeDisplayName) (\(loc.rawValue.uppercased()))")
+                                    .tag(loc.rawValue)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 280)
                     }
                 }
-                .pickerStyle(.segmented)
 
-                Picker(vaultState.t("settings_language_title"), selection: $vaultState.localeOverrideCode) {
-                    Text(vaultState.t("settings_language_system", ["locale": MacLocalizationEngine.detectedSystemLocale.nativeDisplayName]))
-                        .tag("__system__")
-                    ForEach(MacSupportedLocale.allCases) { loc in
-                        Text("\(loc.nativeDisplayName) (\(loc.rawValue.uppercased()))")
-                            .tag(loc.rawValue)
-                    }
-                }
-            }
-
-            // 2. VAULT STORAGE MODE (CLEAN RADIO BUTTONS) + FULL CLOUD SYNC ACCOUNT & ENDPOINT CONFIGURATION
-            Section(vaultState.t("storage_mode_section_title")) {
-                Picker(vaultState.t("storage_mode_section_title"), selection: Binding(
-                    get: { vaultState.storageMode },
-                    set: { next in Task { await vaultState.switchExclusiveStorageMode(next) } }
-                )) {
-                    Text(vaultState.t("storage_mode_local_only_title")).tag(MacExclusiveStorageMode.localOnly)
-                    Text(vaultState.t("storage_mode_cloud_only_title")).tag(MacExclusiveStorageMode.cloudSync)
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-
-                if vaultState.storageMode == .localOnly {
-                    Text(vaultState.t("storage_mode_local_only_desc"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("✓ Encrypted Local Vault (\(vaultState.standaloneLocalRowCount) items) • Cloud Mirror: 0 rows")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(vaultState.t("storage_mode_cloud_only_desc"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    Picker("Cloud Service", selection: $vaultState.cloudProvider) {
-                        Text(vaultState.t("sync_provider_firebase")).tag(MacCloudProvider.firebase)
-                        Text(vaultState.t("sync_provider_gdrive")).tag(MacCloudProvider.googleDrive)
+                // 2. VAULT STORAGE MODE (CLEAN RADIO BUTTONS) + FULL CLOUD SYNC ACCOUNT & ENDPOINT CONFIGURATION
+                MacSectionCard(title: vaultState.t("storage_mode_section_title")) {
+                    Picker("", selection: Binding(
+                        get: { vaultState.storageMode },
+                        set: { next in
+                            Task {
+                                await vaultState.switchExclusiveStorageMode(next)
+                                if next == .cloudSync && !vaultState.isCloudAuthenticated {
+                                    focusedInput = .cloudEmail
+                                }
+                            }
+                        }
+                    )) {
+                        Text(vaultState.t("storage_mode_local_only_title")).tag(MacExclusiveStorageMode.localOnly)
+                        Text(vaultState.t("storage_mode_cloud_only_title")).tag(MacExclusiveStorageMode.cloudSync)
                     }
                     .pickerStyle(.radioGroup)
+                    .labelsHidden()
 
-                    if vaultState.cloudProvider == .firebase {
-                        if let session = vaultState.cloudSession {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("✓ " + vaultState.t("cloud_auth_signed_in_as", ["email": session.email, "uid": String(session.uid.prefix(12))]))
-                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(.green)
+                    if vaultState.storageMode == .localOnly {
+                        Text(vaultState.t("storage_mode_local_only_desc"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("✓ Encrypted Local Vault (\(vaultState.standaloneLocalRowCount) items) • Cloud Mirror: 0 rows")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(vaultState.t("storage_mode_cloud_only_desc"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-                                Text("Offline Mirror: \(vaultState.cloudSessionMirrorCount) items • Outbox: \(vaultState.pendingOfflineOutboxIds.count) queued • ↑\(vaultState.lastSyncPushed) ↓\(vaultState.lastSyncPulled)")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                        Divider()
+
+                        Picker("", selection: $vaultState.cloudProvider) {
+                            Text(vaultState.t("sync_provider_firebase")).tag(MacCloudProvider.firebase)
+                            Text(vaultState.t("sync_provider_gdrive")).tag(MacCloudProvider.googleDrive)
+                        }
+                        .pickerStyle(.radioGroup)
+                        .labelsHidden()
+
+                        Divider()
+
+                        if vaultState.cloudProvider == .firebase {
+                            if let session = vaultState.cloudSession {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text("✓ " + vaultState.t("cloud_auth_signed_in_as", ["email": session.email, "uid": String(session.uid.prefix(12))]))
+                                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(.green)
+
+                                    Text("Offline Mirror: \(vaultState.cloudSessionMirrorCount) items • Outbox: \(vaultState.pendingOfflineOutboxIds.count) queued • ↑\(vaultState.lastSyncPushed) ↓\(vaultState.lastSyncPulled)")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+
+                                    HStack(spacing: 10) {
+                                        Button {
+                                            Task { await vaultState.reconcileCloudSessionAutomatically() }
+                                        } label: {
+                                            Label(vaultState.t("sync_now"), systemImage: "arrow.triangle.2.circlepath")
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .disabled(vaultState.isReconcilingCloud)
+
+                                        Button(vaultState.t("cloud_auth_signout_btn")) {
+                                            Task { await vaultState.signOutCloudAccount() }
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .disabled(vaultState.cloudAuthBusy)
+                                    }
+                                }
+                            } else {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text(vaultState.t("storage_mode_cloud_auth_required"))
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(vaultState.t("cloud_auth_email"))
+                                            .font(.system(size: 12, weight: .semibold))
+                                        TextField("", text: $cloudEmailInput, prompt: Text("name@example.com"))
+                                            .labelsHidden()
+                                            .textFieldStyle(.roundedBorder)
+                                            .controlSize(.large)
+                                            .textContentType(.emailAddress)
+                                            .focused($focusedInput, equals: .cloudEmail)
+                                            .onChange(of: cloudEmailInput) { _, _ in cloudValidationMessage = nil }
+                                            .onSubmit { focusedInput = .cloudPassword }
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(vaultState.t("cloud_auth_password"))
+                                            .font(.system(size: 12, weight: .semibold))
+                                        SecureField("", text: $cloudPasswordInput, prompt: Text("•••••••••••• (min. 6)"))
+                                            .labelsHidden()
+                                            .textFieldStyle(.roundedBorder)
+                                            .controlSize(.large)
+                                            .focused($focusedInput, equals: .cloudPassword)
+                                            .onChange(of: cloudPasswordInput) { _, _ in cloudValidationMessage = nil }
+                                            .onSubmit { triggerCloudAuth(isSignUp: false) }
+                                    }
+
+                                    if let msg = cloudValidationMessage {
+                                        Text(msg)
+                                            .font(.caption.weight(.medium))
+                                            .foregroundStyle(.orange)
+                                    }
+
+                                    HStack(spacing: 10) {
+                                        Button {
+                                            triggerCloudAuth(isSignUp: false)
+                                        } label: {
+                                            Text(vaultState.t("cloud_auth_signin_btn"))
+                                                .padding(.horizontal, 6)
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .disabled(vaultState.cloudAuthBusy)
+
+                                        Button {
+                                            triggerCloudAuth(isSignUp: true)
+                                        } label: {
+                                            Text("+ " + vaultState.t("cloud_auth_create_btn"))
+                                                .padding(.horizontal, 6)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .disabled(vaultState.cloudAuthBusy)
+
+                                        if vaultState.cloudAuthBusy {
+                                            ProgressView().controlSize(.small)
+                                        }
+                                    }
+                                }
+                                .onAppear {
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                                        if focusedInput == nil {
+                                            focusedInput = .cloudEmail
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(vaultState.t("cloud_bearer_token"))
+                                        .font(.system(size: 12, weight: .semibold))
+                                    SecureField("", text: $vaultState.endpointConfig.googleDriveBearerToken, prompt: Text("ya29.…"))
+                                        .labelsHidden()
+                                        .textFieldStyle(.roundedBorder)
+                                        .controlSize(.large)
+                                        .focused($focusedInput, equals: .gdriveToken)
+                                }
 
                                 HStack(spacing: 10) {
-                                    Button {
-                                        Task { await vaultState.reconcileCloudSessionAutomatically() }
-                                    } label: {
-                                        Label(vaultState.t("sync_now"), systemImage: "arrow.triangle.2.circlepath")
+                                    Button(vaultState.t("sync_now")) {
+                                        if !vaultState.isCloudAuthenticated {
+                                            focusedInput = .gdriveToken
+                                            vaultState.lastErrorBanner = "Please enter an OAuth Bearer token for Google Drive appDataFolder."
+                                        } else {
+                                            Task { await vaultState.reconcileCloudSessionAutomatically() }
+                                        }
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .disabled(vaultState.isReconcilingCloud)
 
-                                    Button(vaultState.t("cloud_auth_signout_btn")) {
-                                        Task { await vaultState.signOutCloudAccount() }
-                                    }
-                                    .disabled(vaultState.cloudAuthBusy)
-                                }
-                            }
-                        } else {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(vaultState.t("storage_mode_cloud_auth_required"))
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(vaultState.materialAccent.swiftUIColor)
-
-                                TextField(vaultState.t("cloud_auth_email"), text: $cloudEmailInput)
-                                    .textContentType(.emailAddress)
-
-                                SecureField(vaultState.t("cloud_auth_password"), text: $cloudPasswordInput)
-
-                                HStack(spacing: 10) {
-                                    Button(vaultState.t("cloud_auth_signin_btn")) {
-                                        let email = cloudEmailInput
-                                        let pw = cloudPasswordInput
-                                        Task {
-                                            await vaultState.signInFirebaseAccount(email: email, password: pw)
-                                            if vaultState.cloudSession != nil { cloudPasswordInput = "" }
+                                    if vaultState.isCloudAuthenticated {
+                                        Button(vaultState.t("cloud_auth_signout_btn")) {
+                                            Task { await vaultState.signOutCloudAccount() }
                                         }
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled(vaultState.cloudAuthBusy || !cloudEmailInput.contains("@") || cloudPasswordInput.count < 6)
-
-                                    Button("+ " + vaultState.t("cloud_auth_create_btn")) {
-                                        let email = cloudEmailInput
-                                        let pw = cloudPasswordInput
-                                        Task {
-                                            await vaultState.createFirebaseAccount(email: email, password: pw)
-                                            if vaultState.cloudSession != nil { cloudPasswordInput = "" }
-                                        }
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .disabled(vaultState.cloudAuthBusy || !cloudEmailInput.contains("@") || cloudPasswordInput.count < 6)
-
-                                    if vaultState.cloudAuthBusy {
-                                        ProgressView().controlSize(.small)
+                                        .buttonStyle(.bordered)
                                     }
                                 }
                             }
                         }
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            SecureField(vaultState.t("cloud_bearer_token"), text: $vaultState.endpointConfig.googleDriveBearerToken)
-                            HStack(spacing: 10) {
-                                Button(vaultState.t("sync_now")) {
-                                    Task { await vaultState.reconcileCloudSessionAutomatically() }
+
+                        Divider()
+
+                        DisclosureGroup(vaultState.t("cloud_config_title"), isExpanded: $showEndpointAdvanced) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                MacLabeledTextField(
+                                    label: vaultState.t("cloud_firebase_project_id"),
+                                    placeholder: "safepocket-vault-eu",
+                                    text: $vaultState.endpointConfig.firebaseProjectId
+                                )
+                                MacLabeledSecureField(
+                                    label: vaultState.t("cloud_firebase_api_key"),
+                                    placeholder: "AIzaSy… (leave empty for local offline cloud replica)",
+                                    text: $vaultState.endpointConfig.firebaseWebApiKey
+                                )
+                                MacLabeledTextField(
+                                    label: vaultState.t("cloud_firebase_bucket"),
+                                    placeholder: "safepocket-vault-eu.firebasestorage.app",
+                                    text: $vaultState.endpointConfig.firebaseStorageBucket
+                                )
+                                MacLabeledTextField(
+                                    label: "Vault Collection ID",
+                                    placeholder: "default-vault",
+                                    text: $vaultState.endpointConfig.vaultCollectionId
+                                )
+                                Button("Reset to Default EU Cloud (safepocket-vault-eu)") {
+                                    vaultState.resetCloudEndpointDefaults()
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(!vaultState.isCloudAuthenticated || vaultState.isReconcilingCloud)
-
-                                if vaultState.isCloudAuthenticated {
-                                    Button(vaultState.t("cloud_auth_signout_btn")) {
-                                        Task { await vaultState.signOutCloudAccount() }
-                                    }
-                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
                             }
+                            .padding(.top, 8)
                         }
                     }
+                }
 
-                    DisclosureGroup(vaultState.t("cloud_config_title"), isExpanded: $showEndpointAdvanced) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            TextField(vaultState.t("cloud_firebase_project_id"), text: $vaultState.endpointConfig.firebaseProjectId)
-                            SecureField(vaultState.t("cloud_firebase_api_key"), text: $vaultState.endpointConfig.firebaseWebApiKey)
-                            TextField(vaultState.t("cloud_firebase_bucket"), text: $vaultState.endpointConfig.firebaseStorageBucket)
-                            TextField("Vault Collection ID", text: $vaultState.endpointConfig.vaultCollectionId)
-                            Button("Reset to Default EU Cloud (safepocket-vault-eu)") {
-                                vaultState.resetCloudEndpointDefaults()
+                // 3. PORTABILITY: ENCRYPTED BACKUP (.safepocket), 1PASSWORD & CSV IMPORT / EXPORT + DELETE EXAMPLE DATA
+                MacSectionCard(title: vaultState.t("portability_section_title")) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(vaultState.t("backup_export_encrypted")) — Password")
+                            .font(.system(size: 12, weight: .semibold))
+                        SecureField("", text: $backupPasswordInput, prompt: Text("•••••••• (min. 4)"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.large)
+                            .focused($focusedInput, equals: .backupPassword)
+                            .onChange(of: backupPasswordInput) { _, _ in backupValidationMessage = nil }
+                    }
+
+                    MacLabeledTextField(
+                        label: "\(vaultState.t("security_secret_key")) (optional override for restore)",
+                        placeholder: "SPK-XXXX-XXXX-XXXX-XXXX",
+                        text: $restoreSecretKeyInput
+                    )
+
+                    if let bMsg = backupValidationMessage {
+                        Text(bMsg)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button(vaultState.t("backup_export_encrypted")) {
+                            guard backupPasswordInput.count >= 4 else {
+                                backupValidationMessage = "⚠ Enter a backup password (min. 4 characters) above first."
+                                focusedInput = .backupPassword
+                                return
                             }
-                            .font(.caption)
-                        }
-                        .padding(.top, 6)
-                    }
-                }
-            }
-
-            // 3. PORTABILITY: ENCRYPTED BACKUP (.safepocket), 1PASSWORD & CSV IMPORT / EXPORT + DELETE EXAMPLE DATA
-            Section(vaultState.t("portability_section_title")) {
-                SecureField("\(vaultState.t("backup_export_encrypted")) — Password", text: $backupPasswordInput)
-                TextField("\(vaultState.t("security_secret_key")) (optional override for restore)", text: $restoreSecretKeyInput)
-
-                HStack(spacing: 8) {
-                    Button(vaultState.t("backup_export_encrypted")) {
-                        vaultState.exportEncryptedBackupViaDialog(backupPassword: backupPasswordInput)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(backupPasswordInput.count < 4)
-
-                    Button(vaultState.t("restore_mode_merge")) {
-                        vaultState.restoreEncryptedBackupViaDialog(
-                            backupPassword: backupPasswordInput,
-                            overrideSecretKey: restoreSecretKeyInput,
-                            replaceExisting: false
-                        )
-                    }
-                    .disabled(backupPasswordInput.isEmpty)
-
-                    Button(vaultState.t("restore_mode_replace")) {
-                        vaultState.restoreEncryptedBackupViaDialog(
-                            backupPassword: backupPasswordInput,
-                            overrideSecretKey: restoreSecretKeyInput,
-                            replaceExisting: true
-                        )
-                    }
-                    .disabled(backupPasswordInput.isEmpty)
-                }
-
-                Divider()
-
-                Toggle(vaultState.t("import_include_logins_toggle"), isOn: $vaultState.includeLoginsOnImport)
-
-                HStack(spacing: 8) {
-                    Button(vaultState.t("import_1password_btn")) {
-                        vaultState.importCsvOr1PasswordViaDialog()
-                    }
-                    Button(vaultState.t("import_csv_btn")) {
-                        vaultState.importCsvOr1PasswordViaDialog()
-                    }
-                }
-
-                Divider()
-
-                if vaultState.hasCustomMasterPassword {
-                    SecureField(vaultState.t("security_master_password"), text: $plainExportConfirmPassword)
-                }
-
-                HStack(spacing: 8) {
-                    Button(vaultState.t("export_1password_1pux_btn")) {
-                        vaultState.exportPlainFormatViaDialog(kind: "1pux", confirmMasterPw: plainExportConfirmPassword)
-                    }
-                    Button(vaultState.t("export_1password_csv_btn")) {
-                        vaultState.exportPlainFormatViaDialog(kind: "1p_csv", confirmMasterPw: plainExportConfirmPassword)
-                    }
-                    Button(vaultState.t("export_csv_btn")) {
-                        vaultState.exportPlainFormatViaDialog(kind: "sp_csv", confirmMasterPw: plainExportConfirmPassword)
-                    }
-                    Button(vaultState.t("export_json_btn")) {
-                        vaultState.exportPlainFormatViaDialog(kind: "json", confirmMasterPw: plainExportConfirmPassword)
-                    }
-                }
-
-                if vaultState.sampleEntriesCount > 0 {
-                    Divider()
-                    Button(role: .destructive) {
-                        vaultState.deleteAllExampleData()
-                    } label: {
-                        Text(vaultState.t("action_delete_example_data", ["count": String(vaultState.sampleEntriesCount)]))
-                    }
-                }
-            }
-
-            // 4. ZERO-KNOWLEDGE SECURITY, SCREENSHOTS, BRANDING, EXPIRY WINDOW, AUTO-LOCK & EMERGENCY KIT
-            Section(vaultState.t("security_section_title")) {
-                HStack {
-                    Text("\(vaultState.t("security_secret_key")): \(vaultState.secretKeyFormatted)")
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .lineLimit(1)
-                    Spacer()
-                    Button(vaultState.t("action_copy")) {
-                        vaultState.copyFieldWithClipboardHygiene(vaultState.secretKeyFormatted, isSensitive: true)
-                    }
-                }
-
-                SecureField(vaultState.t("security_master_password"), text: $newMasterPasswordInput)
-                TextField("\(vaultState.t("security_secret_key")) (SPK-… pair from another device — optional)", text: $pairSecretKeyInput)
-
-                HStack(spacing: 8) {
-                    Button(vaultState.t("action_save")) {
-                        vaultState.configureVaultCredentials(
-                            newMasterPassword: newMasterPasswordInput,
-                            pairedSecretKey: pairSecretKeyInput
-                        )
-                        newMasterPasswordInput = ""
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(newMasterPasswordInput.count < 6)
-
-                    Button(vaultState.t("onboarding_download_emergency_kit")) {
-                        vaultState.exportEmergencyKitViaDialog(versionDisplay: updater.currentVersionDisplay)
-                    }
-                }
-
-                TextField(vaultState.t("emergency_kit_hint_placeholder"), text: $vaultState.masterPasswordHint)
-
-                Divider()
-
-                Toggle(vaultState.t("security_allow_screenshots_toggle"), isOn: $vaultState.allowScreenshots)
-                Toggle(vaultState.t("settings_auto_download_logos_toggle"), isOn: $vaultState.autoDownloadLogos)
-
-                Picker(vaultState.t("expiry_window_setting_title"), selection: $vaultState.expiryWindowDays) {
-                    ForEach([30, 60, 90, 180], id: \.self) { days in
-                        Text(vaultState.t("expiry_window_days_option", ["days": String(days)])).tag(days)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                Picker(vaultState.t("security_auto_lock"), selection: $vaultState.autoLockMinutes) {
-                    Text(vaultState.t("security_auto_lock_1m")).tag(1)
-                    Text(vaultState.t("security_auto_lock_5m")).tag(5)
-                    Text(vaultState.t("security_auto_lock_15m")).tag(15)
-                }
-                .pickerStyle(.segmented)
-            }
-
-            // 5. AUTOMATED IN-APP MACOS UPDATES (Ed25519 + SHA-256)
-            Section(vaultState.t("update_section_title")) {
-                Toggle(vaultState.t("update_auto_toggle"), isOn: $updater.automaticChecksEnabled)
-
-                HStack(spacing: 10) {
-                    Button(vaultState.t("update_check_btn") + "…") {
-                        updater.checkForUpdatesInitiatedByUser()
-                    }
-                    .disabled(updater.isChecking || updater.isDownloadingUpdate)
-
-                    if updater.availableDmgUrl != nil && updater.stagedAppBundleURL == nil {
-                        Button("Download & Verify DMG") {
-                            Task { await updater.downloadVerifyAndStageMacUpdate() }
-                        }
-                        .disabled(updater.isDownloadingUpdate)
-                    }
-
-                    if updater.stagedAppBundleURL != nil {
-                        Button("Install & Relaunch") {
-                            updater.installStagedUpdateAndRelaunch()
+                            backupValidationMessage = nil
+                            vaultState.exportEncryptedBackupViaDialog(backupPassword: backupPasswordInput)
                         }
                         .buttonStyle(.borderedProminent)
+
+                        Button(vaultState.t("restore_mode_merge")) {
+                            guard !backupPasswordInput.isEmpty else {
+                                backupValidationMessage = "⚠ Enter the backup password above before restoring."
+                                focusedInput = .backupPassword
+                                return
+                            }
+                            backupValidationMessage = nil
+                            vaultState.restoreEncryptedBackupViaDialog(
+                                backupPassword: backupPasswordInput,
+                                overrideSecretKey: restoreSecretKeyInput,
+                                replaceExisting: false
+                            )
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(vaultState.t("restore_mode_replace")) {
+                            guard !backupPasswordInput.isEmpty else {
+                                backupValidationMessage = "⚠ Enter the backup password above before restoring."
+                                focusedInput = .backupPassword
+                                return
+                            }
+                            backupValidationMessage = nil
+                            vaultState.restoreEncryptedBackupViaDialog(
+                                backupPassword: backupPasswordInput,
+                                overrideSecretKey: restoreSecretKeyInput,
+                                replaceExisting: true
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Divider()
+
+                    Toggle(vaultState.t("import_include_logins_toggle"), isOn: $vaultState.includeLoginsOnImport)
+
+                    HStack(spacing: 8) {
+                        Button(vaultState.t("import_1password_btn")) {
+                            vaultState.importCsvOr1PasswordViaDialog()
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(vaultState.t("import_csv_btn")) {
+                            vaultState.importCsvOr1PasswordViaDialog()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Divider()
+
+                    if vaultState.hasCustomMasterPassword {
+                        MacLabeledSecureField(
+                            label: vaultState.t("security_master_password"),
+                            placeholder: "Confirm Master Password for plaintext export",
+                            text: $plainExportConfirmPassword
+                        )
+                    }
+
+                    HStack(spacing: 8) {
+                        Button(vaultState.t("export_1password_1pux_btn")) {
+                            vaultState.exportPlainFormatViaDialog(kind: "1pux", confirmMasterPw: plainExportConfirmPassword)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(vaultState.t("export_1password_csv_btn")) {
+                            vaultState.exportPlainFormatViaDialog(kind: "1p_csv", confirmMasterPw: plainExportConfirmPassword)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(vaultState.t("export_csv_btn")) {
+                            vaultState.exportPlainFormatViaDialog(kind: "sp_csv", confirmMasterPw: plainExportConfirmPassword)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(vaultState.t("export_json_btn")) {
+                            vaultState.exportPlainFormatViaDialog(kind: "json", confirmMasterPw: plainExportConfirmPassword)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if vaultState.sampleEntriesCount > 0 {
+                        Divider()
+                        Button(role: .destructive) {
+                            vaultState.deleteAllExampleData()
+                        } label: {
+                            Text(vaultState.t("action_delete_example_data", ["count": String(vaultState.sampleEntriesCount)]))
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
 
-                if updater.isDownloadingUpdate {
-                    ProgressView(value: updater.downloadProgress)
-                }
-
-                if let next = updater.availableVersion {
-                    Text("Update Available: v\(next) • SHA-256 Verified")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                } else if !updater.statusText.isEmpty {
-                    Text(updater.statusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            // 6. PRIVACY-SCRUBBED DIAGNOSTICS & ABOUT
-            Section(vaultState.t("err_diagnostics_title")) {
-                LabeledContent("Version", value: updater.currentVersionDisplay)
-                LabeledContent("KDF / Cipher", value: vaultState.t("security_kdf_badge"))
-
-                HStack(spacing: 8) {
-                    Button(vaultState.t("action_copy")) {
-                        vaultState.copyDiagnosticsReport()
+                // 4. ZERO-KNOWLEDGE SECURITY, SCREENSHOTS, BRANDING, EXPIRY WINDOW, AUTO-LOCK & EMERGENCY KIT
+                MacSectionCard(title: vaultState.t("security_section_title")) {
+                    HStack {
+                        Text("\(vaultState.t("security_secret_key")): \(vaultState.secretKeyFormatted)")
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                        Spacer()
+                        Button(vaultState.t("action_copy")) {
+                            vaultState.copyFieldWithClipboardHygiene(vaultState.secretKeyFormatted, isSensitive: true)
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .disabled(vaultState.diagnostics.isEmpty)
 
-                    Button(vaultState.t("err_clear_log")) {
-                        vaultState.clearDiagnostics()
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(vaultState.t("security_master_password"))
+                            .font(.system(size: 12, weight: .semibold))
+                        SecureField("", text: $newMasterPasswordInput, prompt: Text("•••••••••••• (min. 6)"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.large)
+                            .focused($focusedInput, equals: .masterPassword)
+                            .onChange(of: newMasterPasswordInput) { _, _ in securityValidationMessage = nil }
                     }
-                    .disabled(vaultState.diagnostics.isEmpty)
+
+                    MacLabeledTextField(
+                        label: "\(vaultState.t("security_secret_key")) (pair from another device — optional)",
+                        placeholder: "SPK-XXXX-XXXX-XXXX-XXXX",
+                        text: $pairSecretKeyInput
+                    )
+
+                    if let sMsg = securityValidationMessage {
+                        Text(sMsg)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button(vaultState.t("action_save")) {
+                            guard newMasterPasswordInput.trimmingCharacters(in: .whitespacesAndNewlines).count >= 6 else {
+                                securityValidationMessage = "⚠ Enter a Master Password (min. 6 characters) above first."
+                                focusedInput = .masterPassword
+                                return
+                            }
+                            securityValidationMessage = nil
+                            vaultState.configureVaultCredentials(
+                                newMasterPassword: newMasterPasswordInput,
+                                pairedSecretKey: pairSecretKeyInput
+                            )
+                            newMasterPasswordInput = ""
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button(vaultState.t("onboarding_download_emergency_kit")) {
+                            vaultState.exportEmergencyKitViaDialog(versionDisplay: updater.currentVersionDisplay)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    MacLabeledTextField(
+                        label: vaultState.t("emergency_kit_hint_placeholder"),
+                        placeholder: vaultState.t("emergency_kit_hint_placeholder"),
+                        text: $vaultState.masterPasswordHint
+                    )
+
+                    Divider()
+
+                    Toggle(vaultState.t("security_allow_screenshots_toggle"), isOn: $vaultState.allowScreenshots)
+                    Toggle(vaultState.t("settings_auto_download_logos_toggle"), isOn: $vaultState.autoDownloadLogos)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(vaultState.t("expiry_window_setting_title"))
+                            .font(.system(size: 12, weight: .semibold))
+                        Picker("", selection: $vaultState.expiryWindowDays) {
+                            ForEach([30, 60, 90, 180], id: \.self) { days in
+                                Text(vaultState.t("expiry_window_days_option", ["days": String(days)])).tag(days)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(vaultState.t("security_auto_lock"))
+                            .font(.system(size: 12, weight: .semibold))
+                        Picker("", selection: $vaultState.autoLockMinutes) {
+                            Text(vaultState.t("security_auto_lock_1m")).tag(1)
+                            Text(vaultState.t("security_auto_lock_5m")).tag(5)
+                            Text(vaultState.t("security_auto_lock_15m")).tag(15)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                    }
                 }
 
-                if vaultState.diagnostics.isEmpty {
-                    Text(vaultState.t("err_diagnostics_empty"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(vaultState.diagnostics.prefix(8)) { entry in
-                        Text("[\(entry.operation)] \(entry.scrubbedDetail)")
-                            .font(.system(size: 11, design: .monospaced))
+                // 5. AUTOMATED IN-APP MACOS UPDATES (Ed25519 + SHA-256)
+                MacSectionCard(title: vaultState.t("update_section_title")) {
+                    Toggle(vaultState.t("update_auto_toggle"), isOn: $updater.automaticChecksEnabled)
+
+                    HStack(spacing: 10) {
+                        Button(vaultState.t("update_check_btn") + "…") {
+                            updater.checkForUpdatesInitiatedByUser()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(updater.isChecking || updater.isDownloadingUpdate)
+
+                        if updater.availableDmgUrl != nil && updater.stagedAppBundleURL == nil {
+                            Button("Download & Verify DMG") {
+                                Task { await updater.downloadVerifyAndStageMacUpdate() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(updater.isDownloadingUpdate)
+                        }
+
+                        if updater.stagedAppBundleURL != nil {
+                            Button("Install & Relaunch") {
+                                updater.installStagedUpdateAndRelaunch()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+
+                    if updater.isDownloadingUpdate {
+                        ProgressView(value: updater.downloadProgress)
+                    }
+
+                    if let next = updater.availableVersion {
+                        Text("Update Available: v\(next) • SHA-256 Verified")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.green)
+                    } else if !updater.statusText.isEmpty {
+                        Text(updater.statusText)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                // 6. PRIVACY-SCRUBBED DIAGNOSTICS & ABOUT
+                MacSectionCard(title: vaultState.t("err_diagnostics_title")) {
+                    HStack {
+                        Text("Version")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Text(updater.currentVersionDisplay)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Text("KDF / Cipher")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Text(vaultState.t("security_kdf_badge"))
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button(vaultState.t("action_copy")) {
+                            vaultState.copyDiagnosticsReport()
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(vaultState.t("err_clear_log")) {
+                            vaultState.clearDiagnostics()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if vaultState.diagnostics.isEmpty {
+                        Text(vaultState.t("err_diagnostics_empty"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(vaultState.diagnostics.prefix(8)) { entry in
+                            Text("[\(entry.operation)] \(entry.scrubbedDetail)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
             }
+            .padding(24)
+            .padding(.bottom, 54)
         }
-        .formStyle(.grouped)
-        .padding(.bottom, 50)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
     }
 }

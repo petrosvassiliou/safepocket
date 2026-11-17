@@ -2498,8 +2498,12 @@ private fun SafePocketSettingsDialog(
                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         SmoothPrimaryButton(
-                                            enabled = !busyOperation && cloudEmail.contains("@") && cloudPassword.length >= 6,
+                                            enabled = !busyOperation,
                                             onClick = {
+                                                if (!cloudEmail.trim().contains("@") || cloudPassword.length < 6) {
+                                                    statusFeedback = "⚠ ${i18n.t("cloud_auth_email")} & ${i18n.t("cloud_auth_password")} (min. 6 chars) required"
+                                                    return@SmoothPrimaryButton
+                                                }
                                                 coroutineScope.launch {
                                                     busyOperation = true
                                                     runCatching {
@@ -2516,8 +2520,12 @@ private fun SafePocketSettingsDialog(
                                             Text(i18n.t("cloud_auth_create_btn"))
                                         }
                                         SmoothTonalButton(
-                                            enabled = !busyOperation && cloudEmail.contains("@") && cloudPassword.length >= 6,
+                                            enabled = !busyOperation,
                                             onClick = {
+                                                if (!cloudEmail.trim().contains("@") || cloudPassword.length < 6) {
+                                                    statusFeedback = "⚠ ${i18n.t("cloud_auth_email")} & ${i18n.t("cloud_auth_password")} (min. 6 chars) required"
+                                                    return@SmoothTonalButton
+                                                }
                                                 coroutineScope.launch {
                                                     busyOperation = true
                                                     runCatching {
@@ -2664,8 +2672,12 @@ private fun SafePocketSettingsDialog(
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 SmoothPrimaryButton(
-                                    enabled = !busyOperation && newMasterPassword.length >= 6,
+                                    enabled = !busyOperation,
                                     onClick = {
+                                        if (newMasterPassword.trim().length < 6) {
+                                            statusFeedback = "⚠ ${i18n.t("security_master_password")} (min. 6 chars) required"
+                                            return@SmoothPrimaryButton
+                                        }
                                         coroutineScope.launch {
                                             busyOperation = true
                                             runCatching {
@@ -2808,8 +2820,12 @@ private fun SafePocketSettingsDialog(
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 SmoothPrimaryButton(
-                                    enabled = !busyOperation && backupPassword.length >= 4,
+                                    enabled = !busyOperation,
                                     onClick = {
+                                        if (backupPassword.length < 4) {
+                                            statusFeedback = "⚠ Backup password (min. 4 chars) required"
+                                            return@SmoothPrimaryButton
+                                        }
                                         coroutineScope.launch {
                                             busyOperation = true
                                             runCatching {
@@ -2825,8 +2841,12 @@ private fun SafePocketSettingsDialog(
                                     Text("🔐 ${i18n.t("backup_export_encrypted")}")
                                 }
                                 SmoothTonalButton(
-                                    enabled = !busyOperation && backupPassword.isNotBlank(),
+                                    enabled = !busyOperation,
                                     onClick = {
+                                        if (backupPassword.isBlank()) {
+                                            statusFeedback = "⚠ Enter backup password above before restoring"
+                                            return@SmoothTonalButton
+                                        }
                                         restoreReplaceExisting = false
                                         openRestoreContainerLauncher.launch(arrayOf("*/*"))
                                     }
@@ -2834,8 +2854,12 @@ private fun SafePocketSettingsDialog(
                                     Text("📥 ${i18n.t("restore_mode_merge")}")
                                 }
                                 SmoothOutlinedButton(
-                                    enabled = !busyOperation && backupPassword.isNotBlank(),
+                                    enabled = !busyOperation,
                                     onClick = {
+                                        if (backupPassword.isBlank()) {
+                                            statusFeedback = "⚠ Enter backup password above before restoring"
+                                            return@SmoothOutlinedButton
+                                        }
                                         restoreReplaceExisting = true
                                         openRestoreContainerLauncher.launch(arrayOf("*/*"))
                                     }

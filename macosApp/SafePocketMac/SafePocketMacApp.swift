@@ -7,16 +7,44 @@ import Foundation
 import UniformTypeIdentifiers
 
 /// Native macOS Desktop Entry Point adhering strictly to Apple Human Interface Guidelines (HIG).
-/// SafePocket v0.3.1 (Build 6):
+/// SafePocket v0.3.2 (Build 7):
+/// - Foreground AppKit activation (`NSApplication.ActivationPolicy.regular` + `makeKeyAndOrderFront`) so every window, dialog, and text input receives active focus
 /// - 100% Feature & Settings Parity with Android / Googlebook OS & ChromeOS / Web PWA
 /// - 6-Language Localization (`en`, `de`, `it`, `fr`, `es`, `el` + System Default) via bundled `i18n/*.arb.json`
 /// - Mutually exclusive Local Storage vs Cloud Sync (clean radio buttons) with full Firebase Zero-Knowledge Auth & Endpoint Config + automatic offline sync
 /// - Real in-app automated updates (Ed25519 + SHA-256 verified manifest & DMG staging via hdiutil)
+final class SafePocketMacAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.regular)
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async {
+            for window in NSApplication.shared.windows where window.canBecomeKey {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if NSApplication.shared.keyWindow == nil {
+            NSApplication.shared.windows.first(where: { $0.isVisible && $0.canBecomeKey })?.makeKeyAndOrderFront(nil)
+        }
+    }
+}
+
 @main
 struct SafePocketMacApp: App {
+    @NSApplicationDelegateAdaptor(SafePocketMacAppDelegate.self) private var appDelegate
     @StateObject private var vaultState = MacVaultViewModel()
     @StateObject private var updater = MacSparkleUpdateController()
     @AppStorage("safepocket.theme_mode") private var themeMode: String = "light"
+
+    init() {
+        NSApplication.shared.setActivationPolicy(.regular)
+    }
 
     private var resolvedColorScheme: ColorScheme? {
         switch themeMode {
@@ -32,6 +60,10 @@ struct SafePocketMacApp: App {
                 .frame(minWidth: 1040, minHeight: 680)
                 .preferredColorScheme(resolvedColorScheme)
                 .tint(vaultState.materialAccent.swiftUIColor)
+                .onAppear {
+                    NSApplication.shared.setActivationPolicy(.regular)
+                    NSApplication.shared.activate(ignoringOtherApps: true)
+                }
                 .task {
                     vaultState.applyWindowScreenshotProtection()
                     await updater.performAutomaticStartupCheckIfEnabled()
@@ -68,9 +100,12 @@ struct SafePocketMacApp: App {
 
         Settings {
             MacSettingsAndAboutView(vaultState: vaultState, updater: updater)
-                .frame(width: 720, height: 700)
+                .frame(minWidth: 740, minHeight: 700)
                 .preferredColorScheme(resolvedColorScheme)
                 .tint(vaultState.materialAccent.swiftUIColor)
+                .onAppear {
+                    NSApplication.shared.activate(ignoringOtherApps: true)
+                }
         }
     }
 }
@@ -110,9 +145,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3.1"
-    let currentVersionCode = 6
-    let currentVersionDisplay = "SafePocket v0.3.1 (Build 6)"
+    let currentVersionName = "0.3.2"
+    let currentVersionCode = 7
+    let currentVersionDisplay = "SafePocket v0.3.2 (Build 7)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -568,9 +603,13 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     func applyWindowScreenshotProtection() {
+        NSApplication.shared.setActivationPolicy(.regular)
         let sharing: NSWindow.SharingType = allowScreenshots ? .readOnly : .none
         for window in NSApplication.shared.windows {
             window.sharingType = sharing
+        }
+        if NSApplication.shared.keyWindow == nil {
+            NSApplication.shared.windows.first(where: { $0.isVisible && $0.canBecomeKey })?.makeKeyAndOrderFront(nil)
         }
     }
 
