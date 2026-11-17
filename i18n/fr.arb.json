@@ -302,7 +302,7 @@
   "sync_pill_syncing": "Synchronisation Cloud…",
   "sync_pill_cloud_offline_armed": "Cloud hors-ligne prêt • Auto-Sync ({queued})",
   "sync_pill_error": "Alerte Sync • Voir détails",
-  "storage_mode_section_title": "Mode de stockage du coffre (Exclusif)",
+  "storage_mode_section_title": "Mode de stockage du coffre",
   "storage_mode_local_only_title": "Stockage local uniquement (BD chiffrée appareil)",
   "storage_mode_local_only_desc": "Stocké exclusivement sur cet appareil. La synchronisation cloud est désactivée.",
   "storage_mode_cloud_only_title": "Cloud Sync uniquement (Zero-Knowledge + Hors-ligne auto)",

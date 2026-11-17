@@ -302,7 +302,7 @@
   "sync_pill_syncing": "Sincronizzazione Cloud…",
   "sync_pill_cloud_offline_armed": "Cloud pronto offline • Auto-Sync ({queued})",
   "sync_pill_error": "Attenzione Sync • Dettagli",
-  "storage_mode_section_title": "Modalità di archiviazione (Esclusiva)",
+  "storage_mode_section_title": "Modalità di archiviazione",
   "storage_mode_local_only_title": "Solo archiviazione locale (DB cifrato sul dispositivo)",
   "storage_mode_local_only_desc": "Archiviato solo su questo dispositivo. Cloud Sync è disattivato e nessun dato viene salvato online.",
   "storage_mode_cloud_only_title": "Solo Cloud Sync (Zero-Knowledge + Offline automatico)",

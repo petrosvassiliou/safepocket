@@ -73,6 +73,8 @@ import com.safepocket.shared.update.UpdateCheckState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -184,17 +186,51 @@ fun AdaptiveSafePocketShell(
         searchEngine.sortItems(searched, VaultSortMode.PINNED_RECENT)
     }
 
+    val prefs = remember(context) {
+        context.getSharedPreferences("safepocket_android_prefs", Context.MODE_PRIVATE)
+    }
+    var materialAccentId by remember {
+        mutableStateOf(prefs.getString("material_accent_id", "emerald") ?: "emerald")
+    }
+    var expiryWindowDays by remember {
+        val saved = prefs.getInt("expiry_window_days", 90)
+        mutableIntStateOf(if (saved in listOf(30, 60, 90, 180)) saved else 90)
+    }
+    var autoLockMinutes by remember {
+        val saved = prefs.getInt("auto_lock_minutes", 5)
+        mutableIntStateOf(if (saved in listOf(1, 5, 15)) saved else 5)
+    }
+
+    LaunchedEffect(autoLockMinutes, isVaultLocked, items, selectedItem, searchQuery, showSettingsDialog, showEditorDialog) {
+        if (!isVaultLocked) {
+            delay(autoLockMinutes.coerceAtLeast(1) * 60_000L)
+            onLockVault()
+        }
+    }
+
     val useDarkTheme = when (themePreference) {
         ThemePreference.LIGHT -> false
         ThemePreference.DARK -> true
         ThemePreference.SYSTEM -> isSystemInDarkTheme()
     }
+    val accentPrimaryLight = when (materialAccentId) {
+        "ocean" -> Color(0xFF1D6EC7)
+        "terracotta" -> Color(0xFFC25730)
+        "slate" -> Color(0xFF455A70)
+        else -> Color(0xFF148F73) // emerald
+    }
+    val accentPrimaryDark = when (materialAccentId) {
+        "ocean" -> Color(0xFF7CB8FF)
+        "terracotta" -> Color(0xFFFFB59C)
+        "slate" -> Color(0xFFAEC6DF)
+        else -> Color(0xFF5EEAD4) // emerald
+    }
     val supportsDynamicColor = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
     val colorScheme = when {
         useDeviceDynamicColor && supportsDynamicColor && useDarkTheme -> dynamicDarkColorScheme(context)
         useDeviceDynamicColor && supportsDynamicColor && !useDarkTheme -> dynamicLightColorScheme(context)
-        useDarkTheme -> darkColorScheme()
-        else -> lightColorScheme()
+        useDarkTheme -> darkColorScheme(primary = accentPrimaryDark)
+        else -> lightColorScheme(primary = accentPrimaryLight)
     }
 
     val cycleTheme: () -> Unit = {
@@ -783,10 +819,26 @@ fun AdaptiveSafePocketShell(
                     if (showSettingsDialog) {
                         SafePocketSettingsDialog(
                             i18n = i18n,
+                            items = items,
                             themePreference = themePreference,
                             useDeviceDynamicColor = useDeviceDynamicColor,
+                            materialAccentId = materialAccentId,
+                            onSelectMaterialAccent = { nextAccent ->
+                                materialAccentId = nextAccent
+                                prefs.edit().putString("material_accent_id", nextAccent).apply()
+                            },
                             allowScreenshots = allowScreenshots,
                             autoDownloadLogos = autoDownloadLogos,
+                            expiryWindowDays = expiryWindowDays,
+                            onSelectExpiryWindowDays = { days ->
+                                expiryWindowDays = days
+                                prefs.edit().putInt("expiry_window_days", days).apply()
+                            },
+                            autoLockMinutes = autoLockMinutes,
+                            onSelectAutoLockMinutes = { mins ->
+                                autoLockMinutes = mins
+                                prefs.edit().putInt("auto_lock_minutes", mins).apply()
+                            },
                             manualLocaleOverride = manualLocaleOverride,
                             localDbStatus = localDbStatus,
                             cloudSyncStatus = cloudSyncStatus,
@@ -2043,10 +2095,17 @@ private fun VaultItemEditorDialog(
 @Composable
 private fun SafePocketSettingsDialog(
     i18n: LocalizationEngine,
+    items: List<VaultItemPayload> = emptyList(),
     themePreference: ThemePreference,
     useDeviceDynamicColor: Boolean,
+    materialAccentId: String = "emerald",
+    onSelectMaterialAccent: (String) -> Unit = {},
     allowScreenshots: Boolean,
     autoDownloadLogos: Boolean,
+    expiryWindowDays: Int = 90,
+    onSelectExpiryWindowDays: (Int) -> Unit = {},
+    autoLockMinutes: Int = 5,
+    onSelectAutoLockMinutes: (Int) -> Unit = {},
     manualLocaleOverride: SupportedLocale?,
     localDbStatus: LocalEncryptedDbStatus?,
     cloudSyncStatus: CloudSyncStatusSnapshot?,
@@ -2083,6 +2142,9 @@ private fun SafePocketSettingsDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val settingsPrefs = remember(context) {
+        context.getSharedPreferences("safepocket_android_prefs", Context.MODE_PRIVATE)
+    }
 
     val currentStorageMode = cloudSyncStatus?.storageMode ?: VaultStorageMode.LOCAL_ONLY
     var desiredModeTab by remember(currentStorageMode) { mutableStateOf(currentStorageMode) }
@@ -2090,13 +2152,32 @@ private fun SafePocketSettingsDialog(
     var statusFeedback by remember { mutableStateOf<String?>(null) }
     var busyOperation by remember { mutableStateOf(false) }
 
-    // Master Password + Secret Key inputs
+    // Master Password + Secret Key + Hint inputs
     var newMasterPassword by remember { mutableStateOf("") }
     var pairSecretKeyInput by remember { mutableStateOf("") }
+    var masterPasswordHint by remember {
+        mutableStateOf(settingsPrefs.getString("master_pw_hint", "") ?: "")
+    }
 
-    // Firebase Cloud Sync inputs
+    // Cloud Provider + Firebase / Google Drive + Endpoint Config inputs
+    var selectedCloudProvider by remember {
+        mutableStateOf(settingsPrefs.getString("cloud_provider_id", "FIREBASE") ?: "FIREBASE")
+    }
     var cloudEmail by remember { mutableStateOf(cloudSyncStatus?.signedInEmail.orEmpty()) }
     var cloudPassword by remember { mutableStateOf("") }
+    var showCloudEndpointConfig by remember { mutableStateOf(false) }
+    var firebaseProjectId by remember {
+        mutableStateOf(settingsPrefs.getString("cfg_fb_project_id", cloudSyncStatus?.projectId ?: "safepocket-vault-eu") ?: "safepocket-vault-eu")
+    }
+    var firebaseApiKey by remember {
+        mutableStateOf(settingsPrefs.getString("cfg_fb_api_key", "AIzaSyBCeyZx121Eq5xxyWZD4k3w1-9vyr0yIsw") ?: "")
+    }
+    var firebaseBucket by remember {
+        mutableStateOf(settingsPrefs.getString("cfg_fb_bucket", "safepocket-vault-eu.firebasestorage.app") ?: "safepocket-vault-eu.firebasestorage.app")
+    }
+    var gdriveBearerToken by remember {
+        mutableStateOf(settingsPrefs.getString("cfg_gdrive_token", "") ?: "")
+    }
 
     // Backup & Portability inputs
     var backupPassword by remember { mutableStateOf("") }
@@ -2212,50 +2293,75 @@ private fun SafePocketSettingsDialog(
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                SmoothFilterPill(
-                                    selected = desiredModeTab == VaultStorageMode.LOCAL_ONLY,
-                                    onClick = {
-                                        desiredModeTab = VaultStorageMode.LOCAL_ONLY
-                                        if (currentStorageMode != VaultStorageMode.LOCAL_ONLY) {
-                                            coroutineScope.launch {
-                                                busyOperation = true
-                                                runCatching {
-                                                    onSwitchStorageMode(VaultStorageMode.LOCAL_ONLY)
-                                                    statusFeedback = "✓ ${i18n.t("storage_mode_local_only_title")}"
-                                                }.onFailure { err ->
-                                                    statusFeedback = "⚠ ${err.message}"
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            desiredModeTab = VaultStorageMode.LOCAL_ONLY
+                                            if (currentStorageMode != VaultStorageMode.LOCAL_ONLY) {
+                                                coroutineScope.launch {
+                                                    busyOperation = true
+                                                    runCatching {
+                                                        onSwitchStorageMode(VaultStorageMode.LOCAL_ONLY)
+                                                        statusFeedback = "✓ ${i18n.t("storage_mode_local_only_title")}"
+                                                    }.onFailure { err ->
+                                                        statusFeedback = "⚠ ${err.message}"
+                                                    }
+                                                    busyOperation = false
                                                 }
-                                                busyOperation = false
                                             }
                                         }
-                                    },
-                                    label = "💾 ${i18n.t("storage_mode_local_only_title")}"
-                                )
-                                SmoothFilterPill(
-                                    selected = desiredModeTab == VaultStorageMode.CLOUD_SYNC,
-                                    onClick = {
-                                        desiredModeTab = VaultStorageMode.CLOUD_SYNC
-                                        if (!cloudSyncStatus?.signedInEmail.isNullOrBlank() &&
-                                            currentStorageMode != VaultStorageMode.CLOUD_SYNC
-                                        ) {
-                                            coroutineScope.launch {
-                                                busyOperation = true
-                                                runCatching {
-                                                    onSwitchStorageMode(VaultStorageMode.CLOUD_SYNC)
-                                                    statusFeedback = "✓ ${i18n.t("storage_mode_cloud_only_title")}"
-                                                }.onFailure { err ->
-                                                    statusFeedback = "⚠ ${err.message}"
+                                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                                ) {
+                                    RadioButton(
+                                        selected = desiredModeTab == VaultStorageMode.LOCAL_ONLY,
+                                        onClick = null
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = i18n.t("storage_mode_local_only_title"),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            desiredModeTab = VaultStorageMode.CLOUD_SYNC
+                                            if (!cloudSyncStatus?.signedInEmail.isNullOrBlank() &&
+                                                currentStorageMode != VaultStorageMode.CLOUD_SYNC
+                                            ) {
+                                                coroutineScope.launch {
+                                                    busyOperation = true
+                                                    runCatching {
+                                                        onSwitchStorageMode(VaultStorageMode.CLOUD_SYNC)
+                                                        statusFeedback = "✓ ${i18n.t("storage_mode_cloud_only_title")}"
+                                                    }.onFailure { err ->
+                                                        statusFeedback = "⚠ ${err.message}"
+                                                    }
+                                                    busyOperation = false
                                                 }
-                                                busyOperation = false
                                             }
                                         }
-                                    },
-                                    label = "☁ ${i18n.t("storage_mode_cloud_only_title")}"
-                                )
+                                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                                ) {
+                                    RadioButton(
+                                        selected = desiredModeTab == VaultStorageMode.CLOUD_SYNC,
+                                        onClick = null
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = i18n.t("storage_mode_cloud_only_title"),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
 
                             if (desiredModeTab == VaultStorageMode.LOCAL_ONLY) {
@@ -2277,7 +2383,46 @@ private fun SafePocketSettingsDialog(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                if (!cloudSyncStatus?.signedInEmail.isNullOrBlank()) {
+
+                                // Cloud Service Radio Selection (Firebase vs Google Drive appDataFolder)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    listOf(
+                                        "FIREBASE" to i18n.t("sync_provider_firebase"),
+                                        "GDRIVE_APPDATA" to i18n.t("sync_provider_gdrive")
+                                    ).forEach { (pid, label) ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    selectedCloudProvider = pid
+                                                    settingsPrefs.edit().putString("cloud_provider_id", pid).apply()
+                                                }
+                                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        ) {
+                                            RadioButton(selected = selectedCloudProvider == pid, onClick = null)
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(label, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                }
+
+                                if (selectedCloudProvider == "GDRIVE_APPDATA") {
+                                    OutlinedTextField(
+                                        value = gdriveBearerToken,
+                                        onValueChange = {
+                                            gdriveBearerToken = it
+                                            settingsPrefs.edit().putString("cfg_gdrive_token", it).apply()
+                                        },
+                                        label = { Text(i18n.t("cloud_bearer_token")) },
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                } else if (!cloudSyncStatus?.signedInEmail.isNullOrBlank()) {
                                     Text(
                                         text = i18n.t(
                                             "cloud_auth_signed_in_as",
@@ -2390,6 +2535,46 @@ private fun SafePocketSettingsDialog(
                                         }
                                     }
                                 }
+
+                                // Collapsible Cloud Endpoint Configuration (Parity with macOS & ChromeOS PWA)
+                                SmoothTextButton(
+                                    onClick = { showCloudEndpointConfig = !showCloudEndpointConfig }
+                                ) {
+                                    Text("${if (showCloudEndpointConfig) "▾" else "▸"} ${i18n.t("cloud_config_title")}")
+                                }
+                                if (showCloudEndpointConfig) {
+                                    OutlinedTextField(
+                                        value = firebaseProjectId,
+                                        onValueChange = {
+                                            firebaseProjectId = it
+                                            settingsPrefs.edit().putString("cfg_fb_project_id", it).apply()
+                                        },
+                                        label = { Text(i18n.t("cloud_firebase_project_id")) },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = firebaseApiKey,
+                                        onValueChange = {
+                                            firebaseApiKey = it
+                                            settingsPrefs.edit().putString("cfg_fb_api_key", it).apply()
+                                        },
+                                        label = { Text(i18n.t("cloud_firebase_api_key")) },
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    OutlinedTextField(
+                                        value = firebaseBucket,
+                                        onValueChange = {
+                                            firebaseBucket = it
+                                            settingsPrefs.edit().putString("cfg_fb_bucket", it).apply()
+                                        },
+                                        label = { Text(i18n.t("cloud_firebase_bucket")) },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
                             }
 
                             if (exampleItemsCount > 0) {
@@ -2461,6 +2646,16 @@ private fun SafePocketSettingsDialog(
                                 value = pairSecretKeyInput,
                                 onValueChange = { pairSecretKeyInput = it },
                                 label = { Text("${i18n.t("security_secret_key")} (SPK-… / Recovery URI — optional)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = masterPasswordHint,
+                                onValueChange = {
+                                    masterPasswordHint = it
+                                    settingsPrefs.edit().putString("master_pw_hint", it).apply()
+                                },
+                                label = { Text(i18n.t("emergency_kit_hint_placeholder")) },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -2745,12 +2940,28 @@ private fun SafePocketSettingsDialog(
                                 ) {
                                     Text(i18n.t("export_csv_btn"))
                                 }
+                                SmoothOutlinedButton(
+                                    enabled = !busyOperation,
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            if (!onVerifyMasterPassword(exportConfirmMasterPw)) {
+                                                statusFeedback = "⚠ Invalid Master Password"
+                                                return@launch
+                                            }
+                                            val prettyJson = Json { prettyPrint = true }.encodeToString(items)
+                                            pendingSaveBytes = prettyJson.encodeToByteArray()
+                                            saveDocumentLauncher.launch("safepocket-vault.json")
+                                        }
+                                    }
+                                ) {
+                                    Text(i18n.t("export_json_btn"))
+                                }
                             }
                         }
                     }
 
                     // -----------------------------------------------------------------
-                    // 5. SECURITY & AUTOMATIC BRAND LOGO DOWNLOAD
+                    // 5. SECURITY, EXPIRY WINDOW, AUTO-LOCK & BRAND LOGO DOWNLOAD
                     // -----------------------------------------------------------------
                     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2804,11 +3015,51 @@ private fun SafePocketSettingsDialog(
                                     onCheckedChange = onToggleAutoDownloadLogos
                                 )
                             }
+                            HorizontalDivider()
+                            Text(
+                                text = i18n.t("expiry_window_setting_title"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(30, 60, 90, 180).forEach { days ->
+                                    SmoothFilterPill(
+                                        selected = expiryWindowDays == days,
+                                        onClick = { onSelectExpiryWindowDays(days) },
+                                        label = i18n.t("expiry_window_days_option", mapOf("days" to days))
+                                    )
+                                }
+                            }
+                            HorizontalDivider()
+                            Text(
+                                text = i18n.t("security_auto_lock"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(
+                                    1 to i18n.t("security_auto_lock_1m"),
+                                    5 to i18n.t("security_auto_lock_5m"),
+                                    15 to i18n.t("security_auto_lock_15m")
+                                ).forEach { (mins, label) ->
+                                    SmoothFilterPill(
+                                        selected = autoLockMinutes == mins,
+                                        onClick = { onSelectAutoLockMinutes(mins) },
+                                        label = label
+                                    )
+                                }
+                            }
                         }
                     }
 
                     // -----------------------------------------------------------------
-                    // 6. APPEARANCE & LANGUAGE (SEAM-FREE HOVER PILLS — NO GRAY LINE!)
+                    // 6. APPEARANCE, ACCENT COLOR & LANGUAGE (SEAM-FREE HOVER PILLS)
                     // -----------------------------------------------------------------
                     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2851,6 +3102,26 @@ private fun SafePocketSettingsDialog(
                                     checked = useDeviceDynamicColor,
                                     onCheckedChange = onToggleDeviceDynamicColor
                                 )
+                            }
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(
+                                    "emerald" to i18n.t("material_color_emerald"),
+                                    "ocean" to i18n.t("material_color_ocean"),
+                                    "terracotta" to i18n.t("material_color_terracotta"),
+                                    "slate" to i18n.t("material_color_slate")
+                                ).forEach { (accentId, label) ->
+                                    SmoothFilterPill(
+                                        selected = !useDeviceDynamicColor && materialAccentId == accentId,
+                                        onClick = {
+                                            if (useDeviceDynamicColor) onToggleDeviceDynamicColor(false)
+                                            onSelectMaterialAccent(accentId)
+                                        },
+                                        label = label
+                                    )
+                                }
                             }
                             HorizontalDivider()
                             Text(
@@ -2898,8 +3169,21 @@ private fun SafePocketSettingsDialog(
                                     modifier = Modifier.weight(1f)
                                 )
                                 if (diagnosticEvents.isNotEmpty()) {
-                                    SmoothTextButton(onClick = onClearDiagnosticsLog) {
-                                        Text(i18n.t("err_clear_log"))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        SmoothTextButton(
+                                            onClick = {
+                                                val report = diagnosticEvents.joinToString("\n") { ev ->
+                                                    "[${ev.code}] ${ev.operation}: ${ev.scrubbedDetail}"
+                                                }
+                                                onCopyToClipboard("Diagnostics", report, false)
+                                                statusFeedback = "✓ ${i18n.t("action_copied")}"
+                                            }
+                                        ) {
+                                            Text(i18n.t("action_copy"))
+                                        }
+                                        SmoothTextButton(onClick = onClearDiagnosticsLog) {
+                                            Text(i18n.t("err_clear_log"))
+                                        }
                                     }
                                 }
                             }

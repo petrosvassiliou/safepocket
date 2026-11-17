@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.1').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '5');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '6');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-17T00:45:00Z',
+    publishedAt: '2026-11-17T07:00:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} delivers intelligent field dropdowns, international phone prefixes, live HTTPS website verification, and IBAN cross-field autofill.\n• Mutually exclusive Local Storage Only vs Cloud Sync Only with 100% automatic zero-input offline support, bottom-right sync status pill, swipe actions, right-click menus, and one-tap Delete Example Data.\n• Play Protect compliant Android/Googlebook OS updates, in-app macOS Ed25519+SHA-256 DMG updates, studio app icon, zero-artifact button hover, and privacy-scrubbed diagnostics.`,
-      de: `• SafePocket v${latestVersion} bietet intelligente Auswahlfelder (z. B. Kontoart), internationale Telefonvorwahlen, Live-HTTPS-Webseitenprüfung und IBAN-Auto-Ausfüllung.\n• Strikte Trennung zwischen Nur lokaler Speicher und Nur Cloud-Sync mit 100 % automatischer Offline-Unterstützung ohne Benutzereingriff, Sync-Status unten rechts, Wischgesten, Rechtsklick-Menüs und Beispieldaten-Löschung.\n• Play-Protect-konforme Updates für Android/Googlebook OS, automatische In-App-Updates unter macOS, neues App-Icon, nahtloser Button-Hover ohne graue Linie und datenschutzbereinigte Diagnose.`,
-      it: `• SafePocket v${latestVersion} introduce menu a discesa intelligenti, prefissi telefonici internazionali, verifica live dei siti HTTPS e compilazione automatica da IBAN.\n• Modalità esclusiva Solo archiviazione locale o Solo Cloud Sync con supporto offline 100% automatico, indicatore sync in basso a destra, azioni a scorrimento, menu contestuali ed eliminazione dati di esempio.\n• Aggiornamenti conformi a Play Protect su Android/Googlebook OS, aggiornamenti automatici in-app su macOS, nuova icona studio, hover fluido e diagnostica oscurata.`,
-      fr: `• SafePocket v${latestVersion} propose des listes déroulantes intelligentes, indicatifs téléphoniques internationaux, vérification HTTPS en direct et saisie automatique via IBAN.\n• Mode exclusif Stockage local uniquement ou Cloud Sync uniquement avec mode hors-ligne 100 % automatique, statut de synchro en bas à droite, gestes de balayage, menus clic droit et suppression des exemples.\n• Mises à jour conformes Play Protect sur Android/Googlebook OS, mises à jour automatiques intégrées sur macOS, nouvelle icône, survol sans artefact et journal de diagnostic nettoyé.`,
-      es: `• SafePocket v${latestVersion} incorpora desplegables inteligentes, prefijos telefónicos internacionales, verificación web HTTPS en vivo y autocompletado por IBAN.\n• Modo exclusivo Solo almacenamiento local o Solo Cloud Sync con soporte sin conexión 100 % automático, estado de sincronización abajo a la derecha, gestos de deslizamiento, menús contextuales y borrado de datos de ejemplo.\n• Actualizaciones compatibles con Play Protect en Android/Googlebook OS, actualizaciones automáticas integradas en macOS, nuevo icono, hover limpio y diagnóstico depurado.`,
-      el: `• Το SafePocket v${latestVersion} προσφέρει έξυπνες αναπτυσσόμενες λίστες, διεθνή προθέματα τηλεφώνου, ζωντανό έλεγχο ιστοσελίδων HTTPS και αυτόματη συμπλήρωση μέσω IBAN.\n• Αποκλειστική επιλογή Μόνο τοπική αποθήκευση ή Μόνο Cloud Sync με 100% αυτόματη λειτουργία εκτός σύνδεσης, ένδειξη συγχρονισμού κάτω δεξιά, κινήσεις κύλισης (swipe), μενού δεξιού κλικ και διαγραφή δεδομένων παραδείγματος.\n• Αυτόματες ενημερώσεις συμβατές με Play Protect σε Android/Googlebook OS, ενσωματωμένες ενημερώσεις στο macOS, νέο εικονίδιο, καθαρό hover κουμπιών και αρχείο διαγνωστικών.`
+      en: `• SafePocket v${latestVersion} delivers 100% Settings & Feature Parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.\n• Full Firebase Zero-Knowledge Cloud Sync login, account creation, and endpoint configuration on macOS, plus clean radio-button Storage Mode selection.\n• Bundled 6-language selection (EN, DE, IT, FR, ES, EL + System Default) on macOS alongside encrypted .safepocket backup/restore, 1Password & CSV portability, and security controls.`,
+      de: `• SafePocket v${latestVersion} bietet 100 % Funktions- und Einstellungsparität über macOS, Android / Googlebook OS und ChromeOS / Web PWA hinweg.\n• Vollständige Firebase-Zero-Knowledge-Cloud-Sync-Anmeldung, Kontoerstellung und Endpunktkonfiguration unter macOS sowie klare Optionsfelder für den Tresor-Speichermodus.\n• Integrierte 6-Sprachen-Auswahl (EN, DE, IT, FR, ES, EL + Systemstandard) unter macOS inklusive verschlüsseltem .safepocket-Backup, 1Password-/CSV-Portabilität und Sicherheitsoptionen.`,
+      it: `• SafePocket v${latestVersion} offre il 100% di parità di funzioni e impostazioni tra macOS, Android / Googlebook OS e ChromeOS / Web PWA.\n• Accesso completo a Firebase Cloud Sync Zero-Knowledge, creazione account e configurazione endpoint su macOS, con pulsanti radio puliti per la modalità di archiviazione.\n• Selezione di 6 lingue (EN, DE, IT, FR, ES, EL + Predefinita di sistema) su macOS con backup cifrato .safepocket, portabilità 1Password/CSV e controlli di sicurezza.`,
+      fr: `• SafePocket v${latestVersion} assure une parité à 100 % des options et fonctionnalités sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.\n• Connexion Firebase Cloud Sync Zero-Knowledge complète, création de compte et configuration des points de terminaison sur macOS, avec boutons radio épurés pour le mode de stockage.\n• Sélection de 6 langues intégrée sur macOS avec sauvegarde chiffrée .safepocket, import/export 1Password et CSV, et options de sécurité.`,
+      es: `• SafePocket v${latestVersion} ofrece un 100 % de paridad de funciones y ajustes en macOS, Android / Googlebook OS y ChromeOS / Web PWA.\n• Inicio de sesión completo en Firebase Cloud Sync Zero-Knowledge, creación de cuenta y configuración de endpoints en macOS, además de botones de opción limpios para el modo de almacenamiento.\n• Selector de 6 idiomas integrado en macOS junto con copia cifrada .safepocket, portabilidad 1Password/CSV y controles de seguridad.`,
+      el: `• Το SafePocket v${latestVersion} προσφέρει 100% ισοτιμία ρυθμίσεων και λειτουργιών σε macOS, Android / Googlebook OS και ChromeOS / Web PWA.\n• Πλήρης σύνδεση, δημιουργία λογαριασμού και ρύθμιση παραμέτρων Firebase Zero-Knowledge Cloud Sync στο macOS, καθώς και καθαρά κουμπιά επιλογής (radio buttons) για τη λειτουργία αποθήκευσης.\n• Ενσωματωμένη επιλογή 6 γλωσσών (EN, DE, IT, FR, ES, EL + Προεπιλογή συστήματος) στο macOS μαζί με κρυπτογραφημένο αντίγραφο .safepocket, φορητότητα 1Password/CSV και ρυθμίσεις ασφαλείας.`
     },
     artifacts: {
       'android-universal': {

@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
-  "latestVersion": "0.3",
-  "versionCode": 5,
+  "latestVersion": "0.3.1",
+  "versionCode": 6,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-17T00:45:00Z",
+  "publishedAt": "2026-11-17T07:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:313b0ec2bfcb3bd5bc348a4e8ea416bcf76638a612d495d5b448bba20ba3955521ad29278a3b685b1d60bcbf3945280727b9eb087517dba31907171bc742ad0b",
+  "manifestSignature": "ed25519:993bb30e29535d9376582ef64487ce8f32b4e6e95978a68493228107f1c032113b893701e299c85bddcd9e046bb4ccc393b7d8d7c2a379e170742bdbf44de308",
   "releaseNotes": {
-    "en": "• SafePocket v0.3 delivers intelligent field dropdowns, international phone prefixes, live HTTPS website verification, and IBAN cross-field autofill.\n• Mutually exclusive Local Storage Only vs Cloud Sync Only with 100% automatic zero-input offline support, bottom-right sync status pill, swipe actions, right-click menus, and one-tap Delete Example Data.\n• Play Protect compliant Android/Googlebook OS updates, in-app macOS Ed25519+SHA-256 DMG updates, studio app icon, zero-artifact button hover, and privacy-scrubbed diagnostics.",
-    "de": "• SafePocket v0.3 bietet intelligente Auswahlfelder (z. B. Kontoart), internationale Telefonvorwahlen, Live-HTTPS-Webseitenprüfung und IBAN-Auto-Ausfüllung.\n• Strikte Trennung zwischen Nur lokaler Speicher und Nur Cloud-Sync mit 100 % automatischer Offline-Unterstützung ohne Benutzereingriff, Sync-Status unten rechts, Wischgesten, Rechtsklick-Menüs und Beispieldaten-Löschung.\n• Play-Protect-konforme Updates für Android/Googlebook OS, automatische In-App-Updates unter macOS, neues App-Icon, nahtloser Button-Hover ohne graue Linie und datenschutzbereinigte Diagnose.",
-    "it": "• SafePocket v0.3 introduce menu a discesa intelligenti, prefissi telefonici internazionali, verifica live dei siti HTTPS e compilazione automatica da IBAN.\n• Modalità esclusiva Solo archiviazione locale o Solo Cloud Sync con supporto offline 100% automatico, indicatore sync in basso a destra, azioni a scorrimento, menu contestuali ed eliminazione dati di esempio.\n• Aggiornamenti conformi a Play Protect su Android/Googlebook OS, aggiornamenti automatici in-app su macOS, nuova icona studio, hover fluido e diagnostica oscurata.",
-    "fr": "• SafePocket v0.3 propose des listes déroulantes intelligentes, indicatifs téléphoniques internationaux, vérification HTTPS en direct et saisie automatique via IBAN.\n• Mode exclusif Stockage local uniquement ou Cloud Sync uniquement avec mode hors-ligne 100 % automatique, statut de synchro en bas à droite, gestes de balayage, menus clic droit et suppression des exemples.\n• Mises à jour conformes Play Protect sur Android/Googlebook OS, mises à jour automatiques intégrées sur macOS, nouvelle icône, survol sans artefact et journal de diagnostic nettoyé.",
-    "es": "• SafePocket v0.3 incorpora desplegables inteligentes, prefijos telefónicos internacionales, verificación web HTTPS en vivo y autocompletado por IBAN.\n• Modo exclusivo Solo almacenamiento local o Solo Cloud Sync con soporte sin conexión 100 % automático, estado de sincronización abajo a la derecha, gestos de deslizamiento, menús contextuales y borrado de datos de ejemplo.\n• Actualizaciones compatibles con Play Protect en Android/Googlebook OS, actualizaciones automáticas integradas en macOS, nuevo icono, hover limpio y diagnóstico depurado.",
-    "el": "• Το SafePocket v0.3 προσφέρει έξυπνες αναπτυσσόμενες λίστες, διεθνή προθέματα τηλεφώνου, ζωντανό έλεγχο ιστοσελίδων HTTPS και αυτόματη συμπλήρωση μέσω IBAN.\n• Αποκλειστική επιλογή Μόνο τοπική αποθήκευση ή Μόνο Cloud Sync με 100% αυτόματη λειτουργία εκτός σύνδεσης, ένδειξη συγχρονισμού κάτω δεξιά, κινήσεις κύλισης (swipe), μενού δεξιού κλικ και διαγραφή δεδομένων παραδείγματος.\n• Αυτόματες ενημερώσεις συμβατές με Play Protect σε Android/Googlebook OS, ενσωματωμένες ενημερώσεις στο macOS, νέο εικονίδιο, καθαρό hover κουμπιών και αρχείο διαγνωστικών."
+    "en": "• SafePocket v0.3.1 delivers 100% Settings & Feature Parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.\n• Full Firebase Zero-Knowledge Cloud Sync login, account creation, and endpoint configuration on macOS, plus clean radio-button Storage Mode selection.\n• Bundled 6-language selection (EN, DE, IT, FR, ES, EL + System Default) on macOS alongside encrypted .safepocket backup/restore, 1Password & CSV portability, and security controls.",
+    "de": "• SafePocket v0.3.1 bietet 100 % Funktions- und Einstellungsparität über macOS, Android / Googlebook OS und ChromeOS / Web PWA hinweg.\n• Vollständige Firebase-Zero-Knowledge-Cloud-Sync-Anmeldung, Kontoerstellung und Endpunktkonfiguration unter macOS sowie klare Optionsfelder für den Tresor-Speichermodus.\n• Integrierte 6-Sprachen-Auswahl (EN, DE, IT, FR, ES, EL + Systemstandard) unter macOS inklusive verschlüsseltem .safepocket-Backup, 1Password-/CSV-Portabilität und Sicherheitsoptionen.",
+    "it": "• SafePocket v0.3.1 offre il 100% di parità di funzioni e impostazioni tra macOS, Android / Googlebook OS e ChromeOS / Web PWA.\n• Accesso completo a Firebase Cloud Sync Zero-Knowledge, creazione account e configurazione endpoint su macOS, con pulsanti radio puliti per la modalità di archiviazione.\n• Selezione di 6 lingue (EN, DE, IT, FR, ES, EL + Predefinita di sistema) su macOS con backup cifrato .safepocket, portabilità 1Password/CSV e controlli di sicurezza.",
+    "fr": "• SafePocket v0.3.1 assure une parité à 100 % des options et fonctionnalités sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.\n• Connexion Firebase Cloud Sync Zero-Knowledge complète, création de compte et configuration des points de terminaison sur macOS, avec boutons radio épurés pour le mode de stockage.\n• Sélection de 6 langues intégrée sur macOS avec sauvegarde chiffrée .safepocket, import/export 1Password et CSV, et options de sécurité.",
+    "es": "• SafePocket v0.3.1 ofrece un 100 % de paridad de funciones y ajustes en macOS, Android / Googlebook OS y ChromeOS / Web PWA.\n• Inicio de sesión completo en Firebase Cloud Sync Zero-Knowledge, creación de cuenta y configuración de endpoints en macOS, además de botones de opción limpios para el modo de almacenamiento.\n• Selector de 6 idiomas integrado en macOS junto con copia cifrada .safepocket, portabilidad 1Password/CSV y controles de seguridad.",
+    "el": "• Το SafePocket v0.3.1 προσφέρει 100% ισοτιμία ρυθμίσεων και λειτουργιών σε macOS, Android / Googlebook OS και ChromeOS / Web PWA.\n• Πλήρης σύνδεση, δημιουργία λογαριασμού και ρύθμιση παραμέτρων Firebase Zero-Knowledge Cloud Sync στο macOS, καθώς και καθαρά κουμπιά επιλογής (radio buttons) για τη λειτουργία αποθήκευσης.\n• Ενσωματωμένη επιλογή 6 γλωσσών (EN, DE, IT, FR, ES, EL + Προεπιλογή συστήματος) στο macOS μαζί με κρυπτογραφημένο αντίγραφο .safepocket, φορητότητα 1Password/CSV και ρυθμίσεις ασφαλείας."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3/SafePocket-v0.3-b5-universal-arm64-x86_64.apk",
-      "sha256": "2427eb418a8d4b805fc26ab01e6175fce9845e07f08919c898f60d987af11bb1",
-      "sizeBytes": 38117952,
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.1/SafePocket-v0.3.1-b6-universal-arm64-x86_64.apk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 18432960,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -34,17 +34,17 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3/SafePocket-0.3-5-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.1/SafePocket-0.3.1-6-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9ce3ccf41ff7d90ab3ae6c8a01816824e16c250d4c01505b58673481f4e4b30c",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 2036163,
+      "sizeBytes": 14208512,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "3a396ca390cc20b4a395d20e92f37b951f2f2ad3c819a40e30fc063133f72fe8",
+      "sha256": "72644dd3167171d62d4fde4b0cdf466021162c264a30618b7dd71b47f12c0c61",
       "sizeBytes": 2709
     }
   }

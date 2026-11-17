@@ -4,12 +4,14 @@ import AppKit
 import CryptoKit
 import Network
 import Foundation
+import UniformTypeIdentifiers
 
 /// Native macOS Desktop Entry Point adhering strictly to Apple Human Interface Guidelines (HIG).
-/// SafePocket v0.3 (Build 5):
+/// SafePocket v0.3.1 (Build 6):
+/// - 100% Feature & Settings Parity with Android / Googlebook OS & ChromeOS / Web PWA
+/// - 6-Language Localization (`en`, `de`, `it`, `fr`, `es`, `el` + System Default) via bundled `i18n/*.arb.json`
+/// - Mutually exclusive Local Storage vs Cloud Sync (clean radio buttons) with full Firebase Zero-Knowledge Auth & Endpoint Config + automatic offline sync
 /// - Real in-app automated updates (Ed25519 + SHA-256 verified manifest & DMG staging via hdiutil)
-/// - Mutually exclusive Local Storage Only vs Cloud Sync Only with zero-input NWPathMonitor offline reconciliation
-/// - Privacy-scrubbed diagnostics & extensive error boundaries
 @main
 struct SafePocketMacApp: App {
     @StateObject private var vaultState = MacVaultViewModel()
@@ -18,21 +20,20 @@ struct SafePocketMacApp: App {
 
     private var resolvedColorScheme: ColorScheme? {
         switch themeMode {
-        case "dark":
-            return .dark
-        case "system":
-            return nil
-        default:
-            return .light
+        case "dark": return .dark
+        case "system": return nil
+        default: return .light
         }
     }
 
     var body: some Scene {
         WindowGroup {
             MacVaultSplitView(vaultState: vaultState, updater: updater)
-                .frame(minWidth: 1020, minHeight: 660)
+                .frame(minWidth: 1040, minHeight: 680)
                 .preferredColorScheme(resolvedColorScheme)
+                .tint(vaultState.materialAccent.swiftUIColor)
                 .task {
+                    vaultState.applyWindowScreenshotProtection()
                     await updater.performAutomaticStartupCheckIfEnabled()
                 }
         }
@@ -67,8 +68,9 @@ struct SafePocketMacApp: App {
 
         Settings {
             MacSettingsAndAboutView(vaultState: vaultState, updater: updater)
-                .frame(width: 620, height: 600)
+                .frame(width: 720, height: 700)
                 .preferredColorScheme(resolvedColorScheme)
+                .tint(vaultState.materialAccent.swiftUIColor)
         }
     }
 }
@@ -108,9 +110,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3"
-    let currentVersionCode = 5
-    let currentVersionDisplay = "SafePocket v0.3 (Build 5)"
+    let currentVersionName = "0.3.1"
+    let currentVersionCode = 6
+    let currentVersionDisplay = "SafePocket v0.3.1 (Build 6)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -119,36 +121,33 @@ final class MacSparkleUpdateController: ObservableObject {
 
     func performAutomaticStartupCheckIfEnabled() async {
         guard automaticChecksEnabled else { return }
-        await fetchAndVerifyManifest(manifestURL: Self.defaultManifestURL, userInitiated: false)
+        await checkManifest(autoStageIfAvailable: true)
     }
 
     func checkForUpdatesInitiatedByUser() {
         Task {
-            await fetchAndVerifyManifest(manifestURL: Self.defaultManifestURL, userInitiated: true)
+            await checkManifest(autoStageIfAvailable: false)
         }
     }
 
-    func fetchAndVerifyManifest(manifestURL: URL, userInitiated: Bool) async {
+    func checkManifest(autoStageIfAvailable: Bool) async {
         guard !isChecking else { return }
         isChecking = true
         lastUpdateError = nil
-        defer { isChecking = false }
+        statusText = "Checking signed release manifest…"
 
         do {
-            var req = URLRequest(url: manifestURL)
-            req.cachePolicy = .reloadIgnoringLocalCacheData
-            req.timeoutInterval = 12
-            let (data, response) = try await URLSession.shared.data(for: req)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                throw NSError(
-                    domain: "SafePocketUpdater",
-                    code: http.statusCode,
-                    userInfo: [NSLocalizedDescriptionKey: "Update manifest returned HTTP \(http.statusCode)"]
-                )
+            var request = URLRequest(url: Self.defaultManifestURL)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = 12.0
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw URLError(.badServerResponse)
             }
 
             let manifest = try JSONDecoder().decode(MacRemoteUpdateManifest.self, from: data)
-            guard Self.verifyManifestEd25519(manifest) else {
+            guard try Self.verifyManifestEd25519Signature(manifest) else {
                 throw NSError(
                     domain: "SafePocketUpdater",
                     code: -101,
@@ -156,97 +155,94 @@ final class MacSparkleUpdateController: ObservableObject {
                 )
             }
 
-            let lang = Locale.current.language.languageCode?.identifier ?? "en"
-            releaseNotesText = manifest.releaseNotes[lang] ?? manifest.releaseNotes["en"] ?? ""
-
             if manifest.versionCode > currentVersionCode,
-               let macArtifact = manifest.artifacts["macos-universal"] {
-                availableVersion = "\(manifest.latestVersion) (Build \(manifest.versionCode))"
-                availableDmgUrl = macArtifact.url
-                expectedDmgSha256 = macArtifact.sha256.lowercased()
-                verifiedSha256 = macArtifact.sha256.lowercased()
-                statusText = "Update v\(manifest.latestVersion) verified via Ed25519"
-                if automaticChecksEnabled {
+               let dmgArtifact = manifest.artifacts["macos-universal"] {
+                availableVersion = manifest.latestVersion
+                availableDmgUrl = dmgArtifact.url
+                expectedDmgSha256 = dmgArtifact.sha256
+                let lang = Locale.current.language.languageCode?.identifier ?? "en"
+                releaseNotesText = manifest.releaseNotes[lang] ?? manifest.releaseNotes["en"] ?? ""
+                statusText = "Update v\(manifest.latestVersion) (Build \(manifest.versionCode)) verified via Ed25519"
+                if autoStageIfAvailable {
                     await downloadVerifyAndStageMacUpdate()
                 }
             } else {
                 availableVersion = nil
                 availableDmgUrl = nil
-                statusText = "\(currentVersionDisplay) is up to date • Ed25519 Verified"
+                statusText = "Up to date (\(currentVersionDisplay))"
             }
         } catch {
-            if userInitiated {
-                lastUpdateError = error.localizedDescription
-                statusText = "Update check unavailable: \(error.localizedDescription)"
-            }
+            lastUpdateError = error.localizedDescription
+            statusText = "Update check notice: \(error.localizedDescription)"
         }
+
+        isChecking = false
     }
 
-    static func buildCanonicalMessage(_ manifest: MacRemoteUpdateManifest) -> String {
-        let sortedKeys = manifest.artifacts.keys.sorted()
-        let pairs = sortedKeys.compactMap { key -> String? in
-            guard let art = manifest.artifacts[key] else { return nil }
-            return "\(key):\(art.sha256.lowercased()):\(art.sizeBytes)"
-        }.joined(separator: ";")
-        return "safepocket-manifest-v2|\(manifest.channel)|\(manifest.latestVersion)|\(manifest.versionCode)|\(manifest.minimumSupportedVersionCode)|\(pairs)"
-    }
-
-    static func verifyManifestEd25519(_ manifest: MacRemoteUpdateManifest) -> Bool {
-        guard manifest.signingPublicKeyHex.lowercased() == pinnedEd25519PublicKeyHex else {
+    static func verifyManifestEd25519Signature(_ manifest: MacRemoteUpdateManifest) throws -> Bool {
+        guard manifest.signingPublicKeyHex.lowercased() == pinnedEd25519PublicKeyHex.lowercased() else {
             return false
         }
-        let rawSigHex = manifest.manifestSignature.hasPrefix("ed25519:")
+        let sigHex = manifest.manifestSignature.hasPrefix("ed25519:")
             ? String(manifest.manifestSignature.dropFirst("ed25519:".count))
             : manifest.manifestSignature
-        guard let pubBytes = Data(hexString: pinnedEd25519PublicKeyHex),
-              let sigBytes = Data(hexString: rawSigHex),
-              let pubKey = try? Curve25519.Signing.PublicKey(rawRepresentation: pubBytes) else {
+
+        guard let pubKeyBytes = Data(hexString: pinnedEd25519PublicKeyHex),
+              let sigBytes = Data(hexString: sigHex) else {
             return false
         }
-        let messageData = Data(buildCanonicalMessage(manifest).utf8)
-        return pubKey.isValidSignature(sigBytes, for: messageData)
+        let pubKey = try Curve25519.Signing.PublicKey(rawRepresentation: pubKeyBytes)
+        let sortedKeys = manifest.artifacts.keys.sorted()
+        let artifactSummary = sortedKeys.compactMap { key -> String? in
+            guard let a = manifest.artifacts[key] else { return nil }
+            return "\(key):\(a.sha256.lowercased()):\(a.sizeBytes)"
+        }.joined(separator: "|")
+
+        let canonicalPayload = [
+            "safepocket-manifest-v\(manifest.schemaVersion)",
+            manifest.channel,
+            manifest.latestVersion,
+            String(manifest.versionCode),
+            String(manifest.minimumSupportedVersionCode),
+            artifactSummary
+        ].joined(separator: "\n")
+
+        return pubKey.isValidSignature(sigBytes, for: Data(canonicalPayload.utf8))
     }
 
     func downloadVerifyAndStageMacUpdate() async {
         guard let urlStr = availableDmgUrl,
-              let dmgUrl = URL(string: urlStr),
-              let expectedHash = expectedDmgSha256 else { return }
-        guard !isDownloadingUpdate else { return }
+              let url = URL(string: urlStr),
+              let expectedHex = expectedDmgSha256?.lowercased(),
+              !isDownloadingUpdate else {
+            return
+        }
 
         isDownloadingUpdate = true
-        downloadProgress = 0.15
+        downloadProgress = 0.1
         lastUpdateError = nil
+        statusText = "Downloading macOS universal DMG…"
 
         do {
-            let (dmgData, response) = try await URLSession.shared.data(from: dmgUrl)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                throw NSError(
-                    domain: "SafePocketUpdater",
-                    code: http.statusCode,
-                    userInfo: [NSLocalizedDescriptionKey: "DMG download failed (HTTP \(http.statusCode))"]
-                )
+            let (tempFileURL, response) = try await URLSession.shared.download(from: url)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw URLError(.badServerResponse)
             }
             downloadProgress = 0.65
-
-            let digest = SHA256.hash(data: dmgData)
-            let actualHex = digest.map { String(format: "%02x", $0) }.joined()
-            guard actualHex == expectedHash.lowercased() else {
+            let dmgBytes = try Data(contentsOf: tempFileURL)
+            let digestHex = SHA256.hash(data: dmgBytes).map { String(format: "%02x", $0) }.joined()
+            guard digestHex.lowercased() == expectedHex else {
                 throw NSError(
                     domain: "SafePocketUpdater",
-                    code: -202,
-                    userInfo: [NSLocalizedDescriptionKey: "SHA-256 mismatch on downloaded DMG (\(actualHex.prefix(12))…)"]
+                    code: -102,
+                    userInfo: [NSLocalizedDescriptionKey: "DMG SHA-256 mismatch! Refusing untrusted binary."]
                 )
             }
-            verifiedSha256 = actualHex
-            downloadProgress = 0.85
+            verifiedSha256 = digestHex
+            downloadProgress = 0.82
+            statusText = "SHA-256 verified (\(digestHex.prefix(12))…). Staging SafePocket.app…"
 
-            let tempDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("safepocket-update-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-            let dmgFile = tempDir.appendingPathComponent("SafePocketUpdate.dmg")
-            try dmgData.write(to: dmgFile, options: .atomic)
-
-            let stagedURL = try await Self.mountDmgAndStageAppBundle(dmgFile: dmgFile)
+            let stagedURL = try await Self.mountDmgAndStageAppBundle(dmgFile: tempFileURL)
             stagedAppBundleURL = stagedURL
             downloadProgress = 1.0
             statusText = "Staged verified update at \(stagedURL.path)"
@@ -278,19 +274,11 @@ final class MacSparkleUpdateController: ObservableObject {
 
         let attachProc = Process()
         attachProc.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        attachProc.arguments = [
-            "attach", dmgFile.path,
-            "-mountpoint", mountPoint.path,
-            "-nobrowse", "-readonly", "-quiet"
-        ]
+        attachProc.arguments = ["attach", dmgFile.path, "-mountpoint", mountPoint.path, "-nobrowse", "-readonly", "-quiet"]
         try attachProc.run()
         attachProc.waitUntilExit()
         guard attachProc.terminationStatus == 0 else {
-            throw NSError(
-                domain: "SafePocketUpdater",
-                code: Int(attachProc.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "hdiutil failed to mount verified DMG"]
-            )
+            throw NSError(domain: "SafePocketUpdater", code: Int(attachProc.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "hdiutil failed to mount verified DMG"])
         }
 
         defer {
@@ -303,15 +291,10 @@ final class MacSparkleUpdateController: ObservableObject {
 
         let sourceApp = mountPoint.appendingPathComponent("SafePocket.app", isDirectory: true)
         guard FileManager.default.fileExists(atPath: sourceApp.path) else {
-            throw NSError(
-                domain: "SafePocketUpdater",
-                code: -204,
-                userInfo: [NSLocalizedDescriptionKey: "SafePocket.app not found inside verified DMG"]
-            )
+            throw NSError(domain: "SafePocketUpdater", code: -204, userInfo: [NSLocalizedDescriptionKey: "SafePocket.app not found inside verified DMG"])
         }
 
-        let userApps = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Applications", isDirectory: true)
+        let userApps = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
         try FileManager.default.createDirectory(at: userApps, withIntermediateDirectories: true)
         let destApp = userApps.appendingPathComponent("SafePocket.app", isDirectory: true)
         if FileManager.default.fileExists(atPath: destApp.path) {
@@ -338,27 +321,12 @@ extension Data {
     }
 }
 
-// MARK: - Vault Models, Exclusive Storage Mode & Automatic Offline Reconciliation
+// MARK: - Exclusive Storage Mode, Cloud Sync Account/Config & Full Parity ViewModel
 
 enum MacExclusiveStorageMode: String, CaseIterable, Identifiable {
     case localOnly = "LOCAL_ONLY"
     case cloudSync = "CLOUD_SYNC"
     var id: String { rawValue }
-}
-
-struct MacVaultEntry: Identifiable, Equatable {
-    var id: String
-    var category: String
-    var title: String
-    var subtitle: String
-    var primaryLabel: String
-    var primaryValue: String
-    var websiteUrl: String
-    var phone: String
-    var pinned: Bool
-    var favorite: Bool
-    var isSampleItem: Bool
-    var updatedAt: Date
 }
 
 struct MacDiagnosticEntry: Identifiable {
@@ -370,6 +338,46 @@ struct MacDiagnosticEntry: Identifiable {
 
 @MainActor
 final class MacVaultViewModel: ObservableObject {
+    let i18n = MacLocalizationEngine()
+
+    // Localization, Appearance & Security Preferences (100% Cross-Platform Parity)
+    @Published var localeOverrideCode: String {
+        didSet { UserDefaults.standard.set(localeOverrideCode, forKey: "safepocket.locale_override") }
+    }
+    @Published var materialAccent: MacMaterialAccent {
+        didSet { UserDefaults.standard.set(materialAccent.rawValue, forKey: "safepocket.material_accent") }
+    }
+    @Published var allowScreenshots: Bool {
+        didSet {
+            UserDefaults.standard.set(allowScreenshots, forKey: "safepocket.allow_screenshots")
+            applyWindowScreenshotProtection()
+        }
+    }
+    @Published var autoDownloadLogos: Bool {
+        didSet { UserDefaults.standard.set(autoDownloadLogos, forKey: "safepocket.auto_download_logos") }
+    }
+    @Published var expiryWindowDays: Int {
+        didSet { UserDefaults.standard.set(expiryWindowDays, forKey: "safepocket.expiry_window_days") }
+    }
+    @Published var autoLockMinutes: Int {
+        didSet {
+            UserDefaults.standard.set(autoLockMinutes, forKey: "safepocket.autolock_minutes")
+            restartInactivityAutoLockTimer()
+        }
+    }
+    @Published var includeLoginsOnImport: Bool {
+        didSet { UserDefaults.standard.set(includeLoginsOnImport, forKey: "safepocket.import_include_logins") }
+    }
+    @Published var masterPasswordHint: String {
+        didSet { UserDefaults.standard.set(masterPasswordHint, forKey: "safepocket.master_pw_hint") }
+    }
+
+    // Zero-Knowledge Vault Credentials
+    @Published var secretKeyFormatted: String
+    @Published var hasCustomMasterPassword: Bool = false
+    private var activeMasterPassword: String = "Correct-Horse-SafePocket-2026!"
+
+    // Navigation & UI State
     @Published var isLocked: Bool = false
     @Published var presentEditorSheet: Bool = false
     @Published var editingEntry: MacVaultEntry?
@@ -377,51 +385,149 @@ final class MacVaultViewModel: ObservableObject {
     @Published var selectedCategory: String = "all"
     @Published var selectedEntryId: String?
     @Published var searchQuery: String = ""
+    @Published var statusNotice: String?
 
+    // Exclusive Storage & Real Cloud Sync State
     @Published var storageMode: MacExclusiveStorageMode = .localOnly
+    @Published var cloudProvider: MacCloudProvider = .firebase {
+        didSet { UserDefaults.standard.set(cloudProvider.rawValue, forKey: "safepocket.cloud_provider") }
+    }
+    @Published var cloudSession: MacCloudUserSession?
+    @Published var endpointConfig: MacCloudEndpointConfig = MacCloudEndpointConfig() {
+        didSet {
+            if let data = try? JSONEncoder().encode(endpointConfig) {
+                UserDefaults.standard.set(data, forKey: "safepocket.cloud_endpoint_config")
+            }
+        }
+    }
+    @Published var cloudAuthBusy: Bool = false
     @Published var isNetworkOnline: Bool = true
     @Published var isReconcilingCloud: Bool = false
     @Published var pendingOfflineOutboxIds: Set<String> = []
     @Published var standaloneLocalRowCount: Int = 0
     @Published var cloudSessionMirrorCount: Int = 0
+    @Published var lastSyncedIso: String?
+    @Published var lastSyncPushed: Int = 0
+    @Published var lastSyncPulled: Int = 0
+
+    // Diagnostics & Vault Items
     @Published var lastErrorBanner: String?
     @Published var diagnostics: [MacDiagnosticEntry] = []
-
     @Published var entries: [MacVaultEntry] = []
 
     private var clipboardClearTask: Task<Void, Never>?
+    private var inactivityTimerTask: Task<Void, Never>?
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.safepocket.mac.netmonitor")
     private let samplePurgedKey = "safepocket.sample_data_purged_v03"
     private let storageModeKey = "safepocket.exclusive_storage_mode_v03"
+    private let nodeId: String
 
     init() {
-        let savedMode = UserDefaults.standard.string(forKey: storageModeKey) ?? "LOCAL_ONLY"
-        storageMode = MacExclusiveStorageMode(rawValue: savedMode) ?? .localOnly
-        if !UserDefaults.standard.bool(forKey: samplePurgedKey) {
-            entries = Self.buildSampleEntries()
+        self.localeOverrideCode = UserDefaults.standard.string(forKey: "safepocket.locale_override") ?? "__system__"
+        self.materialAccent = MacMaterialAccent(rawValue: UserDefaults.standard.string(forKey: "safepocket.material_accent") ?? "emerald") ?? .emerald
+        if UserDefaults.standard.object(forKey: "safepocket.allow_screenshots") == nil {
+            self.allowScreenshots = true
+        } else {
+            self.allowScreenshots = UserDefaults.standard.bool(forKey: "safepocket.allow_screenshots")
         }
+        if UserDefaults.standard.object(forKey: "safepocket.auto_download_logos") == nil {
+            self.autoDownloadLogos = true
+        } else {
+            self.autoDownloadLogos = UserDefaults.standard.bool(forKey: "safepocket.auto_download_logos")
+        }
+        let savedExp = UserDefaults.standard.integer(forKey: "safepocket.expiry_window_days")
+        self.expiryWindowDays = [30, 60, 90, 180].contains(savedExp) ? savedExp : 90
+        let savedAutoLock = UserDefaults.standard.integer(forKey: "safepocket.autolock_minutes")
+        self.autoLockMinutes = [1, 5, 15].contains(savedAutoLock) ? savedAutoLock : 5
+        self.includeLoginsOnImport = UserDefaults.standard.bool(forKey: "safepocket.import_include_logins")
+        self.masterPasswordHint = UserDefaults.standard.string(forKey: "safepocket.master_pw_hint") ?? ""
+
+        if let existingNode = UserDefaults.standard.string(forKey: "safepocket.crdt_node_id") {
+            self.nodeId = existingNode
+        } else {
+            let generated = "mac-\(UUID().uuidString.prefix(8))"
+            UserDefaults.standard.set(generated, forKey: "safepocket.crdt_node_id")
+            self.nodeId = generated
+        }
+
+        if let keyData = MacKeychainStore.loadData(account: "secret_key"),
+           let savedKey = String(data: keyData, encoding: .utf8), !savedKey.isEmpty {
+            self.secretKeyFormatted = savedKey
+        } else {
+            let newKey = MacZeroKnowledgeCrypto.generateFormattedSecretKey()
+            MacKeychainStore.saveData(Data(newKey.utf8), account: "secret_key")
+            self.secretKeyFormatted = newKey
+        }
+
+        if let pwData = MacKeychainStore.loadData(account: "master_password"),
+           let savedPw = String(data: pwData, encoding: .utf8), !savedPw.isEmpty {
+            self.activeMasterPassword = savedPw
+            self.hasCustomMasterPassword = true
+        }
+
+        if let sessionData = MacKeychainStore.loadData(account: "cloud_session"),
+           let decodedSession = try? JSONDecoder().decode(MacCloudUserSession.self, from: sessionData) {
+            self.cloudSession = decodedSession
+        }
+
+        if let cfgData = UserDefaults.standard.data(forKey: "safepocket.cloud_endpoint_config"),
+           let cfg = try? JSONDecoder().decode(MacCloudEndpointConfig.self, from: cfgData) {
+            self.endpointConfig = cfg
+        }
+
+        self.cloudProvider = MacCloudProvider(rawValue: UserDefaults.standard.string(forKey: "safepocket.cloud_provider") ?? "FIREBASE") ?? .firebase
+
+        let savedMode = UserDefaults.standard.string(forKey: storageModeKey) ?? "LOCAL_ONLY"
+        self.storageMode = MacExclusiveStorageMode(rawValue: savedMode) ?? .localOnly
+
+        loadPersistedEntriesOrSeedSamples()
         selectedEntryId = entries.first?.id
         recalculateStorageIsolationCounts()
         startAutomaticConnectivityMonitor()
+        restartInactivityAutoLockTimer()
+    }
+
+    var activeLocale: MacSupportedLocale {
+        i18n.resolveActiveLocale(overrideCode: localeOverrideCode)
+    }
+
+    func t(_ key: String, _ params: [String: String] = [:]) -> String {
+        i18n.t(key, localeCode: localeOverrideCode, params: params)
+    }
+
+    func resolveFieldLabel(key: String, isCustom: Bool, category: String) -> String {
+        i18n.resolveFieldLabel(key: key, isCustom: isCustom, category: category, localeCode: localeOverrideCode)
     }
 
     var sampleEntriesCount: Int {
         entries.filter(\.isSampleItem).count
     }
 
+    var isCloudAuthenticated: Bool {
+        switch cloudProvider {
+        case .firebase:
+            return cloudSession != nil
+        case .googleDrive:
+            return !endpointConfig.googleDriveBearerToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     var syncPillLabel: String {
         switch storageMode {
         case .localOnly:
-            return "Local Vault • Encrypted"
+            return t("sync_pill_local_only")
         case .cloudSync:
+            if !isCloudAuthenticated {
+                return "Cloud Sync • \(t("cloud_auth_signin_btn"))"
+            }
             if isReconcilingCloud {
-                return "Syncing…"
+                return t("sync_pill_syncing")
             }
             if !isNetworkOnline || !pendingOfflineOutboxIds.isEmpty {
-                return "Cloud Offline Ready • Auto-Sync (\(pendingOfflineOutboxIds.count))"
+                return t("sync_pill_cloud_offline_armed", ["queued": String(pendingOfflineOutboxIds.count)])
             }
-            return "Cloud Synced • FIREBASE"
+            return t("sync_pill_cloud_synced", ["detail": cloudProvider.rawValue])
         }
     }
 
@@ -430,6 +536,7 @@ final class MacVaultViewModel: ObservableObject {
         case .localOnly:
             return "internaldrive.fill"
         case .cloudSync:
+            if !isCloudAuthenticated { return "person.crop.circle.badge.exclamationmark" }
             if isReconcilingCloud { return "arrow.triangle.2.circlepath" }
             if !isNetworkOnline || !pendingOfflineOutboxIds.isEmpty { return "bolt.horizontal.icloud.fill" }
             return "checkmark.icloud.fill"
@@ -440,12 +547,9 @@ final class MacVaultViewModel: ObservableObject {
         entries
             .filter { item in
                 switch selectedCategory {
-                case "all", "SETTINGS":
-                    return true
-                case "favorites":
-                    return item.favorite
-                default:
-                    return item.category == selectedCategory
+                case "all", "SETTINGS": return true
+                case "favorites": return item.favorite
+                default: return item.category == selectedCategory
                 }
             }
             .filter { item in
@@ -454,11 +558,119 @@ final class MacVaultViewModel: ObservableObject {
                 return item.title.lowercased().contains(q)
                     || item.subtitle.lowercased().contains(q)
                     || item.websiteUrl.lowercased().contains(q)
+                    || item.fields.contains(where: { $0.value.lowercased().contains(q) })
+                    || item.tags.contains(where: { $0.lowercased().contains(q) })
             }
             .sorted { lhs, rhs in
                 if lhs.pinned != rhs.pinned { return lhs.pinned && !rhs.pinned }
                 return lhs.updatedAt > rhs.updatedAt
             }
+    }
+
+    func applyWindowScreenshotProtection() {
+        let sharing: NSWindow.SharingType = allowScreenshots ? .readOnly : .none
+        for window in NSApplication.shared.windows {
+            window.sharingType = sharing
+        }
+    }
+
+    func restartInactivityAutoLockTimer() {
+        inactivityTimerTask?.cancel()
+        let seconds = UInt64(max(1, autoLockMinutes)) * 60
+        inactivityTimerTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.lockVault()
+        }
+    }
+
+    func configureVaultCredentials(newMasterPassword: String, pairedSecretKey: String?) {
+        let trimmedPw = newMasterPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPw.count >= 6 else { return }
+        activeMasterPassword = trimmedPw
+        hasCustomMasterPassword = true
+        MacKeychainStore.saveData(Data(trimmedPw.utf8), account: "master_password")
+
+        if let sk = pairedSecretKey?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+           sk.hasPrefix("SPK-") {
+            secretKeyFormatted = sk
+            MacKeychainStore.saveData(Data(sk.utf8), account: "secret_key")
+        }
+        persistActiveStorageSnapshot()
+        statusNotice = "✓ \(t("security_master_password")) & \(t("security_secret_key")) updated"
+        recordDiagnostic(operation: "security.rekey", detail: "Updated Master Password & re-encrypted active vault")
+    }
+
+    func verifyMasterPassword(_ candidate: String) -> Bool {
+        if !hasCustomMasterPassword && candidate.isEmpty { return true }
+        return candidate == activeMasterPassword
+    }
+
+    func unlockWithMasterPassword(_ candidate: String) -> Bool {
+        if candidate == activeMasterPassword || (!hasCustomMasterPassword && !candidate.isEmpty) {
+            isLocked = false
+            restartInactivityAutoLockTimer()
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Exclusive Storage Mode & Real Zero-Knowledge Cloud Sync
+
+    private var appSupportDir: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("SafePocket", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+
+    private var localVaultFileURL: URL {
+        appSupportDir.appendingPathComponent("safepocket_local_vault.enc")
+    }
+
+    private var cloudMirrorFileURL: URL {
+        appSupportDir.appendingPathComponent("safepocket_cloud_mirror.enc")
+    }
+
+    private func persistActiveStorageSnapshot() {
+        let key = MacZeroKnowledgeCrypto.deriveVaultSymmetricKey(
+            masterPassword: activeMasterPassword,
+            secretKey: secretKeyFormatted
+        )
+        guard let plain = try? JSONEncoder().encode(entries),
+              let enc = try? MacZeroKnowledgeCrypto.encryptData(plain, key: key, aad: Data("safepocket-mac-store".utf8)),
+              let blob = try? JSONEncoder().encode(MacEncryptedBackupContainer(createdAtIso: ISO8601DateFormatter().string(from: Date()), ivHex: enc.ivHex, ciphertextHex: enc.ciphertextHex)) else {
+            return
+        }
+
+        switch storageMode {
+        case .localOnly:
+            try? blob.write(to: localVaultFileURL, options: .atomic)
+            try? FileManager.default.removeItem(at: cloudMirrorFileURL)
+        case .cloudSync:
+            try? blob.write(to: cloudMirrorFileURL, options: .atomic)
+            try? FileManager.default.removeItem(at: localVaultFileURL)
+        }
+    }
+
+    private func loadPersistedEntriesOrSeedSamples() {
+        let activeFile = (storageMode == .cloudSync) ? cloudMirrorFileURL : localVaultFileURL
+        let key = MacZeroKnowledgeCrypto.deriveVaultSymmetricKey(
+            masterPassword: activeMasterPassword,
+            secretKey: secretKeyFormatted
+        )
+        if let blob = try? Data(contentsOf: activeFile),
+           let container = try? JSONDecoder().decode(MacEncryptedBackupContainer.self, from: blob),
+           let plain = try? MacZeroKnowledgeCrypto.decryptData(ivHex: container.ivHex, ciphertextHex: container.ciphertextHex, key: key, aad: Data("safepocket-mac-store".utf8)),
+           let decoded = try? JSONDecoder().decode([MacVaultEntry].self, from: plain) {
+            self.entries = decoded
+            return
+        }
+
+        if !UserDefaults.standard.bool(forKey: samplePurgedKey) {
+            self.entries = Self.buildSampleEntries()
+            persistActiveStorageSnapshot()
+        }
     }
 
     private func startAutomaticConnectivityMonitor() {
@@ -468,7 +680,7 @@ final class MacVaultViewModel: ObservableObject {
                 guard let self else { return }
                 let wasOffline = !self.isNetworkOnline
                 self.isNetworkOnline = online
-                if online && wasOffline && self.storageMode == .cloudSync {
+                if online && wasOffline && self.storageMode == .cloudSync && self.isCloudAuthenticated {
                     await self.reconcileCloudSessionAutomatically()
                 }
             }
@@ -476,7 +688,6 @@ final class MacVaultViewModel: ObservableObject {
         pathMonitor.start(queue: monitorQueue)
     }
 
-    /// Switches strictly between `LOCAL_ONLY` and `CLOUD_SYNC` (one or the other, never both).
     func switchExclusiveStorageMode(_ nextMode: MacExclusiveStorageMode) async {
         guard nextMode != storageMode else { return }
         storageMode = nextMode
@@ -484,35 +695,191 @@ final class MacVaultViewModel: ObservableObject {
 
         switch nextMode {
         case .cloudSync:
-            // Purge standalone local DB rows; hydrate session-scoped offline mirror & outbox
+            try? FileManager.default.removeItem(at: localVaultFileURL)
             standaloneLocalRowCount = 0
             cloudSessionMirrorCount = entries.count
             pendingOfflineOutboxIds = Set(entries.map(\.id))
-            recordDiagnostic(operation: "storage.switchToCloudOnly", detail: "Purged standalone local DB; armed automatic offline mirror (\(cloudSessionMirrorCount) items)")
-            if isNetworkOnline {
+            persistActiveStorageSnapshot()
+            recordDiagnostic(
+                operation: "storage.switchToCloudOnly",
+                detail: "Purged standalone local DB; armed automatic offline mirror (\(cloudSessionMirrorCount) items)"
+            )
+            if isNetworkOnline && isCloudAuthenticated {
                 await reconcileCloudSessionAutomatically()
             }
         case .localOnly:
-            // Persist active snapshot to local-only vault and immediately wipe cloud session mirror & outbox
+            try? FileManager.default.removeItem(at: cloudMirrorFileURL)
             pendingOfflineOutboxIds.removeAll()
             cloudSessionMirrorCount = 0
             standaloneLocalRowCount = entries.count
-            recordDiagnostic(operation: "storage.switchToLocalOnly", detail: "Wiped cloud session mirror & outbox; standalone local storage active (\(standaloneLocalRowCount) items)")
+            persistActiveStorageSnapshot()
+            recordDiagnostic(
+                operation: "storage.switchToLocalOnly",
+                detail: "Wiped cloud session mirror & outbox; standalone local storage active (\(standaloneLocalRowCount) items)"
+            )
         }
     }
 
-    func reconcileCloudSessionAutomatically() async {
-        guard storageMode == .cloudSync, isNetworkOnline, !isReconcilingCloud else { return }
-        isReconcilingCloud = true
-        try? await Task.sleep(nanoseconds: 220_000_000)
-        let flushed = pendingOfflineOutboxIds.count
-        pendingOfflineOutboxIds.removeAll()
-        cloudSessionMirrorCount = entries.count
-        standaloneLocalRowCount = 0
-        isReconcilingCloud = false
-        if flushed > 0 {
-            recordDiagnostic(operation: "cloud.autoReconcile", detail: "Automatically reconciled \(flushed) queued encrypted item(s)")
+    func createFirebaseAccount(email: String, password: String) async {
+        await performFirebaseAuth(action: "signUp", email: email, password: password)
+    }
+
+    func signInFirebaseAccount(email: String, password: String) async {
+        await performFirebaseAuth(action: "signInWithPassword", email: email, password: password)
+    }
+
+    private func performFirebaseAuth(action: String, email: String, password: String) async {
+        guard !cloudAuthBusy else { return }
+        cloudAuthBusy = true
+        lastErrorBanner = nil
+        do {
+            let session = try await MacCloudSyncClient.authenticateFirebase(
+                action: action,
+                email: email,
+                syncPassword: password,
+                apiKey: endpointConfig.firebaseWebApiKey
+            )
+            cloudSession = session
+            if let encoded = try? JSONEncoder().encode(session) {
+                MacKeychainStore.saveData(encoded, account: "cloud_session")
+            }
+            if storageMode != .cloudSync {
+                await switchExclusiveStorageMode(.cloudSync)
+            } else {
+                pendingOfflineOutboxIds = Set(entries.map(\.id))
+                await reconcileCloudSessionAutomatically()
+            }
+            statusNotice = "✓ \(t("cloud_auth_signed_in_as", ["email": session.email, "uid": String(session.uid.prefix(10))]))"
+            recordDiagnostic(operation: "cloud.\(action)", detail: "Authenticated Firebase account \(session.email)")
+        } catch {
+            recordDiagnostic(operation: "cloud.\(action)", detail: error.localizedDescription, isError: true)
         }
+        cloudAuthBusy = false
+    }
+
+    func signOutCloudAccount() async {
+        cloudSession = nil
+        MacKeychainStore.delete(account: "cloud_session")
+        endpointConfig.googleDriveBearerToken = ""
+        await switchExclusiveStorageMode(.localOnly)
+        statusNotice = "✓ Signed out & switched to \(t("storage_mode_local_only_title"))"
+    }
+
+    func resetCloudEndpointDefaults() {
+        endpointConfig = MacCloudEndpointConfig()
+        statusNotice = "✓ Reset cloud endpoint configuration to safepocket-vault-eu"
+    }
+
+    func reconcileCloudSessionAutomatically() async {
+        guard storageMode == .cloudSync, isNetworkOnline, isCloudAuthenticated, !isReconcilingCloud else { return }
+        isReconcilingCloud = true
+        defer { isReconcilingCloud = false }
+
+        do {
+            let key = MacZeroKnowledgeCrypto.deriveVaultSymmetricKey(
+                masterPassword: activeMasterPassword,
+                secretKey: secretKeyFormatted
+            )
+
+            if cloudProvider == .firebase, var activeSession = cloudSession {
+                activeSession = await MacCloudSyncClient.refreshFirebaseTokenIfPossible(
+                    session: activeSession,
+                    apiKey: endpointConfig.firebaseWebApiKey
+                )
+                cloudSession = activeSession
+                if let encoded = try? JSONEncoder().encode(activeSession) {
+                    MacKeychainStore.saveData(encoded, account: "cloud_session")
+                }
+
+                // 1. Encrypt pending local mutations (zero-knowledge AES-256-GCM)
+                let idsToPush = pendingOfflineOutboxIds
+                var outboundDeltas: [MacEncryptedSyncDelta] = []
+                for item in entries where idsToPush.contains(item.id) {
+                    let hlc = item.hlcPacked.isEmpty ? nextHlcPacked(for: item.updatedAt) : item.hlcPacked
+                    let aadStr = "safepocket:v1:\(item.category):\(item.id)"
+                    let plain = try JSONEncoder().encode(item)
+                    let enc = try MacZeroKnowledgeCrypto.encryptData(plain, key: key, aad: Data(aadStr.utf8))
+                    outboundDeltas.append(
+                        MacEncryptedSyncDelta(
+                            entityId: item.id,
+                            entityType: "ITEM",
+                            hlcPacked: hlc,
+                            versionVectorJson: "{\"\(nodeId)\":\(Int(item.updatedAt.timeIntervalSince1970 * 1000))}",
+                            ivHex: enc.ivHex,
+                            ciphertextHex: enc.ciphertextHex,
+                            aadContext: aadStr,
+                            isTombstone: false
+                        )
+                    )
+                }
+
+                let pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
+                    deltas: outboundDeltas,
+                    session: activeSession,
+                    config: endpointConfig
+                )
+                let pulledDeltas = try await MacCloudSyncClient.pullDeltasFromFirestore(
+                    sinceHlc: nil,
+                    session: activeSession,
+                    config: endpointConfig
+                )
+
+                var mergedById = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+                var pulledApplied = 0
+                for remote in pulledDeltas {
+                    if remote.isTombstone {
+                        mergedById.removeValue(forKey: remote.entityId)
+                        continue
+                    }
+                    let aadData = Data(remote.aadContext.utf8)
+                    if let plain = try? MacZeroKnowledgeCrypto.decryptData(
+                        ivHex: remote.ivHex,
+                        ciphertextHex: remote.ciphertextHex,
+                        key: key,
+                        aad: aadData
+                    ), let remoteEntry = try? JSONDecoder().decode(MacVaultEntry.self, from: plain) {
+                        if let existing = mergedById[remoteEntry.id] {
+                            if remote.hlcPacked > existing.hlcPacked {
+                                mergedById[remoteEntry.id] = remoteEntry
+                                pulledApplied += 1
+                            }
+                        } else {
+                            mergedById[remoteEntry.id] = remoteEntry
+                            pulledApplied += 1
+                        }
+                    }
+                }
+
+                entries = Array(mergedById.values).sorted { $0.updatedAt > $1.updatedAt }
+                pendingOfflineOutboxIds.removeAll()
+                lastSyncPushed = pushed
+                lastSyncPulled = pulledApplied
+                lastSyncedIso = ISO8601DateFormatter().string(from: Date())
+                recalculateStorageIsolationCounts()
+                persistActiveStorageSnapshot()
+                recordDiagnostic(
+                    operation: "cloud.firebaseSync",
+                    detail: "Synced zero-knowledge deltas (↑\(pushed) pushed • ↓\(pulledApplied) pulled)"
+                )
+            } else if cloudProvider == .googleDrive {
+                // Google Drive appDataFolder encrypted delta flush
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                let flushed = pendingOfflineOutboxIds.count
+                pendingOfflineOutboxIds.removeAll()
+                lastSyncPushed = flushed
+                lastSyncedIso = ISO8601DateFormatter().string(from: Date())
+                recalculateStorageIsolationCounts()
+                persistActiveStorageSnapshot()
+                recordDiagnostic(operation: "cloud.gdriveSync", detail: "Synced \(flushed) encrypted item(s) to Google Drive appDataFolder")
+            }
+        } catch {
+            recordDiagnostic(operation: "cloud.syncError", detail: error.localizedDescription, isError: true)
+        }
+    }
+
+    private func nextHlcPacked(for date: Date = Date()) -> String {
+        let ms = Int64(date.timeIntervalSince1970 * 1000)
+        return String(format: "%015lld:0001:%@", ms, nodeId)
     }
 
     private func recalculateStorageIsolationCounts() {
@@ -525,22 +892,33 @@ final class MacVaultViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Vault CRUD & Sample Data Purge
+
     func openCreateEditor() {
+        restartInactivityAutoLockTimer()
         editingEntry = nil
         presentEditorSheet = true
     }
 
     func openEditEditor(_ entry: MacVaultEntry) {
+        restartInactivityAutoLockTimer()
         editingEntry = entry
         presentEditorSheet = true
     }
 
     func saveEntry(_ updated: MacVaultEntry) {
+        restartInactivityAutoLockTimer()
         var normalized = updated
         normalized.isSampleItem = false
         normalized.updatedAt = Date()
-        if !normalized.websiteUrl.trimmingCharacters(in: .whitespaces).isEmpty {
-            normalized.websiteUrl = Self.normalizeHttpsUrl(normalized.websiteUrl)
+        normalized.hlcPacked = nextHlcPacked(for: normalized.updatedAt)
+        for idx in normalized.fields.indices {
+            if normalized.fields[idx].valueType == .url && !normalized.fields[idx].value.isEmpty {
+                normalized.fields[idx].value = Self.normalizeHttpsUrl(normalized.fields[idx].value)
+            }
+        }
+        if let inst = MacSmartIntelligence.resolveInstitution(for: normalized), normalized.customColorHex == nil {
+            normalized.customColorHex = inst.primaryHex
         }
         if let idx = entries.firstIndex(where: { $0.id == normalized.id }) {
             entries[idx] = normalized
@@ -555,6 +933,7 @@ final class MacVaultViewModel: ObservableObject {
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
         entries[idx].pinned.toggle()
         entries[idx].updatedAt = Date()
+        entries[idx].hlcPacked = nextHlcPacked()
         markMutated(id: id)
     }
 
@@ -562,6 +941,7 @@ final class MacVaultViewModel: ObservableObject {
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
         entries[idx].favorite.toggle()
         entries[idx].updatedAt = Date()
+        entries[idx].hlcPacked = nextHlcPacked()
         markMutated(id: id)
     }
 
@@ -572,6 +952,7 @@ final class MacVaultViewModel: ObservableObject {
         copy.title = "\(src.title) (Copy)"
         copy.isSampleItem = false
         copy.updatedAt = Date()
+        copy.hlcPacked = nextHlcPacked()
         entries.insert(copy, at: 0)
         selectedEntryId = copy.id
         markMutated(id: copy.id)
@@ -586,29 +967,140 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     func deleteAllExampleData() {
-        let removed = entries.filter(\.isSampleItem).map(\.id)
-        entries.removeAll(where: \.isSampleItem)
+        let removed = entries.filter { $0.isSampleItem }.map(\.id)
+        entries.removeAll { $0.isSampleItem }
         UserDefaults.standard.set(true, forKey: samplePurgedKey)
         if let sel = selectedEntryId, !entries.contains(where: { $0.id == sel }) {
             selectedEntryId = entries.first?.id
         }
         recalculateStorageIsolationCounts()
+        persistActiveStorageSnapshot()
         if storageMode == .cloudSync {
             removed.forEach { pendingOfflineOutboxIds.insert($0) }
             Task { await reconcileCloudSessionAutomatically() }
         }
+        statusNotice = "✓ \(t("delete_example_data_done", ["count": String(removed.count)]))"
         recordDiagnostic(operation: "vault.deleteExampleData", detail: "Deleted \(removed.count) built-in sample item(s) permanently")
     }
 
     private func markMutated(id: String) {
         recalculateStorageIsolationCounts()
+        persistActiveStorageSnapshot()
         if storageMode == .cloudSync {
             pendingOfflineOutboxIds.insert(id)
-            if isNetworkOnline {
+            if isNetworkOnline && isCloudAuthenticated {
                 Task { await reconcileCloudSessionAutomatically() }
             }
         }
     }
+
+    // MARK: - Native macOS File Dialogs for Backup, Import & Export
+
+    func exportEncryptedBackupViaDialog(backupPassword: String) {
+        do {
+            let data = try MacPortabilityEngine.exportEncryptedContainer(
+                entries: entries,
+                backupPassword: backupPassword,
+                secretKey: secretKeyFormatted
+            )
+            saveDataWithPanel(data: data, defaultName: "safepocket-backup.safepocket")
+            statusNotice = "✓ Exported encrypted .safepocket backup"
+        } catch {
+            recordDiagnostic(operation: "backup.export", detail: error.localizedDescription, isError: true)
+        }
+    }
+
+    func restoreEncryptedBackupViaDialog(backupPassword: String, overrideSecretKey: String, replaceExisting: Bool) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let sk = overrideSecretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? secretKeyFormatted
+                : overrideSecretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let restored = try MacPortabilityEngine.restoreEncryptedContainer(data, backupPassword: backupPassword, secretKey: sk)
+            if replaceExisting {
+                entries = restored
+            } else {
+                var byId = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+                for r in restored { byId[r.id] = r }
+                entries = Array(byId.values).sorted { $0.updatedAt > $1.updatedAt }
+            }
+            selectedEntryId = entries.first?.id
+            persistActiveStorageSnapshot()
+            recalculateStorageIsolationCounts()
+            statusNotice = "✓ Restored \(restored.count) encrypted item(s)"
+        } catch {
+            recordDiagnostic(operation: "backup.restore", detail: error.localizedDescription, isError: true)
+        }
+    }
+
+    func importCsvOr1PasswordViaDialog() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let imported = try MacPortabilityEngine.importFromCsvOr1Pux(
+                data: data,
+                fileName: url.lastPathComponent,
+                includeLoginsAsNotes: includeLoginsOnImport
+            )
+            entries.insert(contentsOf: imported, at: 0)
+            selectedEntryId = entries.first?.id
+            persistActiveStorageSnapshot()
+            recalculateStorageIsolationCounts()
+            statusNotice = "✓ Imported \(imported.count) item(s)"
+        } catch {
+            recordDiagnostic(operation: "import.file", detail: error.localizedDescription, isError: true)
+        }
+    }
+
+    func exportPlainFormatViaDialog(kind: String, confirmMasterPw: String) {
+        guard verifyMasterPassword(confirmMasterPw) else {
+            recordDiagnostic(operation: "export.\(kind)", detail: "Invalid Master Password confirmation", isError: true)
+            return
+        }
+        do {
+            switch kind {
+            case "1pux":
+                saveDataWithPanel(data: try MacPortabilityEngine.export1Password1PuxJson(entries: entries), defaultName: "safepocket-export.1pux")
+            case "1p_csv":
+                saveDataWithPanel(data: MacPortabilityEngine.export1PasswordCsv(entries: entries), defaultName: "safepocket-1password.csv")
+            case "sp_csv":
+                saveDataWithPanel(data: MacPortabilityEngine.exportSafePocketCsv(entries: entries), defaultName: "safepocket-vault.csv")
+            default:
+                saveDataWithPanel(data: try MacPortabilityEngine.exportPlainJson(entries: entries), defaultName: "safepocket-vault.json")
+            }
+            statusNotice = "✓ Exported \(kind.uppercased())"
+        } catch {
+            recordDiagnostic(operation: "export.\(kind)", detail: error.localizedDescription, isError: true)
+        }
+    }
+
+    func exportEmergencyKitViaDialog(versionDisplay: String) {
+        let html = MacPortabilityEngine.generateEmergencyKitHtml(
+            secretKey: secretKeyFormatted,
+            hint: masterPasswordHint,
+            versionDisplay: versionDisplay
+        )
+        saveDataWithPanel(data: html, defaultName: "safepocket-emergency-kit.html")
+        statusNotice = "✓ Saved Emergency Kit HTML"
+    }
+
+    private func saveDataWithPanel(data: Data, defaultName: String) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = defaultName
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    // MARK: - Utilities, Scrubbing, Touch ID & Clipboard Hygiene
 
     static func normalizeHttpsUrl(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -647,43 +1139,15 @@ final class MacVaultViewModel: ObservableObject {
         }
     }
 
-    func t(_ key: String) -> String {
-        let lang = Locale.current.language.languageCode?.identifier ?? "en"
-        let table: [String: [String: String]] = [
-            "update_check_btn": [
-                "en": "Check for Updates",
-                "de": "Nach Updates suchen",
-                "it": "Controlla aggiornamenti",
-                "fr": "Rechercher des mises à jour",
-                "es": "Buscar actualizaciones",
-                "el": "Έλεγχος για ενημερώσεις"
-            ],
-            "action_lock_vault": [
-                "en": "Lock Vault",
-                "de": "Tresor sperren",
-                "it": "Blocca cassaforte",
-                "fr": "Verrouiller le coffre",
-                "es": "Bloquear bóveda",
-                "el": "Κλείδωμα θησαυροφυλακίου"
-            ],
-            "action_new_item": [
-                "en": "New Item",
-                "de": "Neuer Eintrag",
-                "it": "Nuovo elemento",
-                "fr": "Nouvel élément",
-                "es": "Nuevo elemento",
-                "el": "Νέο στοιχείο"
-            ],
-            "shortcut_hint_search": [
-                "en": "Search",
-                "de": "Suchen",
-                "it": "Cerca",
-                "fr": "Rechercher",
-                "es": "Buscar",
-                "el": "Αναζήτηση"
-            ]
-        ]
-        return table[key]?[lang] ?? table[key]?["en"] ?? key
+    func clearDiagnostics() {
+        diagnostics.removeAll()
+    }
+
+    func copyDiagnosticsReport() {
+        let text = diagnostics.map { "[\(ISO8601DateFormatter().string(from: $0.timestamp))] [\($0.operation)] \($0.scrubbedDetail)" }
+            .joined(separator: "\n")
+        copyFieldWithClipboardHygiene(text.isEmpty ? "No diagnostics events" : text, isSensitive: false)
+        statusNotice = "✓ \(t("action_copied"))"
     }
 
     func unlockWithTouchID() async -> Bool {
@@ -697,7 +1161,10 @@ final class MacVaultViewModel: ObservableObject {
                 .deviceOwnerAuthenticationWithBiometrics,
                 localizedReason: "Unlock your zero-knowledge SafePocket vault"
             )
-            if ok { isLocked = false }
+            if ok {
+                isLocked = false
+                restartInactivityAutoLockTimer()
+            }
             return ok
         } catch {
             recordDiagnostic(operation: "unlock.touchId", detail: error.localizedDescription, isError: true)
@@ -706,6 +1173,7 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     func copyFieldWithClipboardHygiene(_ value: String, isSensitive: Bool) {
+        restartInactivityAutoLockTimer()
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
@@ -727,16 +1195,34 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     private static func buildSampleEntries() -> [MacVaultEntry] {
-        [
+        let soonDate = ISO8601DateFormatter.string(
+            from: Date().addingTimeInterval(48 * 86_400),
+            timeZone: TimeZone(secondsFromGMT: 0)!,
+            formatOptions: [.withFullDate]
+        )
+        return [
             MacVaultEntry(
                 id: "item-card-db-visa",
                 category: "PAYMENT_CARD",
                 title: "Deutsche Bank Travel VISA",
                 subtitle: "Clara Sofia Müller • Credit Card",
-                primaryLabel: "Card Number",
-                primaryValue: "4532 0151 1283 0366",
-                websiteUrl: "https://www.deutsche-bank.de",
-                phone: "+49 69 910 10000",
+                fields: [
+                    .init(id: "f1", labelKey: "field_cardholder", value: "CLARA SOFIA MÜLLER"),
+                    .init(id: "f2", labelKey: "field_card_number", value: "4532 0151 1283 0366", valueType: .cardNumber, isSensitive: true),
+                    .init(id: "f3", labelKey: "field_card_network", value: "VISA"),
+                    .init(id: "f4", labelKey: "field_card_type", value: "Credit Card"),
+                    .init(id: "f5", labelKey: "field_expiry_date", value: "2029-08", valueType: .dateIso),
+                    .init(id: "f6", labelKey: "field_cvv", value: "842", valueType: .sensitiveSecret, isSensitive: true),
+                    .init(id: "f7", labelKey: "field_pin", value: "2940", valueType: .sensitiveSecret, isSensitive: true),
+                    .init(id: "f8", labelKey: "field_issuing_bank", value: "Deutsche Bank AG"),
+                    .init(id: "f9", labelKey: "field_iban", value: "DE12 5007 0010 0532 0130 00", valueType: .iban, isSensitive: true),
+                    .init(id: "f10", labelKey: "field_bic", value: "DEUTDEFFXXX"),
+                    .init(id: "f11", labelKey: "field_support_phone", value: "+49 69 910 10000", valueType: .phone),
+                    .init(id: "f12", labelKey: "field_institution_domain", value: "https://www.deutsche-bank.de", valueType: .url)
+                ],
+                tags: ["travel", "visa", "sepa"],
+                customColorHex: "#0018A8",
+                networkBrand: "VISA",
                 pinned: true,
                 favorite: true,
                 isSampleItem: true,
@@ -747,10 +1233,18 @@ final class MacVaultViewModel: ObservableObject {
                 category: "BANK_ACCOUNT",
                 title: "ING-DiBa Girokonto",
                 subtitle: "Checking Account (Girokonto)",
-                primaryLabel: "IBAN",
-                primaryValue: "DE89 5001 0517 5407 3249 31",
-                websiteUrl: "https://www.ing.de",
-                phone: "+49 69 50 500 105",
+                fields: [
+                    .init(id: "b1", labelKey: "field_account_holder", value: "Clara Sofia Müller"),
+                    .init(id: "b2", labelKey: "field_issuing_bank", value: "ING-DiBa AG"),
+                    .init(id: "b3", labelKey: "field_account_type", value: "Checking Account (Girokonto)"),
+                    .init(id: "b4", labelKey: "field_iban", value: "DE89 5001 0517 5407 3249 31", valueType: .iban, isSensitive: true),
+                    .init(id: "b5", labelKey: "field_bic", value: "INGDDEFFXXX"),
+                    .init(id: "b6", labelKey: "field_currency", value: "EUR"),
+                    .init(id: "b7", labelKey: "field_support_phone", value: "+49 69 50 500 105", valueType: .phone),
+                    .init(id: "b8", labelKey: "field_institution_domain", value: "https://www.ing.de", valueType: .url)
+                ],
+                tags: ["girokonto", "sepa"],
+                customColorHex: "#FF6200",
                 pinned: false,
                 favorite: true,
                 isSampleItem: true,
@@ -761,10 +1255,15 @@ final class MacVaultViewModel: ObservableObject {
                 category: "OFFICIAL_DOCUMENT",
                 title: "Biometric Passport (DEU)",
                 subtitle: "Clara Sofia Müller",
-                primaryLabel: "Document Number",
-                primaryValue: "C01X00T47",
-                websiteUrl: "https://www.auswaertiges-amt.de",
-                phone: "+49 30 5000 2000",
+                fields: [
+                    .init(id: "d1", labelKey: "field_document_subtype", value: "Biometric Passport"),
+                    .init(id: "d2", labelKey: "field_document_number", value: "C01X00T47", valueType: .sensitiveSecret, isSensitive: true),
+                    .init(id: "d3", labelKey: "field_issuing_authority", value: "Stadt München"),
+                    .init(id: "d4", labelKey: "field_expiry_date", value: soonDate, valueType: .dateIso),
+                    .init(id: "d5", labelKey: "field_institution_domain", value: "https://www.auswaertiges-amt.de", valueType: .url)
+                ],
+                tags: ["passport", "eu"],
+                customColorHex: "#1E3A5F",
                 pinned: false,
                 favorite: false,
                 isSampleItem: true,

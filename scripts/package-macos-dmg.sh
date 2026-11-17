@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Packages SafePocket native macOS universal binary (arm64 + x86_64) into SafePocket.app + .dmg
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION_NAME="${SAFEPOCKET_RELEASE_VERSION:-0.3}"
+VERSION_NAME="${SAFEPOCKET_RELEASE_VERSION:-0.3.1}"
 VERSION_NAME="${VERSION_NAME#v}"
-VERSION_CODE="${SAFEPOCKET_VERSION_CODE:-5}"
+VERSION_CODE="${SAFEPOCKET_VERSION_CODE:-6}"
 OUT_DMG="${1:-${REPO_ROOT}/SafePocket-${VERSION_NAME}-${VERSION_CODE}-macOS-universal.dmg}"
 
 echo "Building SafePocketMac v${VERSION_NAME} (Build ${VERSION_CODE}) universal macOS binary..."
@@ -22,10 +22,11 @@ fi
 
 STAGE_DIR="$(mktemp -d)"
 APP_BUNDLE="${STAGE_DIR}/SafePocket.app"
-mkdir -p "${APP_BUNDLE}/Contents/MacOS" "${APP_BUNDLE}/Contents/Resources"
+mkdir -p "${APP_BUNDLE}/Contents/MacOS" "${APP_BUNDLE}/Contents/Resources/i18n"
 
 cp "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/SafePocketMac"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/SafePocketMac"
+cp "${REPO_ROOT}"/i18n/*.arb.json "${APP_BUNDLE}/Contents/Resources/i18n/"
 
 ICON_PNG="${REPO_ROOT}/macosApp/Resources/AppIcon-1024.png"
 if [[ -f "${ICON_PNG}" ]] && command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then

@@ -298,9 +298,9 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3');
-    expect(APP_BUILD_INFO.versionCode).toBe(5);
+  it('7. Cross-Platform v0.3.1 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(6);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -374,7 +374,7 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3 (Build 5)');
+    expect(macApp).toContain('SafePocket v0.3.1 (Build 6)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
@@ -406,5 +406,94 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
         )
       )
     ).toBe(true);
+  });
+
+  it('8. 100% Cross-Platform Settings Parity, Clean Radio Buttons & macOS Cloud Sync Login/Config + 6-Language Bundling', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const locales = ['en', 'de', 'it', 'fr', 'es', 'el'] as const;
+
+    // 1) Zero "(One or the Other — Never Both)" or "(Exclusive)" wording in any ARB catalog or platform UI
+    for (const loc of locales) {
+      const arbText = fs.readFileSync(
+        path.join(repoRoot, `i18n/${loc}.arb.json`),
+        'utf-8'
+      );
+      expect(arbText).not.toContain('One or the Other');
+      expect(arbText).not.toContain('Never Both');
+      expect(arbText).not.toContain('(Exclusive)');
+      expect(arbText).not.toContain('(Exklusiv)');
+    }
+
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const macApp = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    const macCloud = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/CloudSyncAndPortability.swift'),
+      'utf-8'
+    );
+    const macL10n = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/LocalizationAndModels.swift'),
+      'utf-8'
+    );
+    const macDmgScript = fs.readFileSync(
+      path.join(repoRoot, 'scripts/package-macos-dmg.sh'),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+    const pwaShell = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/ui/appShell.ts'),
+      'utf-8'
+    );
+
+    expect(macSplit).not.toContain('One or the Other');
+    expect(macSplit).not.toContain('Never Both');
+    expect(androidShell).not.toContain('One or the Other');
+    expect(pwaShell).not.toContain('One or the Other');
+
+    // 2) Explicit Radio Buttons for Storage Mode across macOS, Android, and PWA
+    expect(macSplit).toContain('.pickerStyle(.radioGroup)');
+    expect(androidShell).toContain('RadioButton(');
+    expect(pwaShell).toContain('role="radio"');
+
+    // 3) Full Cloud Sync Login, Sign-Up, Provider Selection & Endpoint Config on macOS & Android
+    expect(macCloud).toContain('safepocket-firebase-auth-verifier-v1');
+    expect(macCloud).toContain('identitytoolkit.googleapis.com/v1/accounts:');
+    expect(macCloud).toContain('documents:commit');
+    expect(macSplit).toContain('signInFirebaseAccount');
+    expect(macSplit).toContain('createFirebaseAccount');
+    expect(macSplit).toContain('cloud_config_title');
+    expect(macSplit).toContain('cloud_firebase_project_id');
+    expect(macSplit).toContain('cloud_firebase_api_key');
+    expect(androidShell).toContain('cloud_config_title');
+    expect(androidShell).toContain('cloud_firebase_project_id');
+
+    // 4) 6-Language Selector & ARB Bundling on macOS + Full Settings Parity (Accent, Portability, Screenshots, Expiry, Auto-Lock)
+    expect(macL10n).toContain('MacLocalizationEngine');
+    expect(macSplit).toContain('settings_language_title');
+    expect(macSplit).toContain('MacSupportedLocale.allCases');
+    expect(macDmgScript).toContain('Contents/Resources/i18n');
+    expect(macApp).toContain('sharingType');
+    expect(macSplit).toContain('security_allow_screenshots_toggle');
+    expect(macSplit).toContain('expiry_window_setting_title');
+    expect(macSplit).toContain('security_auto_lock');
+    expect(macSplit).toContain('MacMaterialAccent.allCases');
+    expect(macSplit).toContain('backup_export_encrypted');
+    expect(macSplit).toContain('import_1password_btn');
+    expect(macSplit).toContain('export_1password_1pux_btn');
+    expect(androidShell).toContain('material_color_emerald');
+    expect(androidShell).toContain('expiry_window_setting_title');
+    expect(androidShell).toContain('security_auto_lock');
+    expect(androidShell).toContain('export_json_btn');
   });
 });

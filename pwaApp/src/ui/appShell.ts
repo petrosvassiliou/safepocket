@@ -3832,14 +3832,12 @@ export class SafePocketAppShell {
             aria-checked="${this.syncCoordinator.storageMode === 'LOCAL_ONLY'}"
           >
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;">
-              <strong style="font-size:13px;">💾 ${this.escape(
-                this.i18n.t('storage_mode_local_only_title')
-              )}</strong>
-              ${
-                this.syncCoordinator.storageMode === 'LOCAL_ONLY'
-                  ? '<span class="sp-badge sp-badge-ok">✓</span>'
-                  : ''
-              }
+              <strong style="font-size:13px;display:inline-flex;align-items:center;gap:7px;">
+                <span aria-hidden="true" style="font-size:15px;color:var(--accent-primary);">${
+                  this.syncCoordinator.storageMode === 'LOCAL_ONLY' ? '◉' : '◯'
+                }</span>
+                ${this.escape(this.i18n.t('storage_mode_local_only_title'))}
+              </strong>
             </div>
             <span style="font-size:11.5px;color:var(--text-secondary);line-height:1.45;">
               ${this.escape(this.i18n.t('storage_mode_local_only_desc'))}
@@ -3859,14 +3857,12 @@ export class SafePocketAppShell {
             aria-checked="${this.syncCoordinator.storageMode === 'CLOUD_SYNC'}"
           >
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;">
-              <strong style="font-size:13px;">☁ ${this.escape(
-                this.i18n.t('storage_mode_cloud_only_title')
-              )}</strong>
-              ${
-                this.syncCoordinator.storageMode === 'CLOUD_SYNC'
-                  ? '<span class="sp-badge sp-badge-ok">✓</span>'
-                  : ''
-              }
+              <strong style="font-size:13px;display:inline-flex;align-items:center;gap:7px;">
+                <span aria-hidden="true" style="font-size:15px;color:var(--accent-primary);">${
+                  this.syncCoordinator.storageMode === 'CLOUD_SYNC' ? '◉' : '◯'
+                }</span>
+                ${this.escape(this.i18n.t('storage_mode_cloud_only_title'))}
+              </strong>
             </div>
             <span style="font-size:11.5px;color:var(--text-secondary);line-height:1.45;">
               ${this.escape(this.i18n.t('storage_mode_cloud_only_desc'))}

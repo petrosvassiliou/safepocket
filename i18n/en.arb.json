@@ -302,7 +302,7 @@
   "sync_pill_syncing": "Syncing with Cloud…",
   "sync_pill_cloud_offline_armed": "Cloud Offline Ready • Auto-Sync ({queued})",
   "sync_pill_error": "Sync Attention • Tap for details",
-  "storage_mode_section_title": "Vault Storage Mode (Exclusive)",
+  "storage_mode_section_title": "Vault Storage Mode",
   "storage_mode_local_only_title": "Local Storage Only (Encrypted Device DB)",
   "storage_mode_local_only_desc": "Stored exclusively on this device. Cloud Sync is disabled and zero vault data is stored online.",
   "storage_mode_cloud_only_title": "Cloud Sync Only (Zero-Knowledge + Auto Offline)",

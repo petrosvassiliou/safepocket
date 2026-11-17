@@ -302,7 +302,7 @@
   "sync_pill_syncing": "Synchronisiere mit Cloud…",
   "sync_pill_cloud_offline_armed": "Cloud offline bereit • Auto-Sync ({queued})",
   "sync_pill_error": "Sync-Hinweis • Für Details klicken",
-  "storage_mode_section_title": "Tresor-Speichermodus (Exklusiv)",
+  "storage_mode_section_title": "Tresor-Speichermodus",
   "storage_mode_local_only_title": "Nur lokaler Speicher (Verschlüsselte Geräte-DB)",
   "storage_mode_local_only_desc": "Ausschließlich lokal auf diesem Gerät gespeichert. Cloud-Sync ist deaktiviert und keine Daten werden online gespeichert.",
   "storage_mode_cloud_only_title": "Nur Cloud-Sync (Zero-Knowledge + Auto-Offline)",

@@ -302,7 +302,7 @@
   "sync_pill_syncing": "Συγχρονισμός με Cloud…",
   "sync_pill_cloud_offline_armed": "Cloud εκτός σύνδεσης • Αυτόματος συγχρ. ({queued})",
   "sync_pill_error": "Προσοχή συγχρονισμού • Λεπτομέρειες",
-  "storage_mode_section_title": "Λειτουργία αποθήκευσης (Αποκλειστική)",
+  "storage_mode_section_title": "Λειτουργία αποθήκευσης",
   "storage_mode_local_only_title": "Μόνο τοπική αποθήκευση (Κρυπτογραφημένη ΒΔ)",
   "storage_mode_local_only_desc": "Αποθηκεύεται αποκλειστικά σε αυτήν τη συσκευή. Το Cloud Sync είναι απενεργοποιημένο.",
   "storage_mode_cloud_only_title": "Μόνο Cloud Sync (Zero-Knowledge + Αυτόματα εκτός σύνδεσης)",

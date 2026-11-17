@@ -302,7 +302,7 @@
   "sync_pill_syncing": "Sincronizando con la nube…",
   "sync_pill_cloud_offline_armed": "Nube sin conexión lista • Auto-Sync ({queued})",
   "sync_pill_error": "Atención Sync • Ver detalles",
-  "storage_mode_section_title": "Modo de almacenamiento (Exclusivo)",
+  "storage_mode_section_title": "Modo de almacenamiento",
   "storage_mode_local_only_title": "Solo almacenamiento local (BD cifrada en dispositivo)",
   "storage_mode_local_only_desc": "Almacenado exclusivamente en este dispositivo. Cloud Sync está desactivado.",
   "storage_mode_cloud_only_title": "Solo Cloud Sync (Zero-Knowledge + Sin conexión auto)",
