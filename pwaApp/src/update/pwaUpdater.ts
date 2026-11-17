@@ -95,9 +95,13 @@ export class PwaUpdateController {
   private registration: ServiceWorkerRegistration | null = null;
   private status: PwaUpdateStatus = { phase: 'idle', progressPercent: 0 };
   private autoUpdateEnabled = true;
+  private periodicTimer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<(status: PwaUpdateStatus) => void>();
 
-  constructor(private readonly manifestUrl = '/version.json') {
+  constructor(
+    private readonly manifestUrl = '/version.json',
+    private readonly fallbackManifestUrl = 'https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json'
+  ) {
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem(AUTO_UPDATE_STORAGE_KEY);
       if (saved !== null) {
@@ -119,6 +123,11 @@ export class PwaUpdateController {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(AUTO_UPDATE_STORAGE_KEY, String(enabled));
     }
+    if (enabled) {
+      this.startPeriodicAutoCheck();
+    } else {
+      this.stopPeriodicAutoCheck();
+    }
   }
 
   subscribe(listener: (status: PwaUpdateStatus) => void): () => void {
@@ -137,7 +146,28 @@ export class PwaUpdateController {
       }
     }
     if (this.autoUpdateEnabled) {
+      this.startPeriodicAutoCheck();
       await this.checkForUpdates();
+    }
+  }
+
+  startPeriodicAutoCheck(intervalMs = 30 * 60 * 1000): void {
+    this.stopPeriodicAutoCheck();
+    if (!this.autoUpdateEnabled || typeof setInterval === 'undefined') return;
+    this.periodicTimer = setInterval(() => {
+      if (
+        this.autoUpdateEnabled &&
+        (typeof navigator === 'undefined' || navigator.onLine !== false)
+      ) {
+        void this.checkForUpdates();
+      }
+    }, intervalMs);
+  }
+
+  stopPeriodicAutoCheck(): void {
+    if (this.periodicTimer !== null) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = null;
     }
   }
 
@@ -149,9 +179,16 @@ export class PwaUpdateController {
       if (this.registration) {
         await this.registration.update();
       }
-      const res = await customFetcher(this.manifestUrl, { cache: 'no-store' });
-      if (!res.ok) {
-        throw new Error(`Manifest HTTP ${res.status}`);
+      let res = await customFetcher(this.manifestUrl, { cache: 'no-store' }).catch(
+        () => null
+      );
+      if ((!res || !res.ok) && customFetcher === fetch) {
+        res = await customFetcher(this.fallbackManifestUrl, {
+          cache: 'no-store'
+        });
+      }
+      if (!res || !res.ok) {
+        throw new Error(`Manifest HTTP ${res?.status ?? 0}`);
       }
       const manifest = (await res.json()) as RemoteUpdateManifest;
 

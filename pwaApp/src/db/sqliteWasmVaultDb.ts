@@ -133,6 +133,34 @@ CREATE TABLE IF NOT EXISTS firebase_storage_blobs (
   updated_at_iso TEXT NOT NULL,
   PRIMARY KEY (uid, vault_id, attachment_id)
 );
+
+-- v0.3 Session-Scoped Cloud Offline Mirror & Mutation Outbox
+-- Active ONLY when VaultStorageMode === 'CLOUD_SYNC'; purged when switching to 'LOCAL_ONLY' or signing out.
+CREATE TABLE IF NOT EXISTS cloud_offline_mirror (
+  id TEXT NOT NULL PRIMARY KEY,
+  category TEXT NOT NULL,
+  favorite INTEGER NOT NULL DEFAULT 0,
+  iv_hex TEXT NOT NULL,
+  ciphertext_hex TEXT NOT NULL,
+  aad_context TEXT NOT NULL,
+  hlc_packed TEXT NOT NULL,
+  version_vector_json TEXT NOT NULL,
+  is_tombstone INTEGER NOT NULL DEFAULT 0,
+  updated_at_epoch_ms INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cloud_mutation_outbox (
+  id TEXT NOT NULL PRIMARY KEY,
+  category TEXT NOT NULL,
+  favorite INTEGER NOT NULL DEFAULT 0,
+  iv_hex TEXT NOT NULL,
+  ciphertext_hex TEXT NOT NULL,
+  aad_context TEXT NOT NULL,
+  hlc_packed TEXT NOT NULL,
+  version_vector_json TEXT NOT NULL,
+  is_tombstone INTEGER NOT NULL DEFAULT 0,
+  queued_at_epoch_ms INTEGER NOT NULL
+);
 `;
 
 export interface LocalFirebaseUserRecord {
@@ -560,5 +588,155 @@ export class SqliteWasmVaultDb {
     }
     stmt.free();
     return found;
+  }
+
+  // --- v0.3 Exclusive Storage Mode Isolation: Cloud Session Mirror & Offline Mutation Outbox ---
+
+  async saveCloudMirrorRow(row: EncryptedVaultRow): Promise<void> {
+    const db = await this.ensureInitialized();
+    db.run(
+      `INSERT OR REPLACE INTO cloud_offline_mirror (
+        id, category, favorite, iv_hex, ciphertext_hex, aad_context,
+        hlc_packed, version_vector_json, is_tombstone, updated_at_epoch_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.category,
+        row.favorite ? 1 : 0,
+        row.ivHex,
+        row.ciphertextHex,
+        row.aadContext,
+        row.hlcPacked,
+        JSON.stringify(row.versionVector),
+        row.isTombstone ? 1 : 0,
+        row.updatedAtEpochMs
+      ]
+    );
+    await this.flushToOpfs();
+  }
+
+  async loadAllCloudMirrorRowsIncludingTombstones(): Promise<EncryptedVaultRow[]> {
+    const db = await this.ensureInitialized();
+    const stmt = db.prepare(
+      `SELECT id, category, favorite, iv_hex, ciphertext_hex, aad_context,
+              hlc_packed, version_vector_json, is_tombstone, updated_at_epoch_ms
+       FROM cloud_offline_mirror
+       ORDER BY updated_at_epoch_ms DESC`
+    );
+    const rows: EncryptedVaultRow[] = [];
+    while (stmt.step()) {
+      const r = stmt.getAsObject() as Record<string, unknown>;
+      rows.push({
+        id: String(r.id),
+        category: r.category as EncryptedVaultRow['category'],
+        favorite: Number(r.favorite) === 1,
+        ivHex: String(r.iv_hex),
+        ciphertextHex: String(r.ciphertext_hex),
+        aadContext: String(r.aad_context),
+        hlcPacked: String(r.hlc_packed),
+        versionVector: JSON.parse(String(r.version_vector_json)) as Record<
+          string,
+          number
+        >,
+        isTombstone: Number(r.is_tombstone) === 1,
+        updatedAtEpochMs: Number(r.updated_at_epoch_ms)
+      });
+    }
+    stmt.free();
+    return rows;
+  }
+
+  async loadActiveCloudMirrorRows(): Promise<EncryptedVaultRow[]> {
+    const all = await this.loadAllCloudMirrorRowsIncludingTombstones();
+    return all.filter((r) => !r.isTombstone);
+  }
+
+  async enqueueCloudMutationOutboxRow(row: EncryptedVaultRow): Promise<void> {
+    const db = await this.ensureInitialized();
+    db.run(
+      `INSERT OR REPLACE INTO cloud_mutation_outbox (
+        id, category, favorite, iv_hex, ciphertext_hex, aad_context,
+        hlc_packed, version_vector_json, is_tombstone, queued_at_epoch_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.category,
+        row.favorite ? 1 : 0,
+        row.ivHex,
+        row.ciphertextHex,
+        row.aadContext,
+        row.hlcPacked,
+        JSON.stringify(row.versionVector),
+        row.isTombstone ? 1 : 0,
+        Date.now()
+      ]
+    );
+    await this.flushToOpfs();
+  }
+
+  async listCloudMutationOutboxRows(): Promise<EncryptedVaultRow[]> {
+    const db = await this.ensureInitialized();
+    const stmt = db.prepare(
+      `SELECT id, category, favorite, iv_hex, ciphertext_hex, aad_context,
+              hlc_packed, version_vector_json, is_tombstone, queued_at_epoch_ms
+       FROM cloud_mutation_outbox
+       ORDER BY queued_at_epoch_ms ASC`
+    );
+    const rows: EncryptedVaultRow[] = [];
+    while (stmt.step()) {
+      const r = stmt.getAsObject() as Record<string, unknown>;
+      rows.push({
+        id: String(r.id),
+        category: r.category as EncryptedVaultRow['category'],
+        favorite: Number(r.favorite) === 1,
+        ivHex: String(r.iv_hex),
+        ciphertextHex: String(r.ciphertext_hex),
+        aadContext: String(r.aad_context),
+        hlcPacked: String(r.hlc_packed),
+        versionVector: JSON.parse(String(r.version_vector_json)) as Record<
+          string,
+          number
+        >,
+        isTombstone: Number(r.is_tombstone) === 1,
+        updatedAtEpochMs: Number(r.queued_at_epoch_ms)
+      });
+    }
+    stmt.free();
+    return rows;
+  }
+
+  async removeCloudMutationOutboxRows(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const db = await this.ensureInitialized();
+    for (const id of ids) {
+      db.run('DELETE FROM cloud_mutation_outbox WHERE id = ?', [id]);
+    }
+    await this.flushToOpfs();
+  }
+
+  async countStandaloneLocalVaultRows(): Promise<number> {
+    const db = await this.ensureInitialized();
+    const stmt = db.prepare('SELECT COUNT(*) AS cnt FROM vault_item');
+    let cnt = 0;
+    if (stmt.step()) {
+      const r = stmt.getAsObject();
+      cnt = Number(r.cnt ?? 0);
+    }
+    stmt.free();
+    return cnt;
+  }
+
+  async purgeStandaloneLocalVault(): Promise<void> {
+    const db = await this.ensureInitialized();
+    db.run('DELETE FROM vault_item;');
+    await this.flushToOpfs();
+  }
+
+  async purgeCloudSessionMirrorAndOutbox(): Promise<void> {
+    const db = await this.ensureInitialized();
+    db.run('DELETE FROM cloud_offline_mirror;');
+    db.run('DELETE FROM cloud_mutation_outbox;');
+    db.run('DELETE FROM sync_checkpoint;');
+    await this.flushToOpfs();
   }
 }

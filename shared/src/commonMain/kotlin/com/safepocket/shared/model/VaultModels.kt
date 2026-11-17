@@ -25,6 +25,12 @@ enum class ThemePreference {
 }
 
 @Serializable
+enum class VaultStorageMode {
+    LOCAL_ONLY, // Device-only encrypted SQLCipher / SQLite WASM DB; zero cloud sync
+    CLOUD_SYNC  // Cloud-authoritative Firebase zero-knowledge store + automatic encrypted offline mirror/outbox
+}
+
+@Serializable
 enum class DocumentSubtype {
     PASSPORT,
     NATIONAL_ID,
@@ -326,6 +332,7 @@ data class VaultItemPayload(
     val subtitle: String = "",
     val favorite: Boolean = false,
     val pinned: Boolean = false,
+    val isSampleItem: Boolean = false,
     val lastAccessedAtEpochMs: Long? = null,
     val tags: List<String> = emptyList(),
     val regionHint: String? = null, // Optional ISO country override ("DE", "IT", "GR", "FR", "ES")
@@ -341,6 +348,51 @@ data class VaultItemPayload(
 
     fun fieldValue(key: String): String =
         fields.firstOrNull { !it.isCustomLabel && it.labelKey == key }?.value.orEmpty()
+
+    fun isBuiltInSample(): Boolean =
+        isSampleItem || id in SampleVaultCatalogIds.ALL_KNOWN_SAMPLE_IDS
+
+    fun primaryCopyableField(): VaultField? {
+        val priorityKeys = when (category) {
+            VaultCategory.PAYMENT_CARD -> listOf(CanonicalFieldKeys.CARD_NUMBER, CanonicalFieldKeys.IBAN, CanonicalFieldKeys.CVV)
+            VaultCategory.BANK_ACCOUNT -> listOf(CanonicalFieldKeys.IBAN, CanonicalFieldKeys.ACCOUNT_NUMBER, CanonicalFieldKeys.BIC)
+            VaultCategory.INSURANCE_CARD -> listOf(CanonicalFieldKeys.INSURANCE_NUMBER, CanonicalFieldKeys.INSURER_ID)
+            VaultCategory.MEMBERSHIP_CARD -> listOf(CanonicalFieldKeys.MEMBERSHIP_ID, CanonicalFieldKeys.BARCODE_VALUE)
+            VaultCategory.IDENTITY -> listOf(CanonicalFieldKeys.TAX_ID, CanonicalFieldKeys.SSN, CanonicalFieldKeys.EMAIL, CanonicalFieldKeys.PHONE)
+            VaultCategory.OFFICIAL_DOCUMENT -> listOf(CanonicalFieldKeys.DOCUMENT_NUMBER, CanonicalFieldKeys.PIN)
+            VaultCategory.SECURE_NOTE -> listOf(CanonicalFieldKeys.MARKDOWN_NOTE, CanonicalFieldKeys.PIN, CanonicalFieldKeys.DOCUMENT_NUMBER)
+        }
+        for (key in priorityKeys) {
+            val found = fields.firstOrNull { !it.isCustomLabel && it.labelKey == key && it.value.isNotBlank() }
+            if (found != null) return found
+        }
+        return fields.firstOrNull { it.value.isNotBlank() }
+    }
+}
+
+object SampleVaultCatalogIds {
+    val ALL_KNOWN_SAMPLE_IDS = setOf(
+        "item-card-db-visa",
+        "item-card-n26-metal",
+        "item-card-alpine-metal",
+        "item-bank-ing-giro",
+        "item-bank-sepa-main",
+        "item-ins-tk-egk",
+        "item-ins-ehic-eu",
+        "item-mem-bahncard",
+        "item-mem-adac-plus",
+        "item-identity-primary",
+        "item-id-clara",
+        "item-id-eu-citizen",
+        "item-doc-hellenic-passport",
+        "item-doc-cie-italy",
+        "item-doc-passport-de",
+        "item-doc-passport-eu",
+        "item-note-home-safe",
+        "item-note-emergency",
+        "item-note-emergency-kit",
+        "item-note-vault-codes"
+    )
 }
 
 enum class ExpirySeverity {

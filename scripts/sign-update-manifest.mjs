@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.2').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '4');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '5');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-16T20:30:00Z',
+    publishedAt: '2026-11-17T00:45:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} adds automatic Institution + Card Network/Type dual logos & brand colors (e.g. Deutsche Bank + VISA) with optional HTTPS icon download.\n• Complete category-specific field templates across all 7 categories, full item editing, bottom-left theme toggle, and smooth seam-free button hover.\n• Local encrypted SQLCipher / SQLite WASM DB + Firebase Cloud Sync account creation, encrypted .safepocket backup/restore, and 1Password (.1pux / CSV) & CSV import/export.`,
-      de: `• SafePocket v${latestVersion} bietet automatische Dual-Logos (Institut + Kartentyp, z. B. Deutsche Bank + VISA) und Markenfarben inkl. optionalem HTTPS-Logo-Download.\n• Vollständige kategoriebezogene Felder für alle 7 Kategorien, vollständiges Bearbeiten bestehender Einträge, Theme-Icon unten links & weicher Button-Hover ohne graue Linie.\n• Lokale verschlüsselte SQLCipher-/SQLite-Datenbank + Firebase-Konto & Cloud-Sync, verschlüsseltes .safepocket-Backup sowie Import/Export für 1Password (.1pux / CSV) & CSV.`,
-      it: `• SafePocket v${latestVersion} introduce doppi loghi automatici istituto + circuito/tipo (es. Deutsche Bank + VISA) e colori del brand con download icone opzionale.\n• Campi completi per tutte le 7 categorie, modifica completa degli elementi, selettore tema in basso a sinistra e pulsanti fluidi senza linea grigia.\n• DB locale cifrato SQLCipher / SQLite WASM + account e sync Firebase, backup cifrato .safepocket e import/export 1Password (.1pux / CSV) e CSV.`,
-      fr: `• SafePocket v${latestVersion} ajoute les doubles logos automatiques établissement + réseau/type (ex. Deutsche Bank + VISA) et couleurs de marque.\n• Champs complets pour les 7 catégories, modification complète des éléments, bouton de thème en bas à gauche et survol fluide sans ligne grise.\n• Base locale chiffrée SQLCipher / SQLite WASM + compte et synchro Firebase, sauvegarde chiffrée .safepocket et import/export 1Password (.1pux / CSV) et CSV.`,
-      es: `• SafePocket v${latestVersion} añade dobles logotipos automáticos de entidad + red/tipo (ej. Deutsche Bank + VISA) y colores de marca.\n• Campos completos para las 7 categorías, edición completa de elementos, botón de tema abajo a la izquierda y botones suaves sin línea gris.\n• Base local cifrada SQLCipher / SQLite WASM + cuenta y sincronización Firebase, copia cifrada .safepocket e importación/exportación 1Password (.1pux / CSV) y CSV.`,
-      el: `• Το SafePocket v${latestVersion} προσθέτει αυτόματα διπλά λογότυπα ιδρύματος + δικτύου/τύπου (π.χ. Deutsche Bank + VISA) και χρώματα επωνυμίας.\n• Πλήρη πεδία και για τις 7 κατηγορίες, πλήρη επεξεργασία στοιχείων, εναλλαγή θέματος κάτω αριστερά και ομαλό hover κουμπιών χωρίς γκρι γραμμή.\n• Τοπική κρυπτογραφημένη βάση SQLCipher / SQLite WASM + συγχρονισμός Firebase, κρυπτογραφημένο αντίγραφο .safepocket και εισαγωγή/εξαγωγή 1Password (.1pux / CSV) & CSV.`
+      en: `• SafePocket v${latestVersion} delivers intelligent field dropdowns, international phone prefixes, live HTTPS website verification, and IBAN cross-field autofill.\n• Mutually exclusive Local Storage Only vs Cloud Sync Only with 100% automatic zero-input offline support, bottom-right sync status pill, swipe actions, right-click menus, and one-tap Delete Example Data.\n• Play Protect compliant Android/Googlebook OS updates, in-app macOS Ed25519+SHA-256 DMG updates, studio app icon, zero-artifact button hover, and privacy-scrubbed diagnostics.`,
+      de: `• SafePocket v${latestVersion} bietet intelligente Auswahlfelder (z. B. Kontoart), internationale Telefonvorwahlen, Live-HTTPS-Webseitenprüfung und IBAN-Auto-Ausfüllung.\n• Strikte Trennung zwischen Nur lokaler Speicher und Nur Cloud-Sync mit 100 % automatischer Offline-Unterstützung ohne Benutzereingriff, Sync-Status unten rechts, Wischgesten, Rechtsklick-Menüs und Beispieldaten-Löschung.\n• Play-Protect-konforme Updates für Android/Googlebook OS, automatische In-App-Updates unter macOS, neues App-Icon, nahtloser Button-Hover ohne graue Linie und datenschutzbereinigte Diagnose.`,
+      it: `• SafePocket v${latestVersion} introduce menu a discesa intelligenti, prefissi telefonici internazionali, verifica live dei siti HTTPS e compilazione automatica da IBAN.\n• Modalità esclusiva Solo archiviazione locale o Solo Cloud Sync con supporto offline 100% automatico, indicatore sync in basso a destra, azioni a scorrimento, menu contestuali ed eliminazione dati di esempio.\n• Aggiornamenti conformi a Play Protect su Android/Googlebook OS, aggiornamenti automatici in-app su macOS, nuova icona studio, hover fluido e diagnostica oscurata.`,
+      fr: `• SafePocket v${latestVersion} propose des listes déroulantes intelligentes, indicatifs téléphoniques internationaux, vérification HTTPS en direct et saisie automatique via IBAN.\n• Mode exclusif Stockage local uniquement ou Cloud Sync uniquement avec mode hors-ligne 100 % automatique, statut de synchro en bas à droite, gestes de balayage, menus clic droit et suppression des exemples.\n• Mises à jour conformes Play Protect sur Android/Googlebook OS, mises à jour automatiques intégrées sur macOS, nouvelle icône, survol sans artefact et journal de diagnostic nettoyé.`,
+      es: `• SafePocket v${latestVersion} incorpora desplegables inteligentes, prefijos telefónicos internacionales, verificación web HTTPS en vivo y autocompletado por IBAN.\n• Modo exclusivo Solo almacenamiento local o Solo Cloud Sync con soporte sin conexión 100 % automático, estado de sincronización abajo a la derecha, gestos de deslizamiento, menús contextuales y borrado de datos de ejemplo.\n• Actualizaciones compatibles con Play Protect en Android/Googlebook OS, actualizaciones automáticas integradas en macOS, nuevo icono, hover limpio y diagnóstico depurado.`,
+      el: `• Το SafePocket v${latestVersion} προσφέρει έξυπνες αναπτυσσόμενες λίστες, διεθνή προθέματα τηλεφώνου, ζωντανό έλεγχο ιστοσελίδων HTTPS και αυτόματη συμπλήρωση μέσω IBAN.\n• Αποκλειστική επιλογή Μόνο τοπική αποθήκευση ή Μόνο Cloud Sync με 100% αυτόματη λειτουργία εκτός σύνδεσης, ένδειξη συγχρονισμού κάτω δεξιά, κινήσεις κύλισης (swipe), μενού δεξιού κλικ και διαγραφή δεδομένων παραδείγματος.\n• Αυτόματες ενημερώσεις συμβατές με Play Protect σε Android/Googlebook OS, ενσωματωμένες ενημερώσεις στο macOS, νέο εικονίδιο, καθαρό hover κουμπιών και αρχείο διαγνωστικών.`
     },
     artifacts: {
       'android-universal': {

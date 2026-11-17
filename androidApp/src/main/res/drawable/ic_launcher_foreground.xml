@@ -4,10 +4,20 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Angled smart card tucked into pocket shield -->
     <path
-        android:fillColor="#F8FAFC"
-        android:pathData="M54,26L78,36V53C78,68.8 67.7,82.6 54,87C40.3,82.6 30,68.8 30,53V36L54,26Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M43,43 L60,26 C61.8,24.2 64.7,24.2 66.5,26 L76,35.5 C77.8,37.3 77.8,40.2 76,42 L68,50 L43,43 Z" />
+    <!-- Sculpted pocket shield rim -->
     <path
-        android:fillColor="#0F4C5C"
-        android:pathData="M54,43A6,6 0 1,0 54,55A6,6 0 1,0 54,43ZM51,54H57V66H51Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M33,40 C33,38.3 34.3,37 36,37 L42,37 L38,41 L37,41 L37,56 C37,68.2 44.6,77.6 54,81.4 C63.4,77.6 71,68.2 71,56 L71,45 L75,41 L75,56 C75,70.5 65.8,81.5 54,85.8 C42.2,81.5 33,70.5 33,56 Z" />
+    <!-- Front pocket shield face with rotary dial cutout -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M39,46 C45,46 49.5,44.4 54,41.5 C58.5,44.4 63,46 69,46 L69,56 C69,66.4 62.4,74.8 54,78.4 C45.6,74.8 39,66.4 39,56 Z M54,51 A8,8 0 1,0 54,67 A8,8 0 1,0 54,51 Z" />
+    <!-- Precision rotary vault dial core -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,55 A4,4 0 1,1 54,63 A4,4 0 1,1 54,55 Z" />
 </vector>

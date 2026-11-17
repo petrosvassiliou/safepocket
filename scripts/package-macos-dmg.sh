@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Packages SafePocket native macOS universal binary (arm64 + x86_64) into SafePocket.app + .dmg
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION_NAME="${SAFEPOCKET_RELEASE_VERSION:-0.2}"
+VERSION_NAME="${SAFEPOCKET_RELEASE_VERSION:-0.3}"
 VERSION_NAME="${VERSION_NAME#v}"
-VERSION_CODE="${SAFEPOCKET_VERSION_CODE:-4}"
+VERSION_CODE="${SAFEPOCKET_VERSION_CODE:-5}"
 OUT_DMG="${1:-${REPO_ROOT}/SafePocket-${VERSION_NAME}-${VERSION_CODE}-macOS-universal.dmg}"
 
 echo "Building SafePocketMac v${VERSION_NAME} (Build ${VERSION_CODE}) universal macOS binary..."
@@ -27,6 +27,24 @@ mkdir -p "${APP_BUNDLE}/Contents/MacOS" "${APP_BUNDLE}/Contents/Resources"
 cp "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/SafePocketMac"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/SafePocketMac"
 
+ICON_PNG="${REPO_ROOT}/macosApp/Resources/AppIcon-1024.png"
+if [[ -f "${ICON_PNG}" ]] && command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
+  ICONSET_DIR="${STAGE_DIR}/AppIcon.iconset"
+  mkdir -p "${ICONSET_DIR}"
+  sips -z 16 16     "${ICON_PNG}" --out "${ICONSET_DIR}/icon_16x16.png" >/dev/null
+  sips -z 32 32     "${ICON_PNG}" --out "${ICONSET_DIR}/icon_16x16@2x.png" >/dev/null
+  sips -z 32 32     "${ICON_PNG}" --out "${ICONSET_DIR}/icon_32x32.png" >/dev/null
+  sips -z 64 64     "${ICON_PNG}" --out "${ICONSET_DIR}/icon_32x32@2x.png" >/dev/null
+  sips -z 128 128   "${ICON_PNG}" --out "${ICONSET_DIR}/icon_128x128.png" >/dev/null
+  sips -z 256 256   "${ICON_PNG}" --out "${ICONSET_DIR}/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256   "${ICON_PNG}" --out "${ICONSET_DIR}/icon_256x256.png" >/dev/null
+  sips -z 512 512   "${ICON_PNG}" --out "${ICONSET_DIR}/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512   "${ICON_PNG}" --out "${ICONSET_DIR}/icon_512x512.png" >/dev/null
+  cp "${ICON_PNG}" "${ICONSET_DIR}/icon_512x512@2x.png"
+  iconutil -c icns "${ICONSET_DIR}" -o "${APP_BUNDLE}/Contents/Resources/AppIcon.icns" || true
+  rm -rf "${ICONSET_DIR}"
+fi
+
 cat > "${APP_BUNDLE}/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -36,6 +54,8 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<EOF
   <string>SafePocket</string>
   <key>CFBundleExecutable</key>
   <string>SafePocketMac</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
   <string>com.safepocket.mac</string>
   <key>CFBundleInfoDictionaryVersion</key>

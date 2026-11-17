@@ -7,7 +7,9 @@ import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import com.safepocket.shared.crypto.ZeroKnowledgeEncryptionService
 import com.safepocket.shared.update.CrossPlatformUpdateService
 import com.safepocket.shared.update.PlatformArtifactDescriptor
@@ -37,6 +39,15 @@ class PlayProtectPackageInstaller(
 ) : PlatformUpdateInstaller {
 
     override val platformArtifactKey: String = "android-universal"
+
+    fun canInstallPackages(): Boolean =
+        context.packageManager.canRequestPackageInstalls()
+
+    fun createManageUnknownAppSourcesIntent(): Intent =
+        Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     override suspend fun downloadVerifyAndStage(
         artifact: PlatformArtifactDescriptor,

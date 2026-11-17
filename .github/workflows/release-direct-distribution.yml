@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       version_name:
-        description: 'Semantic release version (current: 0.2)'
+        description: 'Semantic release version (current: 0.3)'
         required: false
-        default: '0.2'
+        default: '0.3'
       version_code:
-        description: 'Monotonic integer build number (current: 4)'
+        description: 'Monotonic integer build number (current: 5)'
         required: false
-        default: '4'
+        default: '5'
 
 permissions:
   contents: write
@@ -43,12 +43,14 @@ jobs:
               echo "version_code=3" >> "${GITHUB_OUTPUT}"
             elif [[ "${RAW_TAG}" == "0.2" || "${RAW_TAG}" == "0.2.0" ]]; then
               echo "version_code=4" >> "${GITHUB_OUTPUT}"
+            elif [[ "${RAW_TAG}" == "0.3" || "${RAW_TAG}" == "0.3.0" ]]; then
+              echo "version_code=5" >> "${GITHUB_OUTPUT}"
             else
-              echo "version_code=${GITHUB_RUN_NUMBER:-4}" >> "${GITHUB_OUTPUT}"
+              echo "version_code=${GITHUB_RUN_NUMBER:-5}" >> "${GITHUB_OUTPUT}"
             fi
           else
-            echo "version_name=${{ inputs.version_name || '0.2' }}" >> "${GITHUB_OUTPUT}"
-            echo "version_code=${{ inputs.version_code || '4' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_name=${{ inputs.version_name || '0.3' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_code=${{ inputs.version_code || '5' }}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Setup Node.js 24 LTS
@@ -131,7 +133,7 @@ jobs:
     name: Build Native macOS Universal App & DMG (Apple Silicon + Intel)
     needs: build-pwa
     runs-on: macos-latest
-    timeout-minutes: 4
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - name: Checkout repository

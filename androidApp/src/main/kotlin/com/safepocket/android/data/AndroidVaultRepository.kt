@@ -4,6 +4,10 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.BitmapFactory
 import android.graphics.Color as AndroidColor
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import app.cash.sqldelight.db.SqlDriver
 import com.safepocket.db.SafePocketDatabase
 import com.safepocket.db.Vault_items
 import com.safepocket.shared.backup.ContainerInspectionSummary
@@ -19,7 +23,11 @@ import com.safepocket.shared.crypto.AndroidZipCodec
 import com.safepocket.shared.crypto.Argon2idParameters
 import com.safepocket.shared.crypto.HkdfSha256Pure
 import com.safepocket.shared.crypto.ZeroKnowledgeEncryptionService
+import com.safepocket.shared.error.SafePocketErrorHandler
+import com.safepocket.shared.intelligence.SmartFieldIntelligenceEngine
+import com.safepocket.shared.intelligence.WebsiteReachabilityResult
 import com.safepocket.shared.model.VaultItemPayload
+import com.safepocket.shared.model.VaultStorageMode
 import com.safepocket.shared.onboarding.EmergencyKitGenerator
 import com.safepocket.shared.sync.CloudSyncUserSession
 import com.safepocket.shared.sync.CrdtReconciler
@@ -30,7 +38,18 @@ import com.safepocket.shared.sync.HybridLogicalClock
 import com.safepocket.shared.sync.ProvisionedFirebaseProject
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -39,7 +58,26 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import java.time.Instant
 
+enum class SyncBadgeStatus {
+    LOCAL_ONLY,
+    CLOUD_SYNCED,
+    SYNCING,
+    CLOUD_OFFLINE_ARMED,
+    SYNC_ERROR
+}
+
+data class SyncIndicatorSnapshot(
+    val status: SyncBadgeStatus,
+    val storageMode: VaultStorageMode,
+    val isOnline: Boolean,
+    val queuedMutationCount: Int,
+    val signedInEmail: String?,
+    val lastSyncedIso: String?,
+    val errorDetail: String? = null
+)
+
 data class LocalEncryptedDbStatus(
+    val storageMode: VaultStorageMode,
     val isSqlCipherActive: Boolean,
     val backendLabel: String,
     val databaseFileName: String,
@@ -53,7 +91,10 @@ data class LocalEncryptedDbStatus(
 )
 
 data class CloudSyncStatusSnapshot(
+    val storageMode: VaultStorageMode,
     val cloudSyncEnabled: Boolean,
+    val isNetworkOnline: Boolean,
+    val queuedOfflineMutations: Int,
     val projectId: String = ProvisionedFirebaseProject.PROJECT_ID,
     val region: String = ProvisionedFirebaseProject.FIRESTORE_REGION,
     val signedInEmail: String?,
@@ -70,8 +111,14 @@ data class BidirectionalSyncReport(
 )
 
 /**
- * SafePocket v0.2 Local Encrypted DB (`SQLCipher 4.6`) + Zero-Knowledge Firebase Sync +
- * Dual-Brand Logo Downloader + `.safepocket` / 1Password / CSV Portability Coordinator.
+ * SafePocket v0.3 Repository:
+ * - Strictly mutually exclusive `VaultStorageMode.LOCAL_ONLY` XOR `VaultStorageMode.CLOUD_SYNC`
+ *   (when Cloud Sync is active, standalone `safepocket_vault.db` is closed and deleted; Cloud
+ *   uses session-scoped `safepocket_cloud_offline_cache.db` + encrypted mutation outbox +
+ *   `ConnectivityManager.NetworkCallback` for 100% automatic zero-input offline reconciliation)
+ * - Website `https://` reachability verifier
+ * - One-click Delete All Example Data (without re-seeding on restart)
+ * - Structured `SafePocketErrorHandler` wrapping across all operations
  */
 class AndroidVaultRepository(
     private val context: Context,
@@ -84,7 +131,10 @@ class AndroidVaultRepository(
 
     val primitives = AndroidCryptoPrimitives()
     val portabilityService = VaultPortabilityService(primitives)
-    private val httpClient = HttpClient(OkHttp)
+    val httpClient = HttpClient(OkHttp)
+
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val syncMutex = Mutex()
 
     val firebaseAuth = FirebaseZeroKnowledgeAuthService(
         httpClient = httpClient,
@@ -112,9 +162,30 @@ class AndroidVaultRepository(
     }
 
     private var hlcLogicalCounter: Int = 0
+    private var sqlDriver: SqlDriver? = null
     private var database: SafePocketDatabase? = null
+    private var openedDbFileName: String? = null
     private var activeVaultItemKey32: ByteArray = ByteArray(32)
     private var sqlCipherActive: Boolean = false
+    private var latestKnownItems: List<VaultItemPayload> = emptyList()
+
+    private val _isNetworkOnline = MutableStateFlow(queryInitialNetworkOnline())
+    val isNetworkOnline: StateFlow<Boolean> = _isNetworkOnline.asStateFlow()
+
+    private val _autoReconciledItems = MutableSharedFlow<List<VaultItemPayload>>(extraBufferCapacity = 4)
+    val autoReconciledItems: SharedFlow<List<VaultItemPayload>> = _autoReconciledItems.asSharedFlow()
+
+    private val _syncIndicatorFlow = MutableStateFlow(
+        SyncIndicatorSnapshot(
+            status = SyncBadgeStatus.LOCAL_ONLY,
+            storageMode = VaultStorageMode.LOCAL_ONLY,
+            isOnline = _isNetworkOnline.value,
+            queuedMutationCount = 0,
+            signedInEmail = null,
+            lastSyncedIso = null
+        )
+    )
+    val syncIndicatorFlow: StateFlow<SyncIndicatorSnapshot> = _syncIndicatorFlow.asStateFlow()
 
     init {
         val savedSessionJson = prefs.getString(KEY_FIREBASE_SESSION, null)
@@ -123,7 +194,72 @@ class AndroidVaultRepository(
                 json.decodeFromString<CloudSyncUserSession>(savedSessionJson)
             }.getOrNull()?.let { firebaseAuth.restoreSession(it) }
         }
+        // Migrate v0.2 cloud_sync_enabled flag into v0.3 VaultStorageMode
+        if (!prefs.contains(KEY_STORAGE_MODE)) {
+            val migratedMode = if (prefs.getBoolean(KEY_CLOUD_SYNC_ENABLED, false) && firebaseAuth.currentUser != null) {
+                VaultStorageMode.CLOUD_SYNC
+            } else {
+                VaultStorageMode.LOCAL_ONLY
+            }
+            prefs.edit().putString(KEY_STORAGE_MODE, migratedMode.name).apply()
+        }
+        refreshSyncIndicator()
+        registerAutomaticOfflineConnectivityWatcher()
     }
+
+    private fun queryInitialNetworkOnline(): Boolean = runCatching {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return true
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }.getOrDefault(true)
+
+    private fun registerAutomaticOfflineConnectivityWatcher() {
+        runCatching {
+            val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    _isNetworkOnline.value = true
+                    refreshSyncIndicator()
+                    // Zero-user-input automatic Cloud Sync reconciliation when returning online!
+                    if (storageMode == VaultStorageMode.CLOUD_SYNC && firebaseAuth.currentUser != null) {
+                        backgroundScope.launch {
+                            runCatching {
+                                val report = syncNow(latestKnownItems, surfaceErrorBanner = false)
+                                _autoReconciledItems.tryEmit(report.updatedItems)
+                            }
+                        }
+                    }
+                }
+
+                override fun onLost(network: Network) {
+                    _isNetworkOnline.value = queryInitialNetworkOnline()
+                    refreshSyncIndicator()
+                }
+            })
+        }
+    }
+
+    var storageMode: VaultStorageMode
+        get() {
+            val raw = prefs.getString(KEY_STORAGE_MODE, VaultStorageMode.LOCAL_ONLY.name)
+            val parsed = runCatching { VaultStorageMode.valueOf(raw!!) }.getOrDefault(VaultStorageMode.LOCAL_ONLY)
+            return if (parsed == VaultStorageMode.CLOUD_SYNC && firebaseAuth.currentUser == null) {
+                VaultStorageMode.LOCAL_ONLY
+            } else {
+                parsed
+            }
+        }
+        private set(value) {
+            prefs.edit()
+                .putString(KEY_STORAGE_MODE, value.name)
+                .putBoolean(KEY_CLOUD_SYNC_ENABLED, value == VaultStorageMode.CLOUD_SYNC)
+                .apply()
+            refreshSyncIndicator()
+        }
+
+    val sampleDataPurged: Boolean
+        get() = prefs.getBoolean(KEY_SAMPLE_DATA_PURGED, false)
 
     var autoDownloadLogos: Boolean
         get() = prefs.getBoolean(KEY_AUTO_DOWNLOAD_LOGOS, true)
@@ -131,10 +267,10 @@ class AndroidVaultRepository(
             prefs.edit().putBoolean(KEY_AUTO_DOWNLOAD_LOGOS, value).apply()
         }
 
-    var cloudSyncEnabled: Boolean
-        get() = prefs.getBoolean(KEY_CLOUD_SYNC_ENABLED, false)
+    var autoCheckUpdates: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_CHECK_UPDATES, true)
         set(value) {
-            prefs.edit().putBoolean(KEY_CLOUD_SYNC_ENABLED, value).apply()
+            prefs.edit().putBoolean(KEY_AUTO_CHECK_UPDATES, value).apply()
         }
 
     val secretKeyFormatted: String
@@ -153,6 +289,57 @@ class AndroidVaultRepository(
     val hasCustomMasterPassword: Boolean
         get() = prefs.getBoolean(KEY_HAS_CUSTOM_MASTER_PW, false)
 
+    private fun activeTargetDbFileName(): String =
+        if (storageMode == VaultStorageMode.CLOUD_SYNC) {
+            CLOUD_OFFLINE_CACHE_DB_NAME
+        } else {
+            LOCAL_STANDALONE_DB_NAME
+        }
+
+    private fun loadPendingCloudOutbox(): List<EncryptedSyncRecord> {
+        val raw = prefs.getString(KEY_CLOUD_OUTBOX_JSON, null) ?: return emptyList()
+        return runCatching { json.decodeFromString<List<EncryptedSyncRecord>>(raw) }.getOrDefault(emptyList())
+    }
+
+    private fun savePendingCloudOutbox(records: List<EncryptedSyncRecord>) {
+        if (records.isEmpty()) {
+            prefs.edit().remove(KEY_CLOUD_OUTBOX_JSON).apply()
+        } else {
+            prefs.edit().putString(KEY_CLOUD_OUTBOX_JSON, json.encodeToString(records)).apply()
+        }
+        refreshSyncIndicator()
+    }
+
+    private fun enqueueCloudOutboxRecord(record: EncryptedSyncRecord) {
+        val existing = loadPendingCloudOutbox().filterNot { it.entityId == record.entityId }
+        savePendingCloudOutbox(existing + record)
+    }
+
+    private fun refreshSyncIndicator(
+        explicitSyncing: Boolean = false,
+        errorMessage: String? = null
+    ) {
+        val mode = storageMode
+        val online = _isNetworkOnline.value
+        val queued = loadPendingCloudOutbox().size
+        val badge = when {
+            mode == VaultStorageMode.LOCAL_ONLY -> SyncBadgeStatus.LOCAL_ONLY
+            explicitSyncing -> SyncBadgeStatus.SYNCING
+            !errorMessage.isNullOrBlank() && online -> SyncBadgeStatus.SYNC_ERROR
+            !online || queued > 0 -> SyncBadgeStatus.CLOUD_OFFLINE_ARMED
+            else -> SyncBadgeStatus.CLOUD_SYNCED
+        }
+        _syncIndicatorFlow.value = SyncIndicatorSnapshot(
+            status = badge,
+            storageMode = mode,
+            isOnline = online,
+            queuedMutationCount = queued,
+            signedInEmail = firebaseAuth.currentUser?.email,
+            lastSyncedIso = prefs.getString(KEY_LAST_SYNC_ISO, null),
+            errorDetail = errorMessage
+        )
+    }
+
     private suspend fun deterministicSaltHexForSecretKey(secretKey: String): String {
         val digest = primitives.sha256("safepocket-2skd-salt-v1:${secretKey.trim().uppercase()}".encodeToByteArray())
         return ZeroKnowledgeEncryptionService.bytesToHex(digest.copyOfRange(0, 16))
@@ -168,15 +355,41 @@ class AndroidVaultRepository(
         return hex
     }
 
+    private fun ensureActiveDatabaseOpened() {
+        val desiredFile = activeTargetDbFileName()
+        if (database != null && openedDbFileName == desiredFile) return
+        closeCurrentDatabase()
+        val sqlCipherKey = loadOrCreateSqlCipherRawKey()
+        runCatching {
+            val drv = AndroidSqlCipherDriverFactory.createEncryptedDriver(
+                context = context,
+                rawDatabaseKey32 = sqlCipherKey,
+                databaseFileName = desiredFile
+            )
+            sqlDriver = drv
+            database = SafePocketDatabase(drv)
+            openedDbFileName = desiredFile
+            sqlCipherActive = true
+        }.onFailure { err ->
+            sqlCipherActive = false
+            SafePocketErrorHandler.record("openSqlCipher:$desiredFile", err, System.currentTimeMillis(), surfaceBanner = false)
+        }
+    }
+
+    private fun closeCurrentDatabase() {
+        runCatching { sqlDriver?.close() }
+        sqlDriver = null
+        database = null
+        openedDbFileName = null
+    }
+
     /**
-     * Opens the local SQLCipher 4.6 encrypted database (`safepocket_vault.db`), derives the
-     * Two-Secret AES-256-GCM item key, migrates any legacy `v0.1.2` items seamlessly, and loads
-     * all active decrypted vault items.
+     * Opens the active storage store (`LOCAL_ONLY` standalone SQLCipher DB OR `CLOUD_SYNC`
+     * session-scoped offline mirror + automatic background cloud reconciliation).
      */
     suspend fun initializeAndLoadItems(): List<VaultItemPayload> = withContext(Dispatchers.IO) {
         val saltHex = ensureSaltInitializedSync()
 
-        // 1. Load or derive the 256-bit item encryption key (compatible with ChromeOS PWA)
         val cachedKeyHex = prefs.getString(KEY_WRAPPED_LOCAL_VEK_HEX, null)
         activeVaultItemKey32 = if (!cachedKeyHex.isNullOrBlank() && cachedKeyHex.length == 64) {
             ZeroKnowledgeEncryptionService.hexToBytes(cachedKeyHex)
@@ -185,7 +398,7 @@ class AndroidVaultRepository(
                 masterPassword = DEFAULT_DEMO_PASSWORD,
                 secretKeyFormatted = secretKeyFormatted,
                 saltHex = saltHex,
-                memorySizeKiB = 4_096, // Fast initial bootstrap; full 16 MiB used when user sets Master Password
+                memorySizeKiB = 4_096,
                 iterations = 2,
                 parallelism = 1,
                 domainContext = "safepocket-2skd-v1"
@@ -198,40 +411,57 @@ class AndroidVaultRepository(
             derived
         }
 
-        // 2. Open SQLCipher 4.6 Encrypted Local Database
-        val sqlCipherKey = loadOrCreateSqlCipherRawKey()
-        if (database == null) {
-            runCatching {
-                val driver = AndroidSqlCipherDriverFactory.createEncryptedDriver(context, sqlCipherKey)
-                database = SafePocketDatabase(driver)
-                sqlCipherActive = true
-            }.onFailure {
-                sqlCipherActive = false
-            }
+        // Enforce exclusive storage invariant on startup
+        if (storageMode == VaultStorageMode.CLOUD_SYNC) {
+            runCatching { context.deleteDatabase(LOCAL_STANDALONE_DB_NAME) }
+            prefs.edit().remove(LEGACY_KEY_VAULT_ITEMS).apply()
+        } else {
+            runCatching { context.deleteDatabase(CLOUD_OFFLINE_CACHE_DB_NAME) }
+            savePendingCloudOutbox(emptyList())
         }
 
+        ensureActiveDatabaseOpened()
         val db = database
         if (db != null) {
             val rows = db.safePocketVaultQueries.selectAllActiveItems().executeAsList()
-            if (rows.isEmpty() && !prefs.getBoolean(KEY_DB_INITIALIZED_V02, false)) {
-                // Migrate existing v0.1.2 items or seed v0.2 sample vault into SQLCipher
+            if (rows.isEmpty() && storageMode == VaultStorageMode.LOCAL_ONLY && !prefs.getBoolean(KEY_DB_INITIALIZED_V02, false)) {
                 val legacyRaw = prefs.getString(LEGACY_KEY_VAULT_ITEMS, null)
-                val initialItems = AndroidSampleVault.decodeItemsOrDefault(legacyRaw)
+                val initialItems = AndroidSampleVault.decodeItemsOrDefault(legacyRaw, sampleDataPurged)
                 persistSnapshotToDbInternal(db, initialItems)
                 prefs.edit().putBoolean(KEY_DB_INITIALIZED_V02, true).apply()
+                latestKnownItems = initialItems
+                refreshSyncIndicator()
                 return@withContext initialItems
             }
 
             val decrypted = rows.mapNotNull { row -> decryptDbRowOrNull(row) }
-            if (decrypted.isNotEmpty() || prefs.getBoolean(KEY_DB_INITIALIZED_V02, false)) {
-                // Keep SharedPreferences mirror updated as resilient fallback
+                .let { list -> if (sampleDataPurged) list.filterNot { it.isBuiltInSample() } else list }
+
+            if (storageMode == VaultStorageMode.LOCAL_ONLY) {
                 prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(decrypted)).apply()
-                return@withContext decrypted
+            } else if (_isNetworkOnline.value && firebaseAuth.currentUser != null) {
+                // Trigger non-blocking automatic cloud sync on startup when in CLOUD_SYNC mode!
+                backgroundScope.launch {
+                    runCatching {
+                        val rep = syncNow(decrypted, surfaceErrorBanner = false)
+                        _autoReconciledItems.tryEmit(rep.updatedItems)
+                    }
+                }
             }
+
+            latestKnownItems = decrypted
+            refreshSyncIndicator()
+            return@withContext decrypted
         }
 
-        // Fallback if native SQLCipher binary unavailable on host ABI
-        AndroidSampleVault.decodeItemsOrDefault(prefs.getString(LEGACY_KEY_VAULT_ITEMS, null))
+        val fallback = if (storageMode == VaultStorageMode.LOCAL_ONLY) {
+            AndroidSampleVault.decodeItemsOrDefault(prefs.getString(LEGACY_KEY_VAULT_ITEMS, null), sampleDataPurged)
+        } else {
+            emptyList()
+        }
+        latestKnownItems = fallback
+        refreshSyncIndicator()
+        fallback
     }
 
     private fun loadOrCreateSqlCipherRawKey(): ByteArray {
@@ -260,40 +490,50 @@ class AndroidVaultRepository(
         actual.equals(expected, ignoreCase = true)
     }
 
-    /**
-     * Configures or updates the user's Master Password & Secret Key (with optional Recovery URI or
-     * explicit KDF salt for cross-device pairing) and re-encrypts all items in SQLCipher 4.6.
-     */
+    suspend fun verifyWebsiteExists(rawUrl: String): WebsiteReachabilityResult =
+        withContext(Dispatchers.IO) {
+            SmartFieldIntelligenceEngine.verifyWebsiteExists(rawUrl, httpClient)
+        }
+
     suspend fun configureVaultCredentials(
         newMasterPassword: String,
         newSecretKeyInput: String? = null,
         currentItems: List<VaultItemPayload>
     ) = withContext(Dispatchers.IO) {
-        require(newMasterPassword.length >= 6) { "Master Password must be at least 6 characters" }
-        val resolvedSecretKey = parseSecretKeyOrUri(newSecretKeyInput) ?: secretKeyFormatted
-        val nextSaltHex = deterministicSaltHexForSecretKey(resolvedSecretKey)
+        try {
+            require(newMasterPassword.length >= 6) { "Master Password must be at least 6 characters" }
+            val resolvedSecretKey = parseSecretKeyOrUri(newSecretKeyInput) ?: secretKeyFormatted
+            val nextSaltHex = deterministicSaltHexForSecretKey(resolvedSecretKey)
 
-        val nextKey = HkdfSha256Pure.deriveTwoSecretKey(
-            masterPassword = newMasterPassword,
-            secretKeyFormatted = resolvedSecretKey,
-            saltHex = nextSaltHex,
-            memorySizeKiB = 16_384,
-            iterations = 3,
-            parallelism = 2,
-            domainContext = "safepocket-2skd-v1"
-        )
-        val verifier = computePasswordVerifier(newMasterPassword, resolvedSecretKey, nextSaltHex)
+            val nextKey = HkdfSha256Pure.deriveTwoSecretKey(
+                masterPassword = newMasterPassword,
+                secretKeyFormatted = resolvedSecretKey,
+                saltHex = nextSaltHex,
+                memorySizeKiB = 16_384,
+                iterations = 3,
+                parallelism = 2,
+                domainContext = "safepocket-2skd-v1"
+            )
+            val verifier = computePasswordVerifier(newMasterPassword, resolvedSecretKey, nextSaltHex)
 
-        activeVaultItemKey32 = nextKey
-        prefs.edit()
-            .putString(KEY_SECRET_KEY_FORMATTED, resolvedSecretKey)
-            .putString(KEY_KDF_SALT_HEX, nextSaltHex)
-            .putString(KEY_WRAPPED_LOCAL_VEK_HEX, ZeroKnowledgeEncryptionService.bytesToHex(nextKey))
-            .putString(KEY_MASTER_PW_VERIFIER, verifier)
-            .putBoolean(KEY_HAS_CUSTOM_MASTER_PW, true)
-            .apply()
+            activeVaultItemKey32 = nextKey
+            prefs.edit()
+                .putString(KEY_SECRET_KEY_FORMATTED, resolvedSecretKey)
+                .putString(KEY_KDF_SALT_HEX, nextSaltHex)
+                .putString(KEY_WRAPPED_LOCAL_VEK_HEX, ZeroKnowledgeEncryptionService.bytesToHex(nextKey))
+                .putString(KEY_MASTER_PW_VERIFIER, verifier)
+                .putBoolean(KEY_HAS_CUSTOM_MASTER_PW, true)
+                .apply()
 
-        database?.let { db -> persistSnapshotToDbInternal(db, currentItems) }
+            ensureActiveDatabaseOpened()
+            database?.let { db -> persistSnapshotToDbInternal(db, currentItems) }
+            if (storageMode == VaultStorageMode.CLOUD_SYNC && firebaseAuth.currentUser != null) {
+                runCatching { syncNow(currentItems, surfaceErrorBanner = false) }
+            }
+        } catch (t: Throwable) {
+            SafePocketErrorHandler.record("configureVaultCredentials", t, System.currentTimeMillis())
+            throw t
+        }
     }
 
     private fun parseSecretKeyOrUri(raw: String?): String? {
@@ -311,18 +551,108 @@ class AndroidVaultRepository(
         return trimmed.uppercase()
     }
 
+    // =========================================================================
+    // MUTUALLY EXCLUSIVE STORAGE MODE TRANSITIONS (`LOCAL_ONLY` XOR `CLOUD_SYNC`)
+    // =========================================================================
+
+    /**
+     * Switches exclusively to `CLOUD_SYNC` mode:
+     * 1. Requires a signed-in Firebase account.
+     * 2. Closes and physically deletes standalone `safepocket_vault.db` & local JSON backup.
+     * 3. Opens session-scoped `safepocket_cloud_offline_cache.db`, writes encrypted mirror,
+     *    and reconciles immediately with Firebase (or queues into automatic offline outbox).
+     */
+    suspend fun switchToCloudSyncExclusiveMode(
+        currentItems: List<VaultItemPayload>
+    ): List<VaultItemPayload> = withContext(Dispatchers.IO) {
+        check(firebaseAuth.currentUser != null) {
+            "Sign in or create a Firebase Cloud Sync account first to activate Cloud Sync Only mode."
+        }
+        closeCurrentDatabase()
+        runCatching { context.deleteDatabase(LOCAL_STANDALONE_DB_NAME) }
+        prefs.edit().remove(LEGACY_KEY_VAULT_ITEMS).apply()
+
+        storageMode = VaultStorageMode.CLOUD_SYNC
+        ensureActiveDatabaseOpened()
+        database?.let { db -> persistSnapshotToDbInternal(db, currentItems) }
+        latestKnownItems = currentItems
+
+        return@withContext runCatching {
+            val rep = syncNow(currentItems, surfaceErrorBanner = false)
+            latestKnownItems = rep.updatedItems
+            rep.updatedItems
+        }.getOrElse {
+            // Offline right now: queue all items in encrypted outbox so they sync automatically with zero user input!
+            val queued = currentItems.map { encryptItemToSyncRecord(it) }
+            savePendingCloudOutbox(queued)
+            currentItems
+        }
+    }
+
+    /**
+     * Switches exclusively to `LOCAL_ONLY` mode:
+     * 1. Signs out of Firebase Cloud Sync and clears cloud cursors.
+     * 2. Closes and physically deletes `safepocket_cloud_offline_cache.db` & pending outbox.
+     * 3. Opens standalone `safepocket_vault.db` and persists `currentItems` strictly on device.
+     */
+    suspend fun switchToLocalOnlyExclusiveMode(
+        currentItems: List<VaultItemPayload>
+    ): List<VaultItemPayload> = withContext(Dispatchers.IO) {
+        firebaseAuth.signOut()
+        closeCurrentDatabase()
+        runCatching { context.deleteDatabase(CLOUD_OFFLINE_CACHE_DB_NAME) }
+        savePendingCloudOutbox(emptyList())
+
+        prefs.edit()
+            .remove(KEY_FIREBASE_SESSION)
+            .putBoolean(KEY_DB_INITIALIZED_V02, true)
+            .apply()
+
+        storageMode = VaultStorageMode.LOCAL_ONLY
+        ensureActiveDatabaseOpened()
+        database?.let { db -> persistSnapshotToDbInternal(db, currentItems) }
+        prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(currentItems)).apply()
+        latestKnownItems = currentItems
+        refreshSyncIndicator()
+        currentItems
+    }
+
+    // =========================================================================
+    // VAULT CRUD + DELETE ALL EXAMPLE DATA
+    // =========================================================================
+
     suspend fun upsertItem(item: VaultItemPayload, allItemsAfterUpsert: List<VaultItemPayload>) =
         withContext(Dispatchers.IO) {
-            database?.let { db ->
-                upsertSingleItemInternal(db, item)
-            }
-            prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(allItemsAfterUpsert)).apply()
-            if (cloudSyncEnabled && firebaseAuth.currentUser != null) {
-                runCatching { pushSingleItemIfPossible(item) }
+            try {
+                latestKnownItems = allItemsAfterUpsert
+                ensureActiveDatabaseOpened()
+                database?.let { db ->
+                    upsertSingleItemInternal(db, item)
+                }
+                if (storageMode == VaultStorageMode.LOCAL_ONLY) {
+                    prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(allItemsAfterUpsert)).apply()
+                } else if (firebaseAuth.currentUser != null) {
+                    val rec = encryptItemToSyncRecord(item)
+                    if (_isNetworkOnline.value) {
+                        runCatching {
+                            firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
+                            prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
+                            refreshSyncIndicator()
+                        }.onFailure {
+                            enqueueCloudOutboxRecord(rec)
+                        }
+                    } else {
+                        enqueueCloudOutboxRecord(rec)
+                    }
+                }
+            } catch (t: Throwable) {
+                SafePocketErrorHandler.record("upsertItem", t, System.currentTimeMillis())
             }
         }
 
     suspend fun replaceAllItems(items: List<VaultItemPayload>) = withContext(Dispatchers.IO) {
+        latestKnownItems = items
+        ensureActiveDatabaseOpened()
         database?.let { db ->
             val existingRows = db.safePocketVaultQueries.selectAllActiveItems().executeAsList()
             val incomingIds = items.map { it.id }.toSet()
@@ -333,36 +663,102 @@ class AndroidVaultRepository(
             }
             persistSnapshotToDbInternal(db, items)
         }
-        prefs.edit()
-            .putBoolean(KEY_DB_INITIALIZED_V02, true)
-            .putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(items))
-            .apply()
+        prefs.edit().putBoolean(KEY_DB_INITIALIZED_V02, true).apply()
+        if (storageMode == VaultStorageMode.LOCAL_ONLY) {
+            prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(items)).apply()
+        } else if (firebaseAuth.currentUser != null) {
+            runCatching { syncNow(items, surfaceErrorBanner = false) }
+        }
     }
 
     suspend fun deleteItem(target: VaultItemPayload, remainingItems: List<VaultItemPayload>) =
         withContext(Dispatchers.IO) {
-            database?.let { db ->
-                markTombstoneInternal(db, target.id, target.category.name)
-            }
-            prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(remainingItems)).apply()
-            if (cloudSyncEnabled && firebaseAuth.currentUser != null) {
-                runCatching { syncNow(remainingItems) }
+            try {
+                latestKnownItems = remainingItems
+                ensureActiveDatabaseOpened()
+                var tombstoneRecord: EncryptedSyncRecord? = null
+                database?.let { db ->
+                    tombstoneRecord = markTombstoneInternal(db, target.id, target.category.name)
+                }
+                if (storageMode == VaultStorageMode.LOCAL_ONLY) {
+                    prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(remainingItems)).apply()
+                } else if (firebaseAuth.currentUser != null && tombstoneRecord != null) {
+                    val rec = tombstoneRecord!!
+                    if (_isNetworkOnline.value) {
+                        runCatching {
+                            firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
+                            prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
+                            refreshSyncIndicator()
+                        }.onFailure {
+                            enqueueCloudOutboxRecord(rec)
+                        }
+                    } else {
+                        enqueueCloudOutboxRecord(rec)
+                    }
+                }
+            } catch (t: Throwable) {
+                SafePocketErrorHandler.record("deleteItem", t, System.currentTimeMillis())
             }
         }
 
+    /**
+     * Deletes all built-in example entries in one click and sets `KEY_SAMPLE_DATA_PURGED = true`
+     * so sample entries are never re-seeded on app restart.
+     */
+    suspend fun deleteAllExampleData(
+        currentItems: List<VaultItemPayload>
+    ): Pair<Int, List<VaultItemPayload>> = withContext(Dispatchers.IO) {
+        val (samples, userCreated) = currentItems.partition { it.isBuiltInSample() }
+        prefs.edit()
+            .putBoolean(KEY_SAMPLE_DATA_PURGED, true)
+            .putBoolean(KEY_DB_INITIALIZED_V02, true)
+            .apply()
+
+        latestKnownItems = userCreated
+        ensureActiveDatabaseOpened()
+        val tombstones = mutableListOf<EncryptedSyncRecord>()
+        database?.let { db ->
+            for (sample in samples) {
+                tombstones += markTombstoneInternal(db, sample.id, sample.category.name)
+            }
+        }
+
+        if (storageMode == VaultStorageMode.LOCAL_ONLY) {
+            prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(userCreated)).apply()
+        } else if (firebaseAuth.currentUser != null && tombstones.isNotEmpty()) {
+            if (_isNetworkOnline.value) {
+                runCatching {
+                    firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, tombstones)
+                    prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
+                    refreshSyncIndicator()
+                }.onFailure {
+                    tombstones.forEach(::enqueueCloudOutboxRecord)
+                }
+            } else {
+                tombstones.forEach(::enqueueCloudOutboxRecord)
+            }
+        }
+        samples.size to userCreated
+    }
+
     fun getLocalDbStatus(activeItems: List<VaultItemPayload>): LocalEncryptedDbStatus {
-        val dbFile = context.getDatabasePath("safepocket_vault.db")
+        val activeFile = activeTargetDbFileName()
+        val dbFile = context.getDatabasePath(activeFile)
         val allRows = runCatching {
             database?.safePocketVaultQueries?.selectItemsIncludingTombstonesSinceHlc(null)?.executeAsList()
         }.getOrNull().orEmpty()
         val tombstones = allRows.count { it.is_tombstone != 0L }
+        val modeLabel = if (storageMode == VaultStorageMode.CLOUD_SYNC) {
+            "Cloud Session Offline Mirror (AES-256-GCM • Auto-Sync)"
+        } else if (sqlCipherActive) {
+            "SQLCipher 4.6.1 Standalone Local DB (AES-256 + 2SKD)"
+        } else {
+            "Standalone Encrypted Local Vault Store (AES-256-GCM)"
+        }
         return LocalEncryptedDbStatus(
+            storageMode = storageMode,
             isSqlCipherActive = sqlCipherActive,
-            backendLabel = if (sqlCipherActive) {
-                "SQLCipher 4.6.1 (AES-256 + 2SKD AES-256-GCM)"
-            } else {
-                "Encrypted Local Vault Store (AES-256-GCM)"
-            },
+            backendLabel = modeLabel,
             databaseFileName = dbFile.name,
             databaseSizeBytes = if (dbFile.exists()) dbFile.length() else 0L,
             activeItemCount = activeItems.size,
@@ -377,7 +773,10 @@ class AndroidVaultRepository(
     fun getCloudSyncStatus(): CloudSyncStatusSnapshot {
         val user = firebaseAuth.currentUser
         return CloudSyncStatusSnapshot(
-            cloudSyncEnabled = cloudSyncEnabled,
+            storageMode = storageMode,
+            cloudSyncEnabled = storageMode == VaultStorageMode.CLOUD_SYNC,
+            isNetworkOnline = _isNetworkOnline.value,
+            queuedOfflineMutations = loadPendingCloudOutbox().size,
             signedInEmail = user?.email,
             signedInUid = user?.uid,
             lastSyncedPushed = prefs.getInt(KEY_LAST_SYNC_PUSHED, 0),
@@ -404,11 +803,13 @@ class AndroidVaultRepository(
             ?: branded.cardTheme?.institutionName?.takeIf { it.isNotBlank() }
             ?: return@withContext branded
 
-        val fetched: DownloadedBrandAsset? = InstitutionLogoFetcher.fetchDomainLogo(
-            httpClient = httpClient,
-            rawDomainOrName = queryTarget,
-            extractColorFromBytes = ::extractVibrantColorHex
-        )
+        val fetched: DownloadedBrandAsset? = runCatching {
+            InstitutionLogoFetcher.fetchDomainLogo(
+                httpClient = httpClient,
+                rawDomainOrName = queryTarget,
+                extractColorFromBytes = ::extractVibrantColorHex
+            )
+        }.getOrNull()
 
         if (fetched == null) return@withContext branded
 
@@ -454,7 +855,6 @@ class AndroidVaultRepository(
                     AndroidColor.RGBToHSV(r, g, b, hsv)
                     val sat = hsv[1]
                     val value = hsv[2]
-                    // Prefer saturated brand pixels; ignore near-white / near-black backgrounds
                     if (sat > 0.22f && value in 0.14f..0.94f) {
                         val w = (sat * 100f).toLong().coerceAtLeast(1L)
                         rSum += r * w
@@ -475,103 +875,140 @@ class AndroidVaultRepository(
     }.getOrNull()
 
     // =========================================================================
-    // FIREBASE ZERO-KNOWLEDGE ACCOUNT & TWO-WAY CLOUD SYNC
+    // FIREBASE ZERO-KNOWLEDGE ACCOUNT & EXCLUSIVE CLOUD SYNC
     // =========================================================================
 
-    suspend fun createFirebaseAccount(email: String, syncPassword: String): CloudSyncUserSession =
-        withContext(Dispatchers.IO) {
+    suspend fun createFirebaseAccount(
+        email: String,
+        syncPassword: String,
+        currentItems: List<VaultItemPayload>
+    ): Pair<CloudSyncUserSession, List<VaultItemPayload>> = withContext(Dispatchers.IO) {
+        try {
             val session = firebaseAuth.createCloudAccount(email, syncPassword)
             saveFirebaseSession(session)
-            cloudSyncEnabled = true
-            session
+            val reconciled = switchToCloudSyncExclusiveMode(currentItems)
+            session to reconciled
+        } catch (t: Throwable) {
+            SafePocketErrorHandler.record("createFirebaseAccount", t, System.currentTimeMillis())
+            throw t
         }
+    }
 
-    suspend fun signInFirebaseAccount(email: String, syncPassword: String): CloudSyncUserSession =
-        withContext(Dispatchers.IO) {
+    suspend fun signInFirebaseAccount(
+        email: String,
+        syncPassword: String,
+        currentItems: List<VaultItemPayload>
+    ): Pair<CloudSyncUserSession, List<VaultItemPayload>> = withContext(Dispatchers.IO) {
+        try {
             val session = firebaseAuth.signInCloudAccount(email, syncPassword)
             saveFirebaseSession(session)
-            cloudSyncEnabled = true
-            session
+            val reconciled = switchToCloudSyncExclusiveMode(currentItems)
+            session to reconciled
+        } catch (t: Throwable) {
+            SafePocketErrorHandler.record("signInFirebaseAccount", t, System.currentTimeMillis())
+            throw t
         }
-
-    fun signOutFirebaseAccount() {
-        firebaseAuth.signOut()
-        cloudSyncEnabled = false
-        prefs.edit()
-            .remove(KEY_FIREBASE_SESSION)
-            .remove(KEY_LAST_SYNC_CURSOR)
-            .putBoolean(KEY_CLOUD_SYNC_ENABLED, false)
-            .apply()
     }
+
+    suspend fun signOutFirebaseAndReturnToLocal(
+        currentItems: List<VaultItemPayload>
+    ): List<VaultItemPayload> = switchToLocalOnlyExclusiveMode(currentItems)
 
     private fun saveFirebaseSession(session: CloudSyncUserSession) {
         prefs.edit().putString(KEY_FIREBASE_SESSION, json.encodeToString(session)).apply()
     }
 
-    suspend fun syncNow(currentItems: List<VaultItemPayload>): BidirectionalSyncReport =
-        withContext(Dispatchers.IO) {
-            val session = firebaseAuth.refreshIdTokenIfPossible()
-                ?: error("Please sign in to Firebase Cloud Sync first")
-            saveFirebaseSession(session)
+    suspend fun syncNow(
+        currentItems: List<VaultItemPayload>,
+        surfaceErrorBanner: Boolean = true
+    ): BidirectionalSyncReport = withContext(Dispatchers.IO) {
+        syncMutex.withLock {
+            refreshSyncIndicator(explicitSyncing = true)
+            try {
+                val session = firebaseAuth.refreshIdTokenIfPossible()
+                    ?: error("Please sign in to Firebase Cloud Sync first")
+                saveFirebaseSession(session)
 
-            val db = database
-            val localRecords: List<EncryptedSyncRecord> = if (db != null) {
-                db.safePocketVaultQueries
-                    .selectItemsIncludingTombstonesSinceHlc(null)
-                    .executeAsList()
-                    .map { rowToSyncRecord(it) }
-            } else {
-                currentItems.map { encryptItemToSyncRecord(it) }
-            }
+                ensureActiveDatabaseOpened()
+                val db = database
+                val dbRecords: List<EncryptedSyncRecord> = if (db != null) {
+                    db.safePocketVaultQueries
+                        .selectItemsIncludingTombstonesSinceHlc(null)
+                        .executeAsList()
+                        .map { rowToSyncRecord(it) }
+                } else {
+                    currentItems.map { encryptItemToSyncRecord(it) }
+                }
 
-            val pushRes = firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, localRecords)
-            val cursorKey = "${KEY_LAST_SYNC_CURSOR}_${session.uid}"
-            val sinceCursor = prefs.getString(cursorKey, null)
-            val pulledRecords = firebaseAdapter.pullEncryptedDeltasSince(CLOUD_VAULT_COLLECTION_ID, sinceCursor)
+                // Merge any pending offline outbox mutations with DB records via CRDT LWW
+                val outboxRecords = loadPendingCloudOutbox()
+                val mergedPushMap = dbRecords.associateBy { it.entityId }.toMutableMap()
+                for (queued in outboxRecords) {
+                    val prev = mergedPushMap[queued.entityId]
+                    mergedPushMap[queued.entityId] = if (prev == null) queued else CrdtReconciler.resolve(prev, queued)
+                }
+                val recordsToPush = mergedPushMap.values.toList()
 
-            val localMap = localRecords.associateBy { it.entityId }.toMutableMap()
-            var appliedRemote = 0
+                val pushRes = firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, recordsToPush)
+                // Outbox successfully flushed to Cloud!
+                savePendingCloudOutbox(emptyList())
 
-            for (remote in pulledRecords) {
-                val existing = localMap[remote.entityId]
-                val winner = if (existing == null) remote else CrdtReconciler.resolve(existing, remote)
-                if (existing == null || winner.hlcPacked != existing.hlcPacked || winner.isTombstone != existing.isTombstone) {
-                    localMap[remote.entityId] = winner
-                    appliedRemote++
-                    if (db != null) {
-                        applyWinningSyncRecordToDb(db, winner)
+                val cursorKey = "${KEY_LAST_SYNC_CURSOR}_${session.uid}"
+                val sinceCursor = prefs.getString(cursorKey, null)
+                val pulledRecords = firebaseAdapter.pullEncryptedDeltasSince(CLOUD_VAULT_COLLECTION_ID, sinceCursor)
+
+                val localMap = recordsToPush.associateBy { it.entityId }.toMutableMap()
+                var appliedRemote = 0
+
+                for (remote in pulledRecords) {
+                    val existing = localMap[remote.entityId]
+                    val winner = if (existing == null) remote else CrdtReconciler.resolve(existing, remote)
+                    if (existing == null || winner.hlcPacked != existing.hlcPacked || winner.isTombstone != existing.isTombstone) {
+                        localMap[remote.entityId] = winner
+                        appliedRemote++
+                        if (db != null) {
+                            applyWinningSyncRecordToDb(db, winner)
+                        }
                     }
                 }
-            }
 
-            val maxPulledHlc = pulledRecords.maxOfOrNull { it.hlcPacked } ?: pushRes.latestServerCursorHlc
-            val nowIso = Instant.now().toString()
-            prefs.edit()
-                .apply {
-                    if (!maxPulledHlc.isNullOrBlank()) putString(cursorKey, maxPulledHlc)
-                    putInt(KEY_LAST_SYNC_PUSHED, pushRes.acceptedCount)
-                    putInt(KEY_LAST_SYNC_PULLED, appliedRemote)
-                    putString(KEY_LAST_SYNC_ISO, nowIso)
+                val maxPulledHlc = pulledRecords.maxOfOrNull { it.hlcPacked } ?: pushRes.latestServerCursorHlc
+                val nowIso = Instant.now().toString()
+                prefs.edit()
+                    .apply {
+                        if (!maxPulledHlc.isNullOrBlank()) putString(cursorKey, maxPulledHlc)
+                        putInt(KEY_LAST_SYNC_PUSHED, pushRes.acceptedCount)
+                        putInt(KEY_LAST_SYNC_PULLED, appliedRemote)
+                        putString(KEY_LAST_SYNC_ISO, nowIso)
+                    }
+                    .apply()
+
+                val updatedItems = (if (db != null) {
+                    db.safePocketVaultQueries.selectAllActiveItems().executeAsList().mapNotNull { decryptDbRowOrNull(it) }
+                } else {
+                    localMap.values.filter { !it.isTombstone }.mapNotNull { decryptSyncRecordOrNull(it) }
+                }).let { list ->
+                    if (sampleDataPurged) list.filterNot { it.isBuiltInSample() } else list
                 }
-                .apply()
 
-            val updatedItems = if (db != null) {
-                db.safePocketVaultQueries.selectAllActiveItems().executeAsList().mapNotNull { decryptDbRowOrNull(it) }
-            } else {
-                localMap.values.filter { !it.isTombstone }.mapNotNull { decryptSyncRecordOrNull(it) }
+                latestKnownItems = updatedItems
+                refreshSyncIndicator(explicitSyncing = false, errorMessage = null)
+                BidirectionalSyncReport(
+                    pushedCount = pushRes.acceptedCount,
+                    pulledCount = appliedRemote,
+                    updatedItems = updatedItems
+                )
+            } catch (t: Throwable) {
+                val diag = SafePocketErrorHandler.record(
+                    operation = "cloudSync",
+                    throwable = t,
+                    epochMs = System.currentTimeMillis(),
+                    surfaceBanner = surfaceErrorBanner
+                )
+                refreshSyncIndicator(explicitSyncing = false, errorMessage = diag.userMessage)
+                throw t
             }
-
-            prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(updatedItems)).apply()
-            BidirectionalSyncReport(
-                pushedCount = pushRes.acceptedCount,
-                pulledCount = appliedRemote,
-                updatedItems = updatedItems
-            )
         }
-
-    private suspend fun pushSingleItemIfPossible(item: VaultItemPayload) {
-        val rec = encryptItemToSyncRecord(item)
-        firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
     }
 
     // =========================================================================
@@ -582,12 +1019,17 @@ class AndroidVaultRepository(
         items: List<VaultItemPayload>,
         backupPassword: String
     ): String = withContext(Dispatchers.Default) {
-        portabilityService.exportCrossPlatformContainer(
-            items = items,
-            masterPassword = backupPassword,
-            secretKeyFormatted = secretKeyFormatted,
-            exportedAtIso = Instant.now().toString()
-        )
+        try {
+            portabilityService.exportCrossPlatformContainer(
+                items = items,
+                masterPassword = backupPassword,
+                secretKeyFormatted = secretKeyFormatted,
+                exportedAtIso = Instant.now().toString()
+            )
+        } catch (t: Throwable) {
+            SafePocketErrorHandler.record("exportEncryptedContainer", t, System.currentTimeMillis())
+            throw t
+        }
     }
 
     suspend fun inspectEncryptedContainer(rawJson: String): ContainerInspectionSummary =
@@ -602,19 +1044,24 @@ class AndroidVaultRepository(
         existingItems: List<VaultItemPayload>,
         replaceExisting: Boolean
     ): List<VaultItemPayload> = withContext(Dispatchers.Default) {
-        val decrypted = portabilityService.restoreCrossPlatformContainer(
-            containerJson = rawJson,
-            masterPassword = backupPassword,
-            secretKeyFormatted = backupSecretKey.ifBlank { secretKeyFormatted }
-        ).map { InstitutionBrandRegistry.applyAutoBranding(it) }
+        try {
+            val decrypted = portabilityService.restoreCrossPlatformContainer(
+                containerJson = rawJson,
+                masterPassword = backupPassword,
+                secretKeyFormatted = backupSecretKey.ifBlank { secretKeyFormatted }
+            ).map { InstitutionBrandRegistry.applyAutoBranding(it) }
 
-        val finalItems = if (replaceExisting) {
-            decrypted
-        } else {
-            portabilityService.mergeSnapshots(existingItems, decrypted)
+            val finalItems = if (replaceExisting) {
+                decrypted
+            } else {
+                portabilityService.mergeSnapshots(existingItems, decrypted)
+            }
+            replaceAllItems(finalItems)
+            finalItems
+        } catch (t: Throwable) {
+            SafePocketErrorHandler.record("restoreEncryptedContainer", t, System.currentTimeMillis())
+            throw t
         }
-        replaceAllItems(finalItems)
-        finalItems
     }
 
     suspend fun importFromFileBytes(
@@ -623,29 +1070,34 @@ class AndroidVaultRepository(
         includeLoginsAsNotes: Boolean,
         existingItems: List<VaultItemPayload>
     ): Pair<VaultImportReport, List<VaultItemPayload>> = withContext(Dispatchers.Default) {
-        val lower = fileName.lowercase()
-        val is1Pux = lower.endsWith(".1pux") ||
-            (rawBytes.size >= 4 && rawBytes[0] == 0x50.toByte() && rawBytes[1] == 0x4B.toByte()) ||
-            rawBytes.take(64).toByteArray().decodeToString().trimStart().startsWith("{\"accounts\"")
+        try {
+            val lower = fileName.lowercase()
+            val is1Pux = lower.endsWith(".1pux") ||
+                (rawBytes.size >= 4 && rawBytes[0] == 0x50.toByte() && rawBytes[1] == 0x4B.toByte()) ||
+                rawBytes.take(64).toByteArray().decodeToString().trimStart().startsWith("{\"accounts\"")
 
-        val report = if (is1Pux) {
-            CsvAndOnePasswordPortability.importFrom1Password1Pux(
-                rawBytes = rawBytes,
-                includeLoginsAsNotes = includeLoginsAsNotes,
-                nowEpochMs = System.currentTimeMillis(),
-                zipExtractor = AndroidZipCodec::extractEntries
-            )
-        } else {
-            CsvAndOnePasswordPortability.importFromCsv(
-                rawCsv = rawBytes.decodeToString(),
-                includeLoginsAsNotes = includeLoginsAsNotes,
-                nowEpochMs = System.currentTimeMillis()
-            )
+            val report = if (is1Pux) {
+                CsvAndOnePasswordPortability.importFrom1Password1Pux(
+                    rawBytes = rawBytes,
+                    includeLoginsAsNotes = includeLoginsAsNotes,
+                    nowEpochMs = System.currentTimeMillis(),
+                    zipExtractor = AndroidZipCodec::extractEntries
+                )
+            } else {
+                CsvAndOnePasswordPortability.importFromCsv(
+                    rawCsv = rawBytes.decodeToString(),
+                    includeLoginsAsNotes = includeLoginsAsNotes,
+                    nowEpochMs = System.currentTimeMillis()
+                )
+            }
+
+            val merged = portabilityService.mergeSnapshots(existingItems, report.importedItems)
+            replaceAllItems(merged)
+            report to merged
+        } catch (t: Throwable) {
+            SafePocketErrorHandler.record("importFromFileBytes", t, System.currentTimeMillis())
+            throw t
         }
-
-        val merged = portabilityService.mergeSnapshots(existingItems, report.importedItems)
-        replaceAllItems(merged)
-        report to merged
     }
 
     suspend fun export1Password1PuxBytes(items: List<VaultItemPayload>): ByteArray =
@@ -728,13 +1180,13 @@ class AndroidVaultRepository(
         db: SafePocketDatabase,
         itemId: String,
         categoryName: String
-    ) {
+    ): EncryptedSyncRecord {
         val now = System.currentTimeMillis()
-        val aad = "safepocket:v1:$categoryName:$itemId".encodeToByteArray()
+        val aadStr = "safepocket:v1:$categoryName:$itemId"
         val (iv, tombstoneCipher) = primitives.aes256GcmEncrypt(
             activeVaultItemKey32,
             "{\"deleted\":true}".encodeToByteArray(),
-            aad
+            aadStr.encodeToByteArray()
         )
         val hlc = nextHlcPacked(now)
         val versionVec = "{\"$nodeId\":$now}"
@@ -745,6 +1197,16 @@ class AndroidVaultRepository(
             versionVectorJson = versionVec,
             updatedAt = now,
             id = itemId
+        )
+        return EncryptedSyncRecord(
+            entityId = itemId,
+            entityType = "ITEM",
+            hlcPacked = hlc,
+            versionVector = mapOf(nodeId to now),
+            isTombstone = true,
+            ivHex = ZeroKnowledgeEncryptionService.bytesToHex(iv),
+            ciphertextHex = ZeroKnowledgeEncryptionService.bytesToHex(tombstoneCipher),
+            aadContext = aadStr
         )
     }
 
@@ -840,10 +1302,15 @@ class AndroidVaultRepository(
     }
 
     companion object {
+        const val LOCAL_STANDALONE_DB_NAME = "safepocket_vault.db"
+        const val CLOUD_OFFLINE_CACHE_DB_NAME = "safepocket_cloud_offline_cache.db"
         private const val DEFAULT_DEMO_PASSWORD = "Correct-Horse-SafePocket-2026!"
         private const val CLOUD_VAULT_COLLECTION_ID = "default-vault"
         private const val LEGACY_KEY_VAULT_ITEMS = "vault_items_json"
         private const val KEY_DB_INITIALIZED_V02 = "db_initialized_v02"
+        private const val KEY_SAMPLE_DATA_PURGED = "sample_data_purged_v03"
+        private const val KEY_STORAGE_MODE = "vault_storage_mode_v03"
+        private const val KEY_CLOUD_OUTBOX_JSON = "cloud_offline_outbox_json_v03"
         private const val KEY_SQLCIPHER_RAW_HEX = "sqlcipher_raw_key_hex"
         private const val KEY_WRAPPED_LOCAL_VEK_HEX = "wrapped_local_vek_hex"
         private const val KEY_SECRET_KEY_FORMATTED = "secret_key_formatted"
@@ -851,6 +1318,7 @@ class AndroidVaultRepository(
         private const val KEY_MASTER_PW_VERIFIER = "master_pw_verifier_hex"
         private const val KEY_HAS_CUSTOM_MASTER_PW = "has_custom_master_pw"
         private const val KEY_AUTO_DOWNLOAD_LOGOS = "auto_download_logos"
+        private const val KEY_AUTO_CHECK_UPDATES = "auto_check_updates_v03"
         private const val KEY_CLOUD_SYNC_ENABLED = "cloud_sync_enabled"
         private const val KEY_FIREBASE_SESSION = "firebase_user_session_json"
         private const val KEY_LAST_SYNC_CURSOR = "firebase_last_sync_cursor"

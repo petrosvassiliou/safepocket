@@ -107,13 +107,17 @@ class AndroidCryptoPrimitives(
 }
 
 object AndroidSqlCipherDriverFactory {
-    fun createEncryptedDriver(context: Context, rawDatabaseKey32: ByteArray): SqlDriver {
+    fun createEncryptedDriver(
+        context: Context,
+        rawDatabaseKey32: ByteArray,
+        databaseFileName: String = "safepocket_vault.db"
+    ): SqlDriver {
         System.loadLibrary("sqlcipher")
         val factory = SupportOpenHelperFactory(rawDatabaseKey32.copyOf(), null, true)
         return AndroidSqliteDriver(
             schema = SafePocketDatabase.Schema,
             context = context,
-            name = "safepocket_vault.db",
+            name = databaseFileName,
             factory = factory
         )
     }

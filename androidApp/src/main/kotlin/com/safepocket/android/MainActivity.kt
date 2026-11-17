@@ -15,11 +15,15 @@ import androidx.window.layout.WindowInfoTracker
 import com.safepocket.android.data.AndroidSampleVault
 import com.safepocket.android.data.AndroidVaultRepository
 import com.safepocket.android.ui.AdaptiveSafePocketShell
+import com.safepocket.android.update.PlayProtectPackageInstaller
+import com.safepocket.shared.error.SafePocketErrorHandler
 import com.safepocket.shared.i18n.LocalizationEngine
 import com.safepocket.shared.i18n.SupportedLocale
 import com.safepocket.shared.model.ThemePreference
 import com.safepocket.shared.model.VaultCategory
 import com.safepocket.shared.model.VaultItemPayload
+import com.safepocket.shared.model.VaultStorageMode
+import com.safepocket.shared.update.CrossPlatformUpdateService
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -31,13 +35,15 @@ data class FoldablePostureState(
 
 /**
  * Single Adaptive Activity for Android 10+ / Android 17+ Smartphones, Unfolded Foldables,
- * and Googlebook OS / ChromeOS Desktop Windows (`SafePocket v0.2`).
+ * and Googlebook OS / ChromeOS Desktop Windows (`SafePocket v0.3`, `Build 5`).
  */
 class MainActivity : ComponentActivity() {
 
     private var postureState by mutableStateOf(FoldablePostureState())
     private lateinit var i18nEngine: LocalizationEngine
     private lateinit var vaultRepository: AndroidVaultRepository
+    private lateinit var playProtectInstaller: PlayProtectPackageInstaller
+    private lateinit var updateService: CrossPlatformUpdateService
 
     private fun loadBundledArbCatalogs(): Map<String, String> =
         SupportedLocale.entries.associate { locale ->
@@ -63,6 +69,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Install global uncaught exception recorder (privacy-scrubbed) before delegating
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching {
+                SafePocketErrorHandler.record("uncaught:${thread.name}", throwable, System.currentTimeMillis())
+            }
+            previousHandler?.uncaughtException(thread, throwable)
+        }
+
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val initialAllowScreenshots = prefs.getBoolean(KEY_ALLOW_SCREENSHOTS, true)
         applyScreenshotWindowPolicy(initialAllowScreenshots)
@@ -84,7 +99,22 @@ class MainActivity : ComponentActivity() {
         }
 
         vaultRepository = AndroidVaultRepository(applicationContext, prefs)
-        val bootstrapFallbackItems = AndroidSampleVault.decodeItemsOrDefault(prefs.getString(KEY_VAULT_ITEMS, null))
+        playProtectInstaller = PlayProtectPackageInstaller(applicationContext)
+        updateService = CrossPlatformUpdateService(
+            httpClient = vaultRepository.httpClient,
+            primitives = vaultRepository.primitives,
+            installer = playProtectInstaller,
+            initialAutoUpdateEnabled = vaultRepository.autoCheckUpdates
+        )
+
+        val bootstrapFallbackItems = if (vaultRepository.storageMode == VaultStorageMode.LOCAL_ONLY) {
+            AndroidSampleVault.decodeItemsOrDefault(
+                prefs.getString(KEY_VAULT_ITEMS, null),
+                vaultRepository.sampleDataPurged
+            )
+        } else {
+            emptyList()
+        }
 
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -125,22 +155,36 @@ class MainActivity : ComponentActivity() {
             var statusTick by remember { mutableIntStateOf(0) }
             var statusBannerMessage by remember { mutableStateOf<String?>(null) }
 
-            // Initialize encrypted SQLCipher 4.6 local database on launch
+            val syncIndicator by vaultRepository.syncIndicatorFlow.collectAsState()
+            val updateCheckState by updateService.state.collectAsState()
+            val autoUpdateEnabled by updateService.autoUpdateEnabled.collectAsState()
+            val latestBannerError by SafePocketErrorHandler.latestBannerError.collectAsState()
+            val diagnosticEvents by SafePocketErrorHandler.events.collectAsState()
+
+            // Initialize active encrypted vault store + automatic signed update check on startup
             LaunchedEffect(Unit) {
                 val loaded = vaultRepository.initializeAndLoadItems()
                 vaultItems = loaded
-                if (selectedItem == null || loaded.none { it.id == selectedItem?.id }) {
-                    selectedItem = loaded.firstOrNull()
-                } else {
-                    selectedItem = loaded.firstOrNull { it.id == selectedItem?.id }
-                }
+                selectedItem = loaded.firstOrNull { it.id == selectedItem?.id } ?: loaded.firstOrNull()
                 statusTick++
+                runCatching {
+                    updateService.onAppStartup(i18nEngine.activeLocale.value)
+                }
             }
 
-            val localDbStatus = remember(vaultItems, statusTick) {
+            // Collect zero-user-input automatic Cloud Sync offline->online reconciliations
+            LaunchedEffect(Unit) {
+                vaultRepository.autoReconciledItems.collect { reconciled ->
+                    vaultItems = reconciled
+                    selectedItem = reconciled.firstOrNull { it.id == selectedItem?.id } ?: reconciled.firstOrNull()
+                    statusTick++
+                }
+            }
+
+            val localDbStatus = remember(vaultItems, statusTick, syncIndicator) {
                 vaultRepository.getLocalDbStatus(vaultItems)
             }
-            val cloudSyncStatus = remember(statusTick) {
+            val cloudSyncStatus = remember(statusTick, syncIndicator) {
                 vaultRepository.getCloudSyncStatus()
             }
 
@@ -159,7 +203,6 @@ class MainActivity : ComponentActivity() {
                 coroutineScope.launch {
                     vaultRepository.upsertItem(candidate, updatedList)
                     statusTick++
-                    // Optionally download high-res institution logo & color in background if enabled
                     if (autoDownloadLogos && candidate.cardTheme?.institutionLogoDataUri == null) {
                         val enriched = vaultRepository.enrichItemBranding(candidate, forceOnlineFetch = false)
                         if (enriched != candidate) {
@@ -189,12 +232,19 @@ class MainActivity : ComponentActivity() {
                 hasCustomMasterPassword = localDbStatus.hasCustomMasterPassword,
                 localDbStatus = localDbStatus,
                 cloudSyncStatus = cloudSyncStatus,
+                syncIndicator = syncIndicator,
+                updateCheckState = updateCheckState,
+                autoUpdateEnabled = autoUpdateEnabled,
+                latestBannerError = latestBannerError,
+                diagnosticEvents = diagnosticEvents,
                 showSettingsDialog = showSettingsDialog,
                 showEditorDialog = showEditorDialog,
                 editingItem = editingItem,
                 focusSearchTrigger = focusSearchTrigger,
                 statusBannerMessage = statusBannerMessage,
                 onDismissStatusBanner = { statusBannerMessage = null },
+                onDismissErrorBanner = { SafePocketErrorHandler.dismissBanner() },
+                onClearDiagnosticsLog = { SafePocketErrorHandler.clearDiagnostics() },
                 onSelectThemePreference = { nextTheme ->
                     themePreference = nextTheme
                     prefs.edit().putString(KEY_THEME_PREFERENCE, nextTheme.name).apply()
@@ -248,6 +298,7 @@ class MainActivity : ComponentActivity() {
                     val copyItem = target.copy(
                         id = "item-$now",
                         title = "${target.title} (Copy)",
+                        isSampleItem = false,
                         createdAtEpochMs = now,
                         updatedAtEpochMs = now
                     )
@@ -268,9 +319,19 @@ class MainActivity : ComponentActivity() {
                         statusTick++
                     }
                 },
+                onDeleteAllExampleData = {
+                    val (removedCount, remaining) = vaultRepository.deleteAllExampleData(vaultItems)
+                    vaultItems = remaining
+                    selectedItem = remaining.firstOrNull { it.id == selectedItem?.id } ?: remaining.firstOrNull()
+                    statusTick++
+                    removedCount
+                },
                 onSaveEditorItem = upsertAndEnrichItem,
                 onFetchBrandLogoPreview = { draft ->
                     vaultRepository.enrichItemBranding(draft, forceOnlineFetch = true)
+                },
+                onVerifyWebsiteReachability = { url ->
+                    vaultRepository.verifyWebsiteExists(url)
                 },
                 onFocusSearch = { focusSearchTrigger++ },
                 onNewItem = {
@@ -293,32 +354,56 @@ class MainActivity : ComponentActivity() {
                     vaultRepository.configureVaultCredentials(masterPw, secretKeyOrUri, vaultItems)
                     statusTick++
                 },
+                onSwitchStorageMode = { nextMode ->
+                    val updated = if (nextMode == VaultStorageMode.CLOUD_SYNC) {
+                        vaultRepository.switchToCloudSyncExclusiveMode(vaultItems)
+                    } else {
+                        vaultRepository.switchToLocalOnlyExclusiveMode(vaultItems)
+                    }
+                    vaultItems = updated
+                    selectedItem = updated.firstOrNull { it.id == selectedItem?.id } ?: updated.firstOrNull()
+                    statusTick++
+                },
                 onCreateFirebaseAccount = { email, pw ->
-                    vaultRepository.createFirebaseAccount(email, pw)
+                    val (_, reconciled) = vaultRepository.createFirebaseAccount(email, pw, vaultItems)
+                    vaultItems = reconciled
+                    selectedItem = reconciled.firstOrNull { it.id == selectedItem?.id } ?: reconciled.firstOrNull()
                     statusTick++
                 },
                 onSignInFirebaseAccount = { email, pw ->
-                    vaultRepository.signInFirebaseAccount(email, pw)
+                    val (_, reconciled) = vaultRepository.signInFirebaseAccount(email, pw, vaultItems)
+                    vaultItems = reconciled
+                    selectedItem = reconciled.firstOrNull { it.id == selectedItem?.id } ?: reconciled.firstOrNull()
                     statusTick++
                 },
                 onSignOutFirebaseAccount = {
-                    vaultRepository.signOutFirebaseAccount()
-                    statusTick++
-                },
-                onSetCloudSyncEnabled = { enabled ->
-                    vaultRepository.cloudSyncEnabled = enabled
+                    val localItems = vaultRepository.signOutFirebaseAndReturnToLocal(vaultItems)
+                    vaultItems = localItems
                     statusTick++
                 },
                 onSyncNow = {
                     val report = vaultRepository.syncNow(vaultItems)
                     vaultItems = report.updatedItems
-                    if (selectedItem == null || report.updatedItems.none { it.id == selectedItem?.id }) {
-                        selectedItem = report.updatedItems.firstOrNull()
-                    } else {
-                        selectedItem = report.updatedItems.firstOrNull { it.id == selectedItem?.id }
-                    }
+                    selectedItem = report.updatedItems.firstOrNull { it.id == selectedItem?.id }
+                        ?: report.updatedItems.firstOrNull()
                     statusTick++
                     report
+                },
+                onToggleAutoUpdate = { enabled ->
+                    vaultRepository.autoCheckUpdates = enabled
+                    updateService.setAutomaticUpdates(enabled)
+                },
+                onCheckForUpdatesNow = {
+                    updateService.checkForUpdates(i18nEngine.activeLocale.value)
+                },
+                onInstallVerifiedUpdate = { manifest, artifact ->
+                    if (!playProtectInstaller.canInstallPackages()) {
+                        startActivity(playProtectInstaller.createManageUnknownAppSourcesIntent())
+                        i18nEngine.t("update_permission_prompt")
+                    } else {
+                        updateService.performVerifiedUpdate(manifest, artifact)
+                        null
+                    }
                 },
                 onExportEncryptedBackup = { backupPw ->
                     vaultRepository.exportEncryptedContainer(vaultItems, backupPw).encodeToByteArray()

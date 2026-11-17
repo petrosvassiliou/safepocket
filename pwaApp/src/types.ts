@@ -131,6 +131,8 @@ export interface VaultHeaderMetadata {
   verifierHashHex: string;
 }
 
+export type VaultStorageMode = 'LOCAL_ONLY' | 'CLOUD_SYNC';
+
 export interface VaultItem {
   schemaVersion: number;
   id: string;
@@ -139,6 +141,7 @@ export interface VaultItem {
   subtitle: string;
   favorite: boolean;
   pinned?: boolean;
+  isSampleItem?: boolean;
   lastAccessedAtEpochMs?: number;
   tags: string[];
   cardTheme?: {
@@ -159,6 +162,29 @@ export interface VaultItem {
   createdAtEpochMs: number;
   updatedAtEpochMs: number;
 }
+
+export const SAMPLE_VAULT_ITEM_IDS = new Set<string>([
+  'item-card-db-visa',
+  'item-card-n26-metal',
+  'item-card-alpine-metal',
+  'item-bank-ing-giro',
+  'item-bank-sepa-main',
+  'item-ins-tk-egk',
+  'item-ins-ehic-eu',
+  'item-mem-bahncard',
+  'item-mem-adac-plus',
+  'item-identity-primary',
+  'item-id-clara',
+  'item-id-eu-citizen',
+  'item-doc-hellenic-passport',
+  'item-doc-cie-italy',
+  'item-doc-passport-de',
+  'item-doc-passport-eu',
+  'item-note-home-safe',
+  'item-note-emergency',
+  'item-note-emergency-kit',
+  'item-note-vault-codes'
+]);
 
 export interface EncryptedVaultRow {
   id: string;
@@ -211,6 +237,6 @@ export const SENSITIVE_FIELD_KEYS = new Set<string>([
 
 export const APP_BUILD_INFO = {
   appName: 'SafePocket',
-  versionName: '0.2',
-  versionCode: 4
+  versionName: '0.3',
+  versionCode: 5
 } as const;

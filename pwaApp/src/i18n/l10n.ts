@@ -164,6 +164,9 @@ export class SafePocketI18n {
     category: VaultCategory
   ): string {
     if (isCustomLabel) return labelKey;
+    if (category === 'BANK_ACCOUNT' && labelKey === 'field_issuing_bank') {
+      return this.t('field_bank_name');
+    }
     if (category === 'IDENTITY') {
       if (labelKey === 'field_tax_id') return this.t('identity_template_tax_id');
       if (labelKey === 'field_ssn') return this.t('identity_template_ssn');

@@ -9,13 +9,19 @@ import {
 } from '../crypto/vaultCrypto';
 import {
   buildSampleSvgScanBytes,
-  createInitialSampleVaultItems
+  createInitialSampleVaultItems,
+  getPrimaryCopyableField,
+  isBuiltInSampleItem
 } from '../data/sampleVault';
 import {
   OpfsEncryptedAttachmentStore,
   VaultHeaderStore
 } from '../db/opfsAttachmentStore';
 import { SqliteWasmVaultDb } from '../db/sqliteWasmVaultDb';
+import {
+  type SafePocketAppError,
+  SafePocketDiagnosticsCenter
+} from '../error/errorHandler';
 import { FirebaseVaultService } from '../firebase/firebaseVaultService';
 import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
 import { renderScannableBarcodeSvg } from '../scanner/barcodeRenderer';
@@ -72,7 +78,8 @@ import {
   type VaultCategory,
   type VaultField,
   type VaultItem,
-  type VaultSortMode
+  type VaultSortMode,
+  type VaultStorageMode
 } from '../types';
 import {
   exportTo1Password1Pux,
@@ -95,12 +102,28 @@ import {
   buildEmergencyKitHtml,
   estimateMasterPasswordEntropy
 } from './onboardingWizard';
+import {
+  analyzeAndFormatCardNumber,
+  analyzeAndFormatIban,
+  COUNTRY_DIAL_CODES,
+  defaultDialCodeForLocale,
+  dropdownOptionsForField,
+  extractDialCodeAndLocalPhone,
+  formatBicSwift,
+  formatInternationalPhone,
+  formatIsoDateSmart,
+  normalizeHttpsUrl,
+  suggestInstitutions,
+  verifyWebsiteExists,
+  type WebsiteVerificationResult
+} from './smartFieldIntelligence';
 
 const THEME_STORAGE_KEY = 'safepocket.theme_mode';
 const MATERIAL_ACCENT_STORAGE_KEY = 'safepocket.material_accent';
 const EXPIRY_WINDOW_STORAGE_KEY = 'safepocket.expiry_window_days';
 const ALLOW_SCREENSHOTS_STORAGE_KEY = 'safepocket.allow_screenshots';
 const AUTO_DOWNLOAD_LOGOS_STORAGE_KEY = 'safepocket.auto_download_logos';
+const SAMPLE_PURGED_STORAGE_KEY = 'safepocket.sample_data_purged_v03';
 
 export type PlainExportFormat = '1pux' | '1password_csv' | 'csv' | 'json';
 
@@ -164,10 +187,6 @@ export class SafePocketAppShell {
   private readonly i18n = new SafePocketI18n();
   private readonly crypto = new ZeroKnowledgeVaultCrypto();
   private readonly sqliteDb = new SqliteWasmVaultDb(true);
-  private readonly localDb = new EncryptedLocalVaultDb(this.sqliteDb);
-  private readonly opfsStore = new OpfsEncryptedAttachmentStore();
-  private readonly vaultHeaderStore = new VaultHeaderStore();
-  private readonly hlc = new HybridClock('chromeos-pwa-node');
   private readonly firebaseService = new FirebaseVaultService(this.sqliteDb);
   private readonly firebaseAdapter = new FirebaseZeroKnowledgeAdapter(
     this.sqliteDb
@@ -177,7 +196,15 @@ export class SafePocketAppShell {
     this.firebaseAdapter,
     this.gdriveAdapter
   );
+  private readonly localDb = new EncryptedLocalVaultDb(
+    this.sqliteDb,
+    this.syncCoordinator
+  );
+  private readonly opfsStore = new OpfsEncryptedAttachmentStore();
+  private readonly vaultHeaderStore = new VaultHeaderStore();
+  private readonly hlc = new HybridClock('chromeos-pwa-node');
   private readonly updater = new PwaUpdateController('/version.json');
+  private readonly diagnostics = new SafePocketDiagnosticsCenter();
   private readonly clipboard: ClipboardHygieneController;
   private readonly autoLockMonitor: IdleAutoLockMonitor;
   private readonly cameraController = new CameraScannerController();
@@ -244,9 +271,26 @@ export class SafePocketAppShell {
     bearerToken: ''
   };
 
+  private activeErrorBanner: SafePocketAppError | null = null;
+  private confirmDeleteSamplesOpen = false;
+  private swipedItemState: { itemId: string; dir: 'left' | 'right' } | null =
+    null;
+  private websiteVerification: WebsiteVerificationResult = {
+    status: 'idle',
+    normalizedUrl: '',
+    hostname: '',
+    detail: ''
+  };
+  private websiteVerifySeq = 0;
+  private customDropdownOpenKeys = new Set<string>();
+  private phoneDialCodes: Record<string, string> = {};
+  private lastAutofillNotice = '';
+  private autoReconcileInFlight = false;
+
   private contextMenu: {
     x: number;
     y: number;
+    kind: 'entry' | 'field';
     itemId: string;
     label: string;
     value: string;
@@ -260,6 +304,7 @@ export class SafePocketAppShell {
     this.allowScreenshots = this.loadSavedAllowScreenshots();
     this.autoDownloadLogos = this.loadSavedAutoDownloadLogos();
     this.applyThemeToDocument();
+    this.localDb.bindSyncCoordinator(this.syncCoordinator);
 
     this.clipboard = new ClipboardHygieneController((seconds, cleared) => {
       this.clipboardSecondsLeft = seconds;
@@ -416,20 +461,305 @@ export class SafePocketAppShell {
     }
   }
 
+  private reportAppError(
+    err: unknown,
+    operation: string,
+    surfaceBanner = true
+  ): SafePocketAppError {
+    const classified = this.diagnostics.recordError(err, operation);
+    if (surfaceBanner) {
+      this.activeErrorBanner = classified;
+      this.render();
+    }
+    return classified;
+  }
+
+  private currentCloudProviderKey(): string {
+    return `${this.syncCoordinator.cloudService}:${
+      this.firebaseService.currentUser?.uid ?? 'local-default-uid'
+    }`;
+  }
+
+  private isSampleDataPurged(): boolean {
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem(SAMPLE_PURGED_STORAGE_KEY) === 'true';
+  }
+
+  private triggerWebsiteReachabilityCheck(rawInput: string): void {
+    const trimmed = rawInput.trim();
+    if (!trimmed) {
+      this.websiteVerification = {
+        status: 'idle',
+        normalizedUrl: '',
+        hostname: '',
+        detail: ''
+      };
+      this.render();
+      return;
+    }
+    const normalized = normalizeHttpsUrl(trimmed);
+    if (this.editorDraft) {
+      this.editorDraft.standardFieldValues.field_institution_domain =
+        normalized;
+    }
+    const seq = ++this.websiteVerifySeq;
+    this.websiteVerification = {
+      status: 'checking',
+      normalizedUrl: normalized,
+      hostname: normalized.replace(/^https:\/\//i, ''),
+      detail: ''
+    };
+    this.render();
+
+    void verifyWebsiteExists(normalized)
+      .then((res) => {
+        if (seq !== this.websiteVerifySeq) return;
+        this.websiteVerification = res;
+        this.render();
+      })
+      .catch((err) => {
+        if (seq !== this.websiteVerifySeq) return;
+        this.diagnostics.recordWarning(
+          'verifyWebsiteExists',
+          err instanceof Error ? err.message : 'Probe failed'
+        );
+        this.websiteVerification = {
+          status: 'unreachable',
+          normalizedUrl: normalized,
+          hostname: normalized.replace(/^https:\/\//i, ''),
+          detail: 'Unreachable'
+        };
+        this.render();
+      });
+  }
+
+  async runAutomaticCloudReconcile(showSuccessToast = false): Promise<void> {
+    if (
+      !this.crypto.isUnlocked ||
+      this.syncCoordinator.storageMode !== 'CLOUD_SYNC' ||
+      this.autoReconcileInFlight
+    ) {
+      return;
+    }
+    this.autoReconcileInFlight = true;
+    try {
+      this.liveCloudConfig = this.firebaseService.toEndpointConfig(
+        this.liveCloudConfig.bearerToken
+      );
+      this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+      this.gdriveAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+
+      const res = await this.localDb.reconcileCloudSessionAutomatically(
+        'default-vault',
+        this.currentCloudProviderKey()
+      );
+      if (!res) return;
+
+      const activeHydrated: VaultItem[] = [];
+      for (const merged of res.mergedRows) {
+        if (merged.isTombstone) continue;
+        try {
+          activeHydrated.push(await this.crypto.decryptVaultRow(merged));
+        } catch {
+          // Ignore foreign vault ciphertexts
+        }
+      }
+
+      let downloadedBlobs = 0;
+      for (const item of activeHydrated) {
+        let itemMetaUpdated = false;
+        for (const att of item.attachments) {
+          if (res.uploadedBlobPaths[att.id]) {
+            att.blobSynced = true;
+            att.storageObjectPath = res.uploadedBlobPaths[att.id];
+            itemMetaUpdated = true;
+          }
+          const localOpfs = await this.opfsStore.readEncryptedBlob(att.id);
+          const localSql = localOpfs
+            ? null
+            : await this.sqliteDb.loadLocalEncryptedBlob(att.id);
+          if (!localOpfs && !localSql && !att.ciphertextBase64) {
+            const remoteBlob =
+              await this.syncCoordinator.downloadMissingAttachmentBlobIfEnabled(
+                'default-vault',
+                att.id,
+                att.sha256Hex
+              );
+            if (remoteBlob) {
+              await this.opfsStore.writeEncryptedBlob(att.id, remoteBlob);
+              await this.sqliteDb.saveLocalEncryptedBlob(
+                'default-vault',
+                att.id,
+                remoteBlob,
+                att.sha256Hex,
+                true
+              );
+              att.blobSynced = true;
+              itemMetaUpdated = true;
+              downloadedBlobs += 1;
+            }
+          }
+        }
+        if (itemMetaUpdated) {
+          const hlcPacked = this.hlc.nowPacked();
+          const encRow = await this.crypto.encryptVaultItem(item, hlcPacked, {
+            'chromeos-pwa-node': 1
+          });
+          await this.localDb.saveMergedCloudRowToMirrorOnly(encRow);
+        }
+      }
+
+      if (
+        activeHydrated.length > 0 ||
+        res.mergedRows.some((r) => r.isTombstone)
+      ) {
+        this.items = activeHydrated;
+        this.selectedItemId = this.selectedItemId ?? this.items[0]?.id ?? null;
+      }
+
+      this.lastSyncedCount = res.pushedCount;
+      this.lastPulledCount = res.pulledCount;
+      this.diagnostics.recordInfo(
+        'cloudAutoReconcile',
+        `Synced (${res.service}): pushed ${res.pushedCount}, pulled ${res.pulledCount}, blobs ↓${downloadedBlobs}`
+      );
+      this.render();
+      if (showSuccessToast) {
+        this.showToast(
+          `Cloud Sync (${res.service}): ↑${res.pushedCount} items • ↓${res.pulledCount} items`
+        );
+      }
+    } catch (err) {
+      this.diagnostics.recordError(
+        err,
+        'cloudAutoReconcile',
+        'CLOUD_SYNC_NETWORK'
+      );
+      this.render();
+      if (showSuccessToast) {
+        this.reportAppError(err, 'Cloud Sync');
+      }
+    } finally {
+      this.autoReconcileInFlight = false;
+    }
+  }
+
+  async switchExclusiveStorageMode(
+    targetMode: VaultStorageMode
+  ): Promise<void> {
+    if (this.syncCoordinator.storageMode === targetMode) return;
+    try {
+      const snapshotRows = [];
+      for (const item of this.items) {
+        const hlcPacked = this.hlc.nowPacked();
+        snapshotRows.push(
+          await this.crypto.encryptVaultItem(item, hlcPacked, {
+            'chromeos-pwa-node': 1
+          })
+        );
+      }
+      this.liveCloudConfig = this.firebaseService.toEndpointConfig(
+        this.liveCloudConfig.bearerToken
+      );
+      this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+      this.gdriveAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+
+      await this.localDb.switchExclusiveStorageMode(
+        targetMode,
+        snapshotRows,
+        'default-vault',
+        this.currentCloudProviderKey()
+      );
+      this.diagnostics.recordInfo(
+        'switchExclusiveStorageMode',
+        `Switched vault storage mode exclusively to ${targetMode}`
+      );
+      if (targetMode === 'CLOUD_SYNC') {
+        void this.runAutomaticCloudReconcile(false);
+        this.showToast(this.i18n.t('storage_mode_cloud_only_title'));
+      } else {
+        this.showToast(this.i18n.t('storage_mode_local_only_title'));
+      }
+      this.render();
+    } catch (err) {
+      this.reportAppError(err, 'switchExclusiveStorageMode');
+    }
+  }
+
+  async deleteAllExampleData(): Promise<void> {
+    const sampleTargets = this.items.filter((i) => isBuiltInSampleItem(i));
+    this.confirmDeleteSamplesOpen = false;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(SAMPLE_PURGED_STORAGE_KEY, 'true');
+    }
+    if (sampleTargets.length === 0) {
+      this.render();
+      return;
+    }
+    try {
+      for (const sample of sampleTargets) {
+        for (const att of sample.attachments) {
+          await this.opfsStore.deleteEncryptedBlob(att.id);
+          await this.sqliteDb.deleteLocalEncryptedBlob(att.id);
+        }
+        if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
+          const tombstone = await this.crypto.createTombstoneRow(
+            sample.id,
+            sample.category,
+            this.hlc.nowPacked(),
+            { 'chromeos-pwa-node': 2 }
+          );
+          await this.localDb.saveEncryptedRow(tombstone);
+        }
+      }
+      const remaining = this.items.filter((i) => !isBuiltInSampleItem(i));
+      this.items = remaining;
+      if (this.syncCoordinator.storageMode === 'LOCAL_ONLY') {
+        await this.localDb.clearAll();
+        await this.persistAllItemsEncrypted();
+      } else {
+        void this.runAutomaticCloudReconcile(false);
+      }
+      this.selectedItemId = this.items[0]?.id ?? null;
+      this.diagnostics.recordInfo(
+        'deleteAllExampleData',
+        `Deleted ${sampleTargets.length} built-in sample items`
+      );
+      this.showToast(
+        this.i18n.t('delete_example_data_done', {
+          count: sampleTargets.length
+        })
+      );
+    } catch (err) {
+      this.reportAppError(err, 'deleteAllExampleData');
+    }
+  }
+
   async bootstrap(): Promise<void> {
     this.applyThemeToDocument();
-    if (
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function'
-    ) {
-      window
-        .matchMedia('(prefers-color-scheme: dark)')
-        .addEventListener?.('change', () => {
-          if (this.themeMode === 'system') {
-            this.applyThemeToDocument();
-            this.render();
-          }
-        });
+    this.diagnostics.installGlobalErrorBoundaries((appErr) => {
+      this.activeErrorBanner = appErr;
+      this.render();
+    });
+
+    if (typeof window !== 'undefined') {
+      if (typeof window.matchMedia === 'function') {
+        window
+          .matchMedia('(prefers-color-scheme: dark)')
+          .addEventListener?.('change', () => {
+            if (this.themeMode === 'system') {
+              this.applyThemeToDocument();
+              this.render();
+            }
+          });
+      }
+      window.addEventListener('online', () => {
+        this.syncCoordinator.setOnlineState(true);
+        void this.runAutomaticCloudReconcile(false);
+      });
+      window.addEventListener('offline', () => {
+        this.syncCoordinator.setOnlineState(false);
+      });
     }
 
     this.demoSecretKey =
@@ -439,6 +769,7 @@ export class SafePocketAppShell {
 
     this.i18n.subscribe(() => this.render());
     this.updater.subscribe(() => this.render());
+    this.syncCoordinator.subscribeIndicator(() => this.render());
     this.bindGlobalShortcuts();
 
     const savedHeader = this.vaultHeaderStore.loadHeader();
@@ -455,8 +786,15 @@ export class SafePocketAppShell {
       await this.firebaseService.initializeDormant();
       this.liveCloudConfig = this.firebaseService.toEndpointConfig();
       this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+      this.diagnostics.recordInfo(
+        'bootstrap',
+        `Storage ready (${this.sqliteDb.activeBackend.toUpperCase()}) • Mode: ${this.syncCoordinator.storageMode}`
+      );
     } catch (err) {
-      console.error('SQLite WASM bootstrap warning:', err);
+      this.diagnostics.recordWarning(
+        'bootstrap',
+        err instanceof Error ? err.message : 'Storage fallback active'
+      );
       this.showToast(
         err instanceof Error
           ? `Storage fallback active: ${err.message}`
@@ -476,7 +814,7 @@ export class SafePocketAppShell {
       await this.unlockAndHydrateVault(
         DEMO_DEFAULT_PASSWORD,
         this.demoSecretKey,
-        true
+        !this.isSampleDataPurged()
       );
     } else {
       this.render();
@@ -487,42 +825,51 @@ export class SafePocketAppShell {
     masterPassword: string,
     seedSampleItems: boolean
   ): Promise<void> {
-    this.activeMasterPassword = masterPassword;
-    await this.crypto.initializeOrUnlock(masterPassword, this.demoSecretKey);
+    try {
+      this.activeMasterPassword = masterPassword;
+      await this.crypto.initializeOrUnlock(masterPassword, this.demoSecretKey);
 
-    const kdf = this.crypto.currentKdfConfig;
-    const verifierHashHex = await sha256Hex(
-      new TextEncoder().encode(
-        `verifier:${kdf.saltHex}:${masterPassword}:${this.demoSecretKey}`
-      )
-    );
+      const kdf = this.crypto.currentKdfConfig;
+      const verifierHashHex = await sha256Hex(
+        new TextEncoder().encode(
+          `verifier:${kdf.saltHex}:${masterPassword}:${this.demoSecretKey}`
+        )
+      );
 
-    this.vaultHeaderStore.saveHeader({
-      vaultId: `vault-${kdf.saltHex.slice(0, 12)}`,
-      createdAtIso: new Date().toISOString(),
-      saltHex: kdf.saltHex,
-      memorySizeKiB: kdf.memorySizeKiB,
-      iterations: kdf.iterations,
-      parallelism: kdf.parallelism,
-      verifierHashHex
-    });
-    localStorage.setItem('safepocket.demo_mode', String(seedSampleItems));
+      this.vaultHeaderStore.saveHeader({
+        vaultId: `vault-${kdf.saltHex.slice(0, 12)}`,
+        createdAtIso: new Date().toISOString(),
+        saltHex: kdf.saltHex,
+        memorySizeKiB: kdf.memorySizeKiB,
+        iterations: kdf.iterations,
+        parallelism: kdf.parallelism,
+        verifierHashHex
+      });
+      localStorage.setItem('safepocket.demo_mode', String(seedSampleItems));
+      if (!seedSampleItems) {
+        localStorage.setItem(SAMPLE_PURGED_STORAGE_KEY, 'true');
+      } else {
+        localStorage.removeItem(SAMPLE_PURGED_STORAGE_KEY);
+      }
 
-    await this.localDb.clearAll();
-    if (seedSampleItems) {
-      this.items = createInitialSampleVaultItems();
-      await this.encryptSampleDocumentScans(this.items);
-      await this.persistAllItemsEncrypted();
-    } else {
-      this.items = [];
+      await this.localDb.clearAll();
+      if (seedSampleItems) {
+        this.items = createInitialSampleVaultItems();
+        await this.encryptSampleDocumentScans(this.items);
+        await this.persistAllItemsEncrypted();
+      } else {
+        this.items = [];
+      }
+
+      this.selectedItemId = this.items[0]?.id ?? null;
+      this.showOnboardingWizard = false;
+      this.wasAutoLocked = false;
+      this.unlockError = null;
+      this.autoLockMonitor.start();
+      this.render();
+    } catch (err) {
+      this.reportAppError(err, 'initializeVaultFromOnboarding');
     }
-
-    this.selectedItemId = this.items[0]?.id ?? null;
-    this.showOnboardingWizard = false;
-    this.wasAutoLocked = false;
-    this.unlockError = null;
-    this.autoLockMonitor.start();
-    this.render();
   }
 
   private async unlockAndHydrateVault(
@@ -556,6 +903,11 @@ export class SafePocketAppShell {
         if (candidateVerifier !== header.verifierHashHex) {
           this.crypto.lock();
           this.unlockError = 'Invalid Master Password or Secret Key';
+          this.diagnostics.recordWarning(
+            'unlockVault',
+            'Verifier mismatch on unlock attempt',
+            'CRYPTO_DECRYPTION'
+          );
           this.render();
           return false;
         }
@@ -568,7 +920,12 @@ export class SafePocketAppShell {
       }
       this.items = loaded;
 
-      if (this.items.length === 0 && reseedIfEmpty) {
+      if (
+        this.items.length === 0 &&
+        reseedIfEmpty &&
+        !this.isSampleDataPurged() &&
+        this.syncCoordinator.storageMode === 'LOCAL_ONLY'
+      ) {
         this.items = createInitialSampleVaultItems();
         await this.encryptSampleDocumentScans(this.items);
         await this.persistAllItemsEncrypted();
@@ -584,9 +941,14 @@ export class SafePocketAppShell {
       this.unlockError = null;
       this.autoLockMonitor.start();
       this.render();
+
+      if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
+        void this.runAutomaticCloudReconcile(false);
+      }
       return true;
-    } catch {
+    } catch (err) {
       this.crypto.lock();
+      this.diagnostics.recordError(err, 'unlockVault', 'CRYPTO_DECRYPTION');
       this.unlockError = 'Decryption failed — verify Master Password & Secret Key';
       this.render();
       return false;
@@ -677,6 +1039,8 @@ export class SafePocketAppShell {
     this.editorDraft = null;
     this.restoreModalState = null;
     this.plainExportModalState = null;
+    this.confirmDeleteSamplesOpen = false;
+    this.swipedItemState = null;
     this.contextMenu = null;
     this.wasAutoLocked = triggeredByAutoLock;
     this.render();
@@ -807,22 +1171,41 @@ export class SafePocketAppShell {
   }
 
   private async persistSingleItemEncrypted(item: VaultItem): Promise<void> {
-    const hlcPacked = this.hlc.nowPacked();
-    const encRow = await this.crypto.encryptVaultItem(item, hlcPacked, {
-      'chromeos-pwa-node': 1
-    });
-    await this.localDb.saveEncryptedRow(encRow);
+    try {
+      const hlcPacked = this.hlc.nowPacked();
+      const encRow = await this.crypto.encryptVaultItem(item, hlcPacked, {
+        'chromeos-pwa-node': 1
+      });
+      await this.localDb.saveEncryptedRow(encRow);
+      if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
+        void this.runAutomaticCloudReconcile(false);
+      }
+    } catch (err) {
+      this.reportAppError(err, 'persistSingleItemEncrypted');
+    }
   }
 
   private async persistAllItemsEncrypted(): Promise<void> {
     for (const item of this.items) {
-      await this.persistSingleItemEncrypted(item);
+      const hlcPacked = this.hlc.nowPacked();
+      const encRow = await this.crypto.encryptVaultItem(item, hlcPacked, {
+        'chromeos-pwa-node': 1
+      });
+      await this.localDb.saveEncryptedRow(encRow);
+    }
+    if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
+      void this.runAutomaticCloudReconcile(false);
     }
   }
 
   private bindGlobalShortcuts(): void {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        if (this.confirmDeleteSamplesOpen) {
+          this.confirmDeleteSamplesOpen = false;
+          this.render();
+          return;
+        }
         if (this.cameraModalState) {
           this.closeCameraModal();
           this.render();
@@ -892,6 +1275,21 @@ export class SafePocketAppShell {
       ? (this.selectedNav as VaultCategory)
       : 'PAYMENT_CARD';
 
+    this.customDropdownOpenKeys.clear();
+    this.phoneDialCodes = {};
+    this.lastAutofillNotice = '';
+    this.websiteVerification = {
+      status: 'idle',
+      normalizedUrl: '',
+      hostname: '',
+      detail: ''
+    };
+
+    const initialStd: Record<string, string> = {};
+    if (defaultCat === 'BANK_ACCOUNT') {
+      initialStd.field_currency = 'EUR';
+    }
+
     this.editorDraft = {
       editingItemId: null,
       category: defaultCat,
@@ -904,18 +1302,27 @@ export class SafePocketAppShell {
       showVisualCard: true,
       barcodeFormat: 'CODE_128',
       tagsCsv: '',
-      standardFieldValues: {},
+      standardFieldValues: initialStd,
       customFields: []
     };
     this.render();
   }
 
   private openEditItemModal(item: VaultItem): void {
-    const stdKeys = new Set(
-      this.defaultTemplateFields(item.category).map((t) => t.key)
-    );
+    const templates = this.defaultTemplateFields(item.category);
+    const stdKeys = new Set(templates.map((t) => t.key));
     const standardFieldValues: Record<string, string> = {};
     const customFields: DraftCustomField[] = [];
+
+    this.customDropdownOpenKeys.clear();
+    this.phoneDialCodes = {};
+    this.lastAutofillNotice = '';
+    this.websiteVerification = {
+      status: 'idle',
+      normalizedUrl: '',
+      hostname: '',
+      detail: ''
+    };
 
     for (const f of item.fields) {
       if (!f.isCustomLabel && stdKeys.has(f.labelKey)) {
@@ -930,6 +1337,20 @@ export class SafePocketAppShell {
           isSensitive:
             Boolean(f.isSensitive) || SENSITIVE_FIELD_KEYS.has(f.labelKey)
         });
+      }
+    }
+
+    // Initialize custom dropdown open flags & dial codes for existing values
+    const defaultDial = defaultDialCodeForLocale(this.i18n.activeLocale);
+    for (const tf of templates) {
+      const val = standardFieldValues[tf.key] ?? '';
+      const opts = dropdownOptionsForField(tf.key, item.category, this.i18n);
+      if (opts && val.trim() && !opts.some((o) => o.value === val)) {
+        this.customDropdownOpenKeys.add(tf.key);
+      }
+      if (tf.valueType === 'PHONE') {
+        const parsed = extractDialCodeAndLocalPhone(val, defaultDial);
+        this.phoneDialCodes[tf.key] = parsed.dialCode;
       }
     }
 
@@ -949,6 +1370,12 @@ export class SafePocketAppShell {
       customFields
     };
     this.render();
+
+    if (standardFieldValues.field_institution_domain) {
+      this.triggerWebsiteReachabilityCheck(
+        standardFieldValues.field_institution_domain
+      );
+    }
   }
 
   private syncDraftFromDom(): void {
@@ -992,6 +1419,15 @@ export class SafePocketAppShell {
     }
 
     this.root
+      .querySelectorAll<HTMLSelectElement>('[data-smart-dropdown]')
+      .forEach((sel) => {
+        const key = sel.dataset.smartDropdown;
+        if (key && this.editorDraft && sel.value !== '__custom__') {
+          this.editorDraft.standardFieldValues[key] = sel.value;
+        }
+      });
+
+    this.root
       .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
         '[data-std-field]'
       )
@@ -1025,6 +1461,7 @@ export class SafePocketAppShell {
     const copy: VaultItem = {
       ...structuredClone(source),
       id: `item-${now}`,
+      isSampleItem: false,
       title: `${source.title} (Copy)`,
       fields: source.fields.map((f, idx) => ({
         ...f,
@@ -1039,31 +1476,44 @@ export class SafePocketAppShell {
     this.showToast(`${this.i18n.t('context_duplicate')}: ${copy.title}`);
   }
 
-  private async deleteVaultItemWithTombstone(itemId: string): Promise<void> {
+  private async deleteVaultItemWithTombstone(
+    itemId: string,
+    skipBrowserConfirm = false
+  ): Promise<void> {
     const target = this.items.find((i) => i.id === itemId);
     if (!target) return;
-    const confirmed = window.confirm(
-      this.i18n.t('confirm_delete_item', { title: target.title })
-    );
-    if (!confirmed) return;
-
-    const hlcPacked = this.hlc.nowPacked();
-    const tombstone = await this.crypto.createTombstoneRow(
-      target.id,
-      target.category,
-      hlcPacked,
-      { 'chromeos-pwa-node': 2 }
-    );
-    await this.localDb.saveEncryptedRow(tombstone);
-    for (const att of target.attachments) {
-      await this.opfsStore.deleteEncryptedBlob(att.id);
-      await this.sqliteDb.deleteLocalEncryptedBlob(att.id);
+    if (!skipBrowserConfirm && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      const confirmed = window.confirm(
+        this.i18n.t('confirm_delete_item', { title: target.title })
+      );
+      if (!confirmed) return;
     }
 
-    this.items = this.items.filter((i) => i.id !== itemId);
-    this.selectedItemId = this.items[0]?.id ?? null;
-    this.mobileDetailOpen = false;
-    this.showToast(`Deleted "${target.title}" (CRDT tombstone recorded)`);
+    try {
+      const hlcPacked = this.hlc.nowPacked();
+      const tombstone = await this.crypto.createTombstoneRow(
+        target.id,
+        target.category,
+        hlcPacked,
+        { 'chromeos-pwa-node': 2 }
+      );
+      await this.localDb.saveEncryptedRow(tombstone);
+      for (const att of target.attachments) {
+        await this.opfsStore.deleteEncryptedBlob(att.id);
+        await this.sqliteDb.deleteLocalEncryptedBlob(att.id);
+      }
+
+      this.items = this.items.filter((i) => i.id !== itemId);
+      this.swipedItemState = null;
+      this.selectedItemId = this.items[0]?.id ?? null;
+      this.mobileDetailOpen = false;
+      if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
+        void this.runAutomaticCloudReconcile(false);
+      }
+      this.showToast(`Deleted "${target.title}" (CRDT tombstone recorded)`);
+    } catch (err) {
+      this.reportAppError(err, 'deleteVaultItemWithTombstone');
+    }
   }
 
   private async resolveEncryptedAttachmentBytes(
@@ -1239,6 +1689,89 @@ export class SafePocketAppShell {
     }, 3200);
   }
 
+  private renderGlobalErrorBanner(): string {
+    if (!this.activeErrorBanner) return '';
+    return `
+      <div class="sp-error-banner" role="alert" id="sp-global-error-banner">
+        <div>
+          <strong>⚠ ${this.escape(this.activeErrorBanner.userTitle)}:</strong>
+          <span>${this.escape(this.activeErrorBanner.message)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button type="button" id="sp-error-open-diagnostics" class="sp-btn" style="padding:3px 9px;min-height:26px;font-size:11.5px;">
+            Diagnostics
+          </button>
+          <button type="button" id="sp-dismiss-error-banner" class="sp-btn" style="padding:3px 9px;min-height:26px;font-size:11.5px;">
+            ✕
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderBottomRightSyncPill(): string {
+    const snap = this.syncCoordinator.indicatorSnapshot;
+    let dotClass = 'is-local';
+    let label = this.i18n.t('sync_pill_local_only');
+
+    if (snap.phase === 'SYNCING') {
+      dotClass = 'is-syncing';
+      label = this.i18n.t('sync_pill_syncing');
+    } else if (snap.phase === 'SYNC_ATTENTION') {
+      dotClass = 'is-error';
+      label = this.i18n.t('sync_pill_error');
+    } else if (snap.phase === 'CLOUD_OFFLINE_READY') {
+      dotClass = 'is-offline';
+      label = this.i18n.t('sync_pill_cloud_offline_armed', {
+        queued: snap.queuedMutationsCount
+      });
+    } else if (snap.phase === 'CLOUD_SYNCED') {
+      dotClass = 'is-cloud';
+      label = this.i18n.t('sync_pill_cloud_synced', {
+        detail: this.syncCoordinator.cloudService
+      });
+    }
+
+    return `
+      <button
+        type="button"
+        id="sp-sync-status-pill"
+        class="sp-sync-status-pill"
+        title="${this.escape(snap.lastError || label)}"
+        aria-label="${this.escape(label)}"
+      >
+        <span class="sp-sync-dot ${dotClass}" aria-hidden="true"></span>
+        <span>${this.escape(label)}</span>
+      </button>
+    `;
+  }
+
+  private renderConfirmDeleteSamplesModal(): string {
+    const sampleCount = this.items.filter((i) => isBuiltInSampleItem(i)).length;
+    return `
+      <div class="sp-overlay" id="sp-delete-samples-backdrop">
+        <div class="sp-modal-card" style="max-width:440px;">
+          <h2 style="margin:0;font-size:17px;">🗑 ${this.escape(
+            this.i18n.t('action_delete_example_data', { count: sampleCount })
+          )}</h2>
+          <p style="margin:0;font-size:13px;color:var(--text-secondary);line-height:1.5;">
+            ${this.escape(
+              this.i18n.t('delete_example_data_confirm', { count: sampleCount })
+            )}
+          </p>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+            <button type="button" id="sp-cancel-delete-samples-btn" class="sp-btn">
+              ${this.escape(this.i18n.t('action_cancel'))}
+            </button>
+            <button type="button" id="sp-confirm-delete-samples-btn" class="sp-btn sp-btn-danger">
+              ✕ ${this.escape(this.i18n.t('action_delete'))}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   render(): void {
     this.applyThemeToDocument();
     const activeSearchInput =
@@ -1255,6 +1788,7 @@ export class SafePocketAppShell {
 
     if (!this.crypto.isUnlocked) {
       this.root.innerHTML = `
+        ${this.renderGlobalErrorBanner()}
         ${this.renderLockScreen()}
         ${this.cameraModalState ? this.renderCameraModal() : ''}
       `;
@@ -1271,6 +1805,7 @@ export class SafePocketAppShell {
       this.selectedItemId = selectedItem.id;
     }
 
+    const sampleCount = this.items.filter((i) => isBuiltInSampleItem(i)).length;
     const expirySummary = summarizeVaultExpiries(
       this.items,
       Date.now(),
@@ -1282,19 +1817,19 @@ export class SafePocketAppShell {
       build: APP_BUILD_INFO.versionCode
     });
     this.root.innerHTML = `
+      ${this.renderGlobalErrorBanner()}
       ${this.renderClipboardBanner()}
       <div class="sp-shell ${this.mobileDetailOpen ? 'mobile-detail-open' : ''}">
         <aside class="sp-sidebar" aria-label="Vault Navigation">
           <div>
             <div class="sp-brand">
               <div class="sp-brand-left">
-                <div class="sp-logo-mark" aria-hidden="true">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1">
-                    <rect x="3" y="5" width="18" height="15" rx="3"></rect>
-                    <path d="M3 10h18"></path>
-                    <circle cx="12" cy="15" r="1.5"></circle>
-                  </svg>
-                </div>
+                <img
+                  src="/icons/icon.svg"
+                  alt=""
+                  class="sp-logo-mark-img"
+                  aria-hidden="true"
+                />
                 <h1 class="sp-brand-title">${this.escape(this.i18n.t('app_name'))}</h1>
               </div>
             </div>
@@ -1467,6 +2002,21 @@ export class SafePocketAppShell {
           </div>
 
           ${
+            sampleCount > 0
+              ? `<div class="sp-sample-banner" role="region" aria-label="Example Data">
+                   <span>🧪 ${this.escape(
+                     this.i18n.t('action_delete_example_data', {
+                       count: sampleCount
+                     })
+                   )}</span>
+                   <button type="button" id="sp-banner-delete-samples-btn" class="sp-btn sp-btn-danger" style="padding:3px 9px;min-height:26px;font-size:11px;">
+                     ✕ ${this.escape(this.i18n.t('action_delete'))}
+                   </button>
+                 </div>`
+              : ''
+          }
+
+          ${
             this.selectedNav === 'EXPIRING' &&
             expirySummary.totalAttentionCount > 0
               ? `<div class="sp-expiry-banner" role="status">
@@ -1519,12 +2069,14 @@ export class SafePocketAppShell {
         </main>
       </div>
 
+      ${this.renderBottomRightSyncPill()}
       ${this.renderMobileBottomNav()}
       ${this.editorDraft ? this.renderItemEditorModal() : ''}
       ${this.activePreview ? this.renderScanPreviewModal() : ''}
       ${this.presentationState ? this.renderPresentationModal() : ''}
       ${this.restoreModalState ? this.renderRestoreBackupModal() : ''}
       ${this.plainExportModalState ? this.renderPlainExportModal() : ''}
+      ${this.confirmDeleteSamplesOpen ? this.renderConfirmDeleteSamplesModal() : ''}
       ${this.cameraModalState ? this.renderCameraModal() : ''}
       ${this.contextMenu ? this.renderContextMenu() : ''}
     `;
@@ -1552,7 +2104,7 @@ export class SafePocketAppShell {
         <form class="sp-modal-card" id="sp-onboarding-form" style="max-width:540px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
             <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-              <div class="sp-logo-mark">🛡</div>
+              <img src="/icons/icon.svg" alt="" class="sp-logo-mark-img" aria-hidden="true" />
               <div>
                 <h1 style="margin:0;font-size:18px;">${this.escape(
                   this.i18n.t('onboarding_welcome_title')
@@ -1586,8 +2138,8 @@ export class SafePocketAppShell {
           </div>
 
           <div style="font-size:12.5px;color:var(--text-secondary);background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 12px;">
-            ✓ <strong>${this.escape(this.i18n.t('sync_provider_none'))}</strong> — ${this.escape(
-              this.i18n.t('sync_enable_cloud_desc')
+            ✓ <strong>${this.escape(this.i18n.t('storage_mode_local_only_title'))}</strong> — ${this.escape(
+              this.i18n.t('storage_mode_local_only_desc')
             )}
           </div>
 
@@ -1807,31 +2359,83 @@ export class SafePocketAppShell {
       )}</span>`;
     }
 
+    const swipeClass =
+      this.swipedItemState?.itemId === item.id
+        ? this.swipedItemState.dir === 'left'
+          ? 'is-swiped-left'
+          : 'is-swiped-right'
+        : '';
+
     return `
-      <button
-        type="button"
-        id="sp-item-row-${item.id}"
-        class="sp-item-row ${isSelected ? 'is-selected' : ''}"
-        data-select-item="${this.escape(item.id)}"
+      <div
+        class="sp-item-swipe-container ${swipeClass}"
+        data-swipe-container="${this.escape(item.id)}"
+        data-entry-context="${this.escape(item.id)}"
       >
-        <div class="sp-item-row-top" style="align-items:center;">
-          <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-            ${miniLogoHtml}
-            <div style="min-width:0;display:flex;flex-direction:column;gap:2px;">
-              <span class="sp-item-title">${item.pinned ? '📌 ' : ''}${
-                item.favorite ? '★ ' : ''
-              }${this.escape(item.title)}</span>
-              <span class="sp-item-subtitle">${this.escape(
-                item.subtitle || this.i18n.resolveCategoryName(item.category)
-              )}</span>
+        <div class="sp-swipe-actions-rail is-left">
+          <button
+            type="button"
+            class="sp-swipe-action-btn is-pin"
+            data-swipe-pin="${this.escape(item.id)}"
+            title="${this.escape(
+              this.i18n.t(item.pinned ? 'context_unpin' : 'context_pin')
+            )}"
+          >📌 ${this.escape(
+            this.i18n.t(item.pinned ? 'action_unpin' : 'action_pin')
+          )}</button>
+        </div>
+        <div class="sp-swipe-actions-rail is-right">
+          <button
+            type="button"
+            class="sp-swipe-action-btn is-edit"
+            data-swipe-edit="${this.escape(item.id)}"
+          >✎ ${this.escape(this.i18n.t('action_edit'))}</button>
+          <button
+            type="button"
+            class="sp-swipe-action-btn is-copy"
+            data-swipe-copy="${this.escape(item.id)}"
+          >📋 ${this.escape(this.i18n.t('action_copy'))}</button>
+          <button
+            type="button"
+            class="sp-swipe-action-btn is-delete"
+            data-swipe-delete="${this.escape(item.id)}"
+          >✕</button>
+        </div>
+        <button
+          type="button"
+          id="sp-item-row-${item.id}"
+          class="sp-item-row ${isSelected ? 'is-selected' : ''}"
+          data-select-item="${this.escape(item.id)}"
+        >
+          <div class="sp-item-row-top" style="align-items:center;">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+              ${miniLogoHtml}
+              <div style="min-width:0;display:flex;flex-direction:column;gap:2px;">
+                <span class="sp-item-title">${item.pinned ? '📌 ' : ''}${
+                  item.favorite ? '★ ' : ''
+                }${this.escape(item.title)}</span>
+                <span class="sp-item-subtitle">${this.escape(
+                  item.subtitle || this.i18n.resolveCategoryName(item.category)
+                )}</span>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+              <span style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);">
+                ${this.escape(resolved.networkDisplayLabel)}
+              </span>
+              <span
+                role="button"
+                tabindex="0"
+                data-entry-menu-btn="${this.escape(item.id)}"
+                style="padding:2px 5px;border-radius:6px;color:var(--text-muted);font-size:13px;line-height:1;"
+                title="Actions"
+                aria-label="Actions"
+              >⋮</span>
             </div>
           </div>
-          <span style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);flex-shrink:0;">
-            ${this.escape(resolved.networkDisplayLabel)}
-          </span>
-        </div>
-        ${badgeHtml ? `<div style="padding-left:38px;">${badgeHtml}</div>` : ''}
-      </button>
+          ${badgeHtml ? `<div style="padding-left:38px;">${badgeHtml}</div>` : ''}
+        </button>
+      </div>
     `;
   }
 
@@ -3187,155 +3791,199 @@ export class SafePocketAppShell {
         </div>
       </section>
 
-      <!-- 3. Local Encrypted Database, Firebase Cloud Sync & 1Password / CSV Portability -->
+      <!-- 3. Mutually Exclusive Storage Mode (Local Storage Only XOR Cloud Sync Only) & Portability -->
       <section class="sp-settings-section">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-          <h2>${this.escape(this.i18n.t('sync_section_title'))}</h2>
+          <h2>${this.escape(this.i18n.t('storage_mode_section_title'))}</h2>
           <span class="sp-badge ${
-            this.syncCoordinator.isCloudSyncEnabled ? 'sp-badge-ok' : ''
+            this.syncCoordinator.storageMode === 'CLOUD_SYNC'
+              ? 'sp-badge-ok'
+              : ''
           }" style="${
-            this.syncCoordinator.isCloudSyncEnabled
+            this.syncCoordinator.storageMode === 'CLOUD_SYNC'
               ? ''
               : 'background:var(--accent-tonal);color:var(--accent-primary);'
           }">
             ${
-              this.syncCoordinator.isCloudSyncEnabled
+              this.syncCoordinator.storageMode === 'CLOUD_SYNC'
                 ? this.escape(
-                    this.i18n.t('sync_status_synced', {
-                      provider: this.syncCoordinator.cloudService
+                    this.i18n.t('sync_pill_cloud_synced', {
+                      detail: this.syncCoordinator.cloudService
                     })
                   )
-                : this.escape(this.i18n.t('sync_provider_none'))
+                : this.escape(this.i18n.t('sync_pill_local_only'))
             }
           </span>
         </div>
 
-        <div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 12px;display:flex;flex-direction:column;gap:4px;">
-          <div style="font-size:12px;font-weight:700;color:var(--text-primary);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span>🗄 ${this.escape(this.i18n.t('db_local_section_title'))}</span>
-            <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--accent-primary);">
-              ✓ ${this.escape(
-                this.i18n.t('db_local_sqlite_status', {
-                  count: this.items.length
-                })
-              )}
+        <div class="sp-storage-mode-grid" role="radiogroup" aria-label="${this.escape(
+          this.i18n.t('storage_mode_section_title')
+        )}">
+          <button
+            type="button"
+            id="sp-mode-local-only-btn"
+            class="sp-storage-mode-card ${
+              this.syncCoordinator.storageMode === 'LOCAL_ONLY'
+                ? 'is-selected'
+                : ''
+            }"
+            data-storage-mode="LOCAL_ONLY"
+            role="radio"
+            aria-checked="${this.syncCoordinator.storageMode === 'LOCAL_ONLY'}"
+          >
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;">
+              <strong style="font-size:13px;">💾 ${this.escape(
+                this.i18n.t('storage_mode_local_only_title')
+              )}</strong>
+              ${
+                this.syncCoordinator.storageMode === 'LOCAL_ONLY'
+                  ? '<span class="sp-badge sp-badge-ok">✓</span>'
+                  : ''
+              }
+            </div>
+            <span style="font-size:11.5px;color:var(--text-secondary);line-height:1.45;">
+              ${this.escape(this.i18n.t('storage_mode_local_only_desc'))}
             </span>
-          </div>
-          <div style="font-size:11.5px;color:var(--text-secondary);">
-            ${this.escape(this.i18n.t('sync_auto_note'))}
-          </div>
-        </div>
+          </button>
 
-        <div style="font-size:11.5px;font-family:var(--font-mono);padding:8px 11px;border-radius:var(--radius-sm);background:var(--bg-canvas);border:1px solid var(--border-subtle);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span style="color:${
-            this.syncCoordinator.isCloudSyncEnabled &&
-            this.syncCoordinator.cloudService === 'FIREBASE'
-              ? 'var(--accent-primary)'
-              : 'var(--text-secondary)'
-          };">
-            ● ${this.escape(
-              this.syncCoordinator.isCloudSyncEnabled &&
-                this.syncCoordinator.cloudService === 'FIREBASE'
-                ? this.i18n.t('firebase_db_status_active')
-                : this.i18n.t('firebase_db_status_dormant')
-            )}
-          </span>
-          <span style="color:var(--text-muted);">
-            SQLite WASM (${this.escape(this.sqliteDb.activeBackend.toUpperCase())}) • Project: ${this.escape(
-              this.firebaseService.webConfig.projectId
-            )}
-          </span>
-        </div>
-
-        <label style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;cursor:pointer;">
-          <div>
-            <div style="font-weight:600;font-size:13.5px;">${this.escape(
-              this.i18n.t('sync_enable_cloud_toggle')
-            )}</div>
-            <div style="font-size:12px;color:var(--text-secondary);">${this.escape(
-              this.i18n.t('sync_enable_cloud_desc')
-            )}</div>
-          </div>
-          <input
-            type="checkbox"
-            id="sp-enable-cloud-sync"
-            ${this.syncCoordinator.isCloudSyncEnabled ? 'checked' : ''}
-            style="width:18px;height:18px;accent-color:var(--accent-primary);"
-          />
-        </label>
-
-        <div style="display:flex;gap:8px;flex-wrap:wrap;opacity:${
-          this.syncCoordinator.isCloudSyncEnabled ? '1' : '0.68'
-        };">
           <button
             type="button"
-            class="sp-btn ${
-              this.syncCoordinator.cloudService === 'FIREBASE'
-                ? 'sp-btn-primary'
+            id="sp-mode-cloud-only-btn"
+            class="sp-storage-mode-card ${
+              this.syncCoordinator.storageMode === 'CLOUD_SYNC'
+                ? 'is-selected'
                 : ''
             }"
-            data-cloud-service="FIREBASE"
-          >${this.escape(this.i18n.t('sync_provider_firebase'))}</button>
-          <button
-            type="button"
-            class="sp-btn ${
-              this.syncCoordinator.cloudService === 'GDRIVE_APPDATA'
-                ? 'sp-btn-primary'
-                : ''
-            }"
-            data-cloud-service="GDRIVE_APPDATA"
-          >${this.escape(this.i18n.t('sync_provider_gdrive'))}</button>
+            data-storage-mode="CLOUD_SYNC"
+            role="radio"
+            aria-checked="${this.syncCoordinator.storageMode === 'CLOUD_SYNC'}"
+          >
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;">
+              <strong style="font-size:13px;">☁ ${this.escape(
+                this.i18n.t('storage_mode_cloud_only_title')
+              )}</strong>
+              ${
+                this.syncCoordinator.storageMode === 'CLOUD_SYNC'
+                  ? '<span class="sp-badge sp-badge-ok">✓</span>'
+                  : ''
+              }
+            </div>
+            <span style="font-size:11.5px;color:var(--text-secondary);line-height:1.45;">
+              ${this.escape(this.i18n.t('storage_mode_cloud_only_desc'))}
+            </span>
+          </button>
         </div>
 
-        <!-- Zero-Knowledge Cloud Sync Account (User Creation & Sign-In) -->
-        <div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:12px;display:flex;flex-direction:column;gap:8px;">
-          <div style="font-size:12px;font-weight:600;color:var(--text-secondary);">
-            ${this.escape(this.i18n.t('cloud_auth_section_title'))}
-          </div>
+        <div style="font-size:11.5px;font-family:var(--font-mono);padding:9px 12px;border-radius:var(--radius-sm);background:var(--bg-canvas);border:1px solid var(--border-subtle);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
           ${
-            this.firebaseService.currentUser
-              ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-                   <span class="sp-badge sp-badge-ok" style="font-family:var(--font-mono);">
-                     ✓ ${this.escape(
-                       this.i18n.t('cloud_auth_signed_in_as', {
-                         email: this.firebaseService.currentUser.email,
-                         uid: this.firebaseService.currentUser.uid.slice(0, 14)
-                       })
-                     )}
-                   </span>
-                   <button type="button" id="sp-cloud-signout-btn" class="sp-btn">
-                     ${this.escape(this.i18n.t('cloud_auth_signout_btn'))}
-                   </button>
-                 </div>`
-              : `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;">
-                   <input
-                     id="sp-cloud-auth-email"
-                     type="email"
-                     class="sp-input"
-                     placeholder="${this.escape(this.i18n.t('cloud_auth_email'))}"
-                     value="${this.escape(this.cloudAuthEmailDraft)}"
-                   />
-                   <input
-                     id="sp-cloud-auth-password"
-                     type="password"
-                     class="sp-input"
-                     placeholder="${this.escape(this.i18n.t('cloud_auth_password'))}"
-                   />
-                 </div>
-                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                   <button type="button" id="sp-cloud-signup-btn" class="sp-btn sp-btn-primary">
-                     + ${this.escape(this.i18n.t('cloud_auth_create_btn'))}
-                   </button>
-                   <button type="button" id="sp-cloud-signin-btn" class="sp-btn sp-btn-tonal">
-                     ${this.escape(this.i18n.t('cloud_auth_signin_btn'))}
-                   </button>
-                 </div>`
+            this.syncCoordinator.storageMode === 'LOCAL_ONLY'
+              ? `<span style="color:var(--accent-primary);">
+                   ✓ ${this.escape(
+                     this.i18n.t('db_local_sqlite_status', {
+                       count: this.items.length
+                     })
+                   )}
+                 </span>
+                 <span style="color:var(--text-muted);">Cloud Sync: OFF (0 cloud mirror rows)</span>`
+              : `<span style="color:var(--accent-primary);">
+                   ● ${this.escape(
+                     this.syncCoordinator.cloudService === 'FIREBASE'
+                       ? this.i18n.t('firebase_db_status_active')
+                       : this.i18n.t('sync_provider_gdrive')
+                   )} • Auto-Offline Ready (${
+                     this.syncCoordinator.indicatorSnapshot.queuedMutationsCount
+                   } queued)
+                 </span>
+                 <span style="color:var(--text-muted);">
+                   Standalone Local DB: Purged (0 rows) • Project: ${this.escape(
+                     this.firebaseService.webConfig.projectId
+                   )}
+                 </span>`
           }
         </div>
 
         ${
-          this.syncCoordinator.isCloudSyncEnabled
+          this.syncCoordinator.storageMode === 'CLOUD_SYNC'
             ? `
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button
+                type="button"
+                class="sp-btn ${
+                  this.syncCoordinator.cloudService === 'FIREBASE'
+                    ? 'sp-btn-primary'
+                    : ''
+                }"
+                data-cloud-service="FIREBASE"
+              >${this.escape(this.i18n.t('sync_provider_firebase'))}</button>
+              <button
+                type="button"
+                class="sp-btn ${
+                  this.syncCoordinator.cloudService === 'GDRIVE_APPDATA'
+                    ? 'sp-btn-primary'
+                    : ''
+                }"
+                data-cloud-service="GDRIVE_APPDATA"
+              >${this.escape(this.i18n.t('sync_provider_gdrive'))}</button>
+            </div>
+
+            <!-- Zero-Knowledge Cloud Sync Account (User Creation & Sign-In) -->
+            <div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:12px;display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:12px;font-weight:600;color:var(--text-secondary);">
+                ${this.escape(this.i18n.t('cloud_auth_section_title'))}
+              </div>
+              ${
+                this.firebaseService.currentUser
+                  ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                       <span class="sp-badge sp-badge-ok" style="font-family:var(--font-mono);">
+                         ✓ ${this.escape(
+                           this.i18n.t('cloud_auth_signed_in_as', {
+                             email: this.firebaseService.currentUser.email,
+                             uid: this.firebaseService.currentUser.uid.slice(
+                               0,
+                               14
+                             )
+                           })
+                         )}
+                       </span>
+                       <button type="button" id="sp-cloud-signout-btn" class="sp-btn">
+                         ${this.escape(this.i18n.t('cloud_auth_signout_btn'))}
+                       </button>
+                     </div>`
+                  : `<div style="font-size:11.5px;color:var(--text-secondary);">
+                       ${this.escape(
+                         this.i18n.t('storage_mode_cloud_auth_required')
+                       )}
+                     </div>
+                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;">
+                       <input
+                         id="sp-cloud-auth-email"
+                         type="email"
+                         class="sp-input"
+                         placeholder="${this.escape(
+                           this.i18n.t('cloud_auth_email')
+                         )}"
+                         value="${this.escape(this.cloudAuthEmailDraft)}"
+                       />
+                       <input
+                         id="sp-cloud-auth-password"
+                         type="password"
+                         class="sp-input"
+                         placeholder="${this.escape(
+                           this.i18n.t('cloud_auth_password')
+                         )}"
+                       />
+                     </div>
+                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                       <button type="button" id="sp-cloud-signup-btn" class="sp-btn sp-btn-primary">
+                         + ${this.escape(this.i18n.t('cloud_auth_create_btn'))}
+                       </button>
+                       <button type="button" id="sp-cloud-signin-btn" class="sp-btn sp-btn-tonal">
+                         ${this.escape(this.i18n.t('cloud_auth_signin_btn'))}
+                       </button>
+                     </div>`
+              }
+            </div>
+
             <div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:12px;display:flex;flex-direction:column;gap:8px;">
               <div style="font-size:12px;font-weight:600;color:var(--text-secondary);">
                 ${this.escape(this.i18n.t('cloud_config_title'))}
@@ -3379,38 +4027,34 @@ export class SafePocketAppShell {
                        id="sp-cloud-bearer-token"
                        type="password"
                        class="sp-input"
-                       placeholder="${this.escape(this.i18n.t('cloud_bearer_token'))}"
-                       value="${this.escape(this.liveCloudConfig.bearerToken ?? '')}"
+                       placeholder="${this.escape(
+                         this.i18n.t('cloud_bearer_token')
+                       )}"
+                       value="${this.escape(
+                         this.liveCloudConfig.bearerToken ?? ''
+                       )}"
                      />`
               }
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <span style="font-size:12.5px;color:var(--text-secondary);">
+                ${this.escape(
+                  this.i18n.t('sync_status_synced', {
+                    provider: this.syncCoordinator.cloudService
+                  })
+                )} ${
+                  this.lastSyncedCount > 0 || this.lastPulledCount > 0
+                    ? `(↑${this.lastSyncedCount} pushed • ↓${this.lastPulledCount} pulled)`
+                    : ''
+                }
+              </span>
+              <button type="button" id="sp-sync-now-btn" class="sp-btn sp-btn-tonal">
+                ⇄ ${this.escape(this.i18n.t('sync_now'))}
+              </button>
             </div>`
             : ''
         }
-
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-          <span style="font-size:12.5px;color:var(--text-secondary);">
-            ${
-              !this.syncCoordinator.isCloudSyncEnabled
-                ? this.escape(this.i18n.t('sync_status_local'))
-                : `${this.escape(
-                    this.i18n.t('sync_status_synced', {
-                      provider: this.syncCoordinator.cloudService
-                    })
-                  )} ${
-                    this.lastSyncedCount > 0 || this.lastPulledCount > 0
-                      ? `(↑${this.lastSyncedCount} pushed • ↓${this.lastPulledCount} pulled)`
-                      : ''
-                  }`
-            }
-          </span>
-          ${
-            this.syncCoordinator.isCloudSyncEnabled
-              ? `<button type="button" id="sp-sync-now-btn" class="sp-btn sp-btn-tonal">
-                   ⇄ ${this.escape(this.i18n.t('sync_now'))}
-                 </button>`
-              : ''
-          }
-        </div>
 
         <div style="border-top:1px solid var(--border-subtle);padding-top:12px;display:flex;flex-direction:column;gap:10px;">
           <div style="font-size:12.5px;font-weight:700;color:var(--text-primary);">
@@ -3425,6 +4069,20 @@ export class SafePocketAppShell {
               ⬆ ${this.escape(this.i18n.t('backup_restore_encrypted'))}
               <input type="file" id="sp-restore-safepocket" accept=".safepocket,application/json" style="display:none;" />
             </label>
+            <button
+              type="button"
+              id="sp-delete-all-samples-btn"
+              class="sp-btn sp-btn-danger"
+              ${
+                this.items.some((i) => isBuiltInSampleItem(i)) ? '' : 'disabled'
+              }
+            >
+              🗑 ${this.escape(
+                this.i18n.t('action_delete_example_data', {
+                  count: this.items.filter((i) => isBuiltInSampleItem(i)).length
+                })
+              )}
+            </button>
           </div>
 
           <label style="display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer;">
@@ -3587,6 +4245,40 @@ export class SafePocketAppShell {
               ⬇ ${this.escape(this.i18n.t('onboarding_download_emergency_kit'))}
             </button>
           </div>
+        </div>
+      </section>
+
+      <!-- 5. Privacy-Scrubbed Diagnostics & Error Log -->
+      <section class="sp-settings-section" id="sp-diagnostics-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <h2>${this.escape(this.i18n.t('err_diagnostics_title'))}</h2>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" id="sp-copy-diagnostics-btn" class="sp-btn sp-btn-tonal" style="min-height:28px;padding:4px 10px;font-size:11.5px;">
+              📋 ${this.escape(this.i18n.t('action_copy'))}
+            </button>
+            <button type="button" id="sp-clear-diagnostics-btn" class="sp-btn" style="min-height:28px;padding:4px 10px;font-size:11.5px;">
+              ${this.escape(this.i18n.t('err_clear_log'))}
+            </button>
+          </div>
+        </div>
+        <div class="sp-diagnostics-log" role="log">
+          ${
+            this.diagnostics.getEntries().length === 0
+              ? this.escape(this.i18n.t('err_diagnostics_empty'))
+              : this.diagnostics
+                  .getEntries()
+                  .map(
+                    (e) =>
+                      `<div>[${this.escape(
+                        e.timestampIso.slice(11, 19)
+                      )}] <strong>${this.escape(e.level)}</strong> (${this.escape(
+                        e.category
+                      )}) ${this.escape(e.operation)}: ${this.escape(
+                        e.scrubbedDetail
+                      )}</div>`
+                  )
+                  .join('')
+          }
         </div>
       </section>
     `;
@@ -3999,6 +4691,25 @@ export class SafePocketAppShell {
               : ''
           }
 
+          ${
+            this.lastAutofillNotice
+              ? `<div class="sp-badge sp-badge-ok" style="padding:7px 11px;border-radius:var(--radius-sm);font-size:11.5px;">
+                   ✨ ${this.escape(this.lastAutofillNotice)}
+                 </div>`
+              : ''
+          }
+
+          <datalist id="sp-institution-datalist">
+            ${suggestInstitutions('')
+              .map(
+                (inst) =>
+                  `<option value="${this.escape(inst.displayName)}">${this.escape(
+                    inst.httpsUrl
+                  )}</option>`
+              )
+              .join('')}
+          </datalist>
+
           ${templateFields
             .map((tf) => {
               const val = draft.standardFieldValues[tf.key] ?? '';
@@ -4015,12 +4726,173 @@ export class SafePocketAppShell {
                 validationHint = `<span style="font-family:var(--font-mono);font-size:11px;margin-left:8px;color:${
                   ibanOk ? 'var(--accent-primary)' : '#d9534f'
                 };">${ibanOk ? '✓ ISO-13616 Mod-97 OK' : '⚠ Invalid IBAN'}</span>`;
+              } else if (tf.key === 'field_bic' && val.trim().length > 0) {
+                const bicRes = formatBicSwift(val);
+                validationHint = `<span style="font-family:var(--font-mono);font-size:11px;margin-left:8px;color:${
+                  bicRes.isValidFormat ? 'var(--accent-primary)' : '#d9534f'
+                };">${bicRes.isValidFormat ? '✓ SWIFT/BIC OK' : '⚠ Check BIC'}</span>`;
               }
+
+              const dropdownOptions = dropdownOptionsForField(
+                tf.key,
+                draft.category,
+                this.i18n
+              );
+              const isInstitutionField =
+                tf.key === 'field_issuing_bank' ||
+                tf.key === 'field_insurer_name' ||
+                tf.key === 'field_organization';
+
+              if (
+                dropdownOptions &&
+                dropdownOptions.length > 0 &&
+                !this.customDropdownOpenKeys.has(tf.key)
+              ) {
+                const hasExactMatch =
+                  !val.trim() ||
+                  dropdownOptions.some((opt) => opt.value === val);
+                return `
+                  <label style="font-size:12px;color:var(--text-secondary);">
+                    <span>${this.escape(
+                      this.i18n.resolveFieldLabel(tf.key, false, draft.category)
+                    )}</span>${validationHint}
+                    <select
+                      class="sp-select"
+                      data-smart-dropdown="${tf.key}"
+                      style="margin-top:4px;"
+                    >
+                      <option value="" ${!val.trim() ? 'selected' : ''}>— ${this.escape(
+                        tf.placeholder
+                      )} —</option>
+                      ${dropdownOptions
+                        .map(
+                          (opt) =>
+                            `<option value="${this.escape(opt.value)}" ${
+                              val === opt.value ? 'selected' : ''
+                            }>${this.escape(opt.label)}</option>`
+                        )
+                        .join('')}
+                      ${
+                        !hasExactMatch && val.trim()
+                          ? `<option value="${this.escape(val)}" selected>${this.escape(
+                              val
+                            )}</option>`
+                          : ''
+                      }
+                      <option value="__custom__">✎ ${this.escape(
+                        this.i18n.t('option_custom_value')
+                      )}</option>
+                    </select>
+                  </label>
+                `;
+              }
+
+              if (tf.valueType === 'PHONE') {
+                const fallbackDial = defaultDialCodeForLocale(
+                  this.i18n.activeLocale
+                );
+                const parsedPhone = extractDialCodeAndLocalPhone(
+                  val,
+                  this.phoneDialCodes[tf.key] ?? fallbackDial
+                );
+                const activeDial =
+                  this.phoneDialCodes[tf.key] ?? parsedPhone.dialCode;
+                return `
+                  <label style="font-size:12px;color:var(--text-secondary);">
+                    <span>${this.escape(
+                      this.i18n.resolveFieldLabel(tf.key, false, draft.category)
+                    )}</span>
+                    <div class="sp-smart-phone-row" style="margin-top:4px;">
+                      <select
+                        class="sp-select"
+                        data-phone-dial="${tf.key}"
+                        aria-label="${this.escape(this.i18n.t('phone_country_prefix'))}"
+                      >
+                        ${COUNTRY_DIAL_CODES.map(
+                          (c) =>
+                            `<option value="${this.escape(c.dialCode)}" ${
+                              c.dialCode === activeDial ? 'selected' : ''
+                            }>${this.escape(c.flag)} ${this.escape(
+                              c.label
+                            )}</option>`
+                        ).join('')}
+                      </select>
+                      <input
+                        class="sp-input"
+                        data-std-field="${tf.key}"
+                        data-std-type="${tf.valueType}"
+                        value="${this.escape(val)}"
+                        placeholder="${this.escape(tf.placeholder)}"
+                      />
+                    </div>
+                  </label>
+                `;
+              }
+
+              if (tf.key === 'field_institution_domain') {
+                const wv = this.websiteVerification;
+                let statusHtml = '';
+                if (wv.status === 'checking') {
+                  statusHtml = `<span class="sp-website-status is-checking">⏳ ${this.escape(
+                    this.i18n.t('website_status_checking')
+                  )}</span>`;
+                } else if (wv.status === 'reachable') {
+                  statusHtml = `<span class="sp-website-status is-ok">✓ ${this.escape(
+                    this.i18n.t('website_status_reachable', {
+                      host: wv.hostname || wv.normalizedUrl
+                    })
+                  )}</span>`;
+                } else if (wv.status === 'unreachable') {
+                  statusHtml = `<span class="sp-website-status is-warn">⚠ ${this.escape(
+                    this.i18n.t('website_status_unreachable', {
+                      host: wv.hostname || wv.normalizedUrl
+                    })
+                  )}</span>`;
+                }
+                return `
+                  <label style="font-size:12px;color:var(--text-secondary);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+                      <span>${this.escape(
+                        this.i18n.resolveFieldLabel(
+                          tf.key,
+                          false,
+                          draft.category
+                        )
+                      )}</span>
+                      ${statusHtml}
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+                      <input
+                        class="sp-input"
+                        data-std-field="${tf.key}"
+                        data-std-type="${tf.valueType}"
+                        value="${this.escape(val)}"
+                        placeholder="https://${this.escape(tf.placeholder)}"
+                        style="flex:1;"
+                      />
+                      <button
+                        type="button"
+                        id="sp-verify-website-btn"
+                        class="sp-btn sp-btn-tonal"
+                        style="padding:6px 10px;white-space:nowrap;"
+                      >🌐 HTTPS</button>
+                    </div>
+                  </label>
+                `;
+              }
+
               return `
                 <label style="font-size:12px;color:var(--text-secondary);">
-                  <span>${this.escape(
-                    this.i18n.resolveFieldLabel(tf.key, false, draft.category)
-                  )}</span>${validationHint}
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                    <span>${this.escape(
+                      this.i18n.resolveFieldLabel(tf.key, false, draft.category)
+                    )}${validationHint}</span>
+                    ${
+                      dropdownOptions && this.customDropdownOpenKeys.has(tf.key)
+                        ? `<button type="button" class="sp-btn" data-reset-dropdown="${tf.key}" style="min-height:22px;padding:1px 7px;font-size:10.5px;">▾ Presets</button>`
+                        : ''
+                    }
+                  </div>
                   ${
                     tf.valueType === 'MARKDOWN' ||
                     tf.valueType === 'MULTILINE_ADDRESS'
@@ -4031,7 +4903,11 @@ export class SafePocketAppShell {
                         }" placeholder="${this.escape(
                           tf.placeholder
                         )}" style="margin-top:4px;">${this.escape(val)}</textarea>`
-                      : `<input class="sp-input" data-std-field="${tf.key}" data-std-type="${tf.valueType}" value="${this.escape(
+                      : `<input class="sp-input" data-std-field="${tf.key}" data-std-type="${tf.valueType}" ${
+                          isInstitutionField
+                            ? 'list="sp-institution-datalist"'
+                            : ''
+                        } value="${this.escape(
                           val
                         )}" placeholder="${this.escape(
                           tf.placeholder
@@ -4589,13 +5465,61 @@ export class SafePocketAppShell {
 
   private renderContextMenu(): string {
     if (!this.contextMenu) return '';
+    const leftPx = Math.max(8, Math.min(this.contextMenu.x, window.innerWidth - 252));
+    const topPx = Math.max(
+      8,
+      Math.min(
+        this.contextMenu.y,
+        window.innerHeight - (this.contextMenu.kind === 'entry' ? 256 : 120)
+      )
+    );
+
+    if (this.contextMenu.kind === 'entry') {
+      const target = this.items.find((i) => i.id === this.contextMenu?.itemId);
+      const primary = target ? getPrimaryCopyableField(target) : null;
+      return `
+        <div
+          class="sp-context-menu"
+          role="menu"
+          style="left:${leftPx}px;top:${topPx}px;"
+        >
+          ${
+            primary
+              ? `<button type="button" class="sp-context-item" id="sp-ctx-copy-primary">
+                   📋 ${this.escape(this.i18n.t('context_copy_primary'))}
+                 </button>`
+              : ''
+          }
+          <button type="button" class="sp-context-item" id="sp-ctx-edit">
+            ✎ ${this.escape(this.i18n.t('context_edit'))}
+          </button>
+          <button type="button" class="sp-context-item" id="sp-ctx-pin">
+            📌 ${this.escape(
+              this.i18n.t(target?.pinned ? 'context_unpin' : 'context_pin')
+            )}
+          </button>
+          <button type="button" class="sp-context-item" id="sp-ctx-fav">
+            ${target?.favorite ? '★' : '☆'} ${this.escape(
+              this.i18n.t(
+                target?.favorite ? 'context_unfavorite' : 'context_favorite'
+              )
+            )}
+          </button>
+          <button type="button" class="sp-context-item" id="sp-ctx-duplicate">
+            ⧉ ${this.escape(this.i18n.t('context_duplicate'))}
+          </button>
+          <button type="button" class="sp-context-item" id="sp-ctx-delete" style="color:#d9534f;">
+            ✕ ${this.escape(this.i18n.t('context_delete'))}
+          </button>
+        </div>
+      `;
+    }
+
     return `
       <div
         class="sp-context-menu"
-        style="left:${Math.min(this.contextMenu.x, window.innerWidth - 240)}px;top:${Math.min(
-          this.contextMenu.y,
-          window.innerHeight - 140
-        )}px;"
+        role="menu"
+        style="left:${leftPx}px;top:${topPx}px;"
       >
         <button type="button" class="sp-context-item" id="sp-ctx-quick-copy">
           📋 ${this.escape(
@@ -4616,7 +5540,7 @@ export class SafePocketAppShell {
         <form class="sp-modal-card" id="sp-unlock-form">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
             <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-              <div class="sp-logo-mark">🔒</div>
+              <img src="/icons/icon.svg" alt="" class="sp-logo-mark-img" aria-hidden="true" />
               <div>
                 <h1 style="margin:0;font-size:18px;">${this.escape(
                   this.i18n.t('app_name')
@@ -4743,6 +5667,13 @@ export class SafePocketAppShell {
             false
           );
         }
+      });
+
+    this.root
+      .querySelector('#sp-dismiss-error-banner')
+      ?.addEventListener('click', () => {
+        this.activeErrorBanner = null;
+        this.render();
       });
 
     this.wireCameraModalEvents();
@@ -4917,6 +5848,76 @@ export class SafePocketAppShell {
   private wireShellEvents(): void {
     this.wireCameraModalEvents();
 
+    // Global error banner & bottom-right sync pill
+    this.root
+      .querySelector('#sp-dismiss-error-banner')
+      ?.addEventListener('click', () => {
+        this.activeErrorBanner = null;
+        this.render();
+      });
+    this.root
+      .querySelector('#sp-error-open-diagnostics')
+      ?.addEventListener('click', () => {
+        this.activeErrorBanner = null;
+        this.selectedNav = 'SETTINGS';
+        this.mobileDetailOpen = true;
+        this.render();
+        this.root
+          .querySelector('#sp-diagnostics-section')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+
+    this.root
+      .querySelector('#sp-sync-status-pill')
+      ?.addEventListener('click', () => {
+        if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
+          if (this.selectedNav === 'SETTINGS') {
+            void this.runAutomaticCloudReconcile(true);
+          } else {
+            this.selectedNav = 'SETTINGS';
+            this.mobileDetailOpen = true;
+            this.render();
+          }
+        } else {
+          this.selectedNav = 'SETTINGS';
+          this.mobileDetailOpen = true;
+          this.render();
+        }
+      });
+
+    // Delete All Example Data buttons & confirmation modal
+    this.root
+      .querySelector('#sp-banner-delete-samples-btn')
+      ?.addEventListener('click', () => {
+        this.confirmDeleteSamplesOpen = true;
+        this.render();
+      });
+    this.root
+      .querySelector('#sp-delete-all-samples-btn')
+      ?.addEventListener('click', () => {
+        this.confirmDeleteSamplesOpen = true;
+        this.render();
+      });
+    this.root
+      .querySelector('#sp-cancel-delete-samples-btn')
+      ?.addEventListener('click', () => {
+        this.confirmDeleteSamplesOpen = false;
+        this.render();
+      });
+    this.root
+      .querySelector('#sp-delete-samples-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+          this.confirmDeleteSamplesOpen = false;
+          this.render();
+        }
+      });
+    this.root
+      .querySelector('#sp-confirm-delete-samples-btn')
+      ?.addEventListener('click', () => {
+        void this.deleteAllExampleData();
+      });
+
     // Quick theme toggle & Settings theme + Material Design accent selectors
     this.root
       .querySelector('#sp-quick-theme-toggle')
@@ -5025,12 +6026,121 @@ export class SafePocketAppShell {
         this.render();
       });
 
-    // Item row selection
+    // Swipe gestures & swipe rail actions on vault entries
+    this.root
+      .querySelectorAll<HTMLElement>('[data-swipe-container]')
+      .forEach((wrap) => {
+        let startX: number | null = null;
+        let startY: number | null = null;
+        const itemId = wrap.dataset.swipeContainer ?? '';
+        wrap.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return;
+          startX = e.clientX;
+          startY = e.clientY;
+        });
+        wrap.addEventListener('pointerup', (e) => {
+          if (startX === null || startY === null) return;
+          const dx = e.clientX - startX;
+          const dy = Math.abs(e.clientY - startY);
+          startX = null;
+          startY = null;
+          if (Math.abs(dx) >= 44 && Math.abs(dx) > dy * 1.4 && itemId) {
+            if (dx < 0) {
+              this.swipedItemState =
+                this.swipedItemState?.itemId === itemId &&
+                this.swipedItemState.dir === 'right'
+                  ? null
+                  : { itemId, dir: 'left' };
+            } else {
+              this.swipedItemState =
+                this.swipedItemState?.itemId === itemId &&
+                this.swipedItemState.dir === 'left'
+                  ? null
+                  : { itemId, dir: 'right' };
+            }
+            this.render();
+          }
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-swipe-pin]')
+      .forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const itemId = btn.dataset.swipePin ?? '';
+          const target = this.items.find((i) => i.id === itemId);
+          this.swipedItemState = null;
+          if (!target) return;
+          target.pinned = !target.pinned;
+          target.updatedAtEpochMs = Date.now();
+          await this.persistSingleItemEncrypted(target);
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-swipe-edit]')
+      .forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const itemId = btn.dataset.swipeEdit ?? '';
+          const target = this.items.find((i) => i.id === itemId);
+          this.swipedItemState = null;
+          if (target) this.openEditItemModal(target);
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-swipe-copy]')
+      .forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const itemId = btn.dataset.swipeCopy ?? '';
+          const target = this.items.find((i) => i.id === itemId);
+          this.swipedItemState = null;
+          if (!target) return;
+          const primary = getPrimaryCopyableField(target);
+          if (primary) {
+            await this.clipboard.copyValue(
+              primary.value,
+              Boolean(primary.isSensitive)
+            );
+            if (!primary.isSensitive) {
+              this.showToast(this.i18n.t('action_copied'));
+            }
+          } else {
+            this.render();
+          }
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-swipe-delete]')
+      .forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const itemId = btn.dataset.swipeDelete ?? '';
+          this.swipedItemState = null;
+          if (itemId) {
+            void this.deleteVaultItemWithTombstone(itemId);
+          }
+        });
+      });
+
+    // Item row selection + entry right-click context menu + overflow menu button
     this.root
       .querySelectorAll<HTMLElement>('[data-select-item]')
       .forEach((row) => {
         row.addEventListener('click', () => {
-          this.selectedItemId = row.dataset.selectItem ?? null;
+          const itemId = row.dataset.selectItem ?? null;
+          if (this.swipedItemState && this.swipedItemState.itemId === itemId) {
+            this.swipedItemState = null;
+            this.render();
+            return;
+          }
+          this.swipedItemState = null;
+          this.selectedItemId = itemId;
           const selected = this.items.find((i) => i.id === this.selectedItemId);
           if (selected) {
             selected.lastAccessedAtEpochMs = Date.now();
@@ -5039,6 +6149,49 @@ export class SafePocketAppShell {
             this.selectedNav = 'ALL';
           }
           this.mobileDetailOpen = true;
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-entry-context]')
+      .forEach((entryEl) => {
+        entryEl.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const itemId = entryEl.dataset.entryContext ?? '';
+          if (!itemId) return;
+          this.contextMenu = {
+            x: e.clientX,
+            y: e.clientY,
+            kind: 'entry',
+            itemId,
+            label: '',
+            value: '',
+            isSensitive: false
+          };
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-entry-menu-btn]')
+      .forEach((menuBtn) => {
+        menuBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const itemId = menuBtn.dataset.entryMenuBtn ?? '';
+          if (!itemId) return;
+          const rect = menuBtn.getBoundingClientRect();
+          this.contextMenu = {
+            x: rect.left,
+            y: rect.bottom + 4,
+            kind: 'entry',
+            itemId,
+            label: '',
+            value: '',
+            isSensitive: false
+          };
           this.render();
         });
       });
@@ -5070,6 +6223,7 @@ export class SafePocketAppShell {
           this.contextMenu = {
             x: e.clientX,
             y: e.clientY,
+            kind: 'field',
             itemId: card.dataset.contextItem ?? '',
             label: card.dataset.contextLabel ?? '',
             value: card.dataset.contextValue ?? '',
@@ -5077,6 +6231,69 @@ export class SafePocketAppShell {
           };
           this.render();
         });
+      });
+
+    this.root
+      .querySelector('#sp-ctx-copy-primary')
+      ?.addEventListener('click', async () => {
+        if (!this.contextMenu) return;
+        const target = this.items.find((i) => i.id === this.contextMenu?.itemId);
+        this.contextMenu = null;
+        const primary = target ? getPrimaryCopyableField(target) : null;
+        if (primary) {
+          await this.clipboard.copyValue(
+            primary.value,
+            Boolean(primary.isSensitive)
+          );
+          if (!primary.isSensitive) {
+            this.showToast(this.i18n.t('action_copied'));
+          }
+        } else {
+          this.render();
+        }
+      });
+
+    this.root.querySelector('#sp-ctx-edit')?.addEventListener('click', () => {
+      if (!this.contextMenu) return;
+      const target = this.items.find((i) => i.id === this.contextMenu?.itemId);
+      this.contextMenu = null;
+      if (target) this.openEditItemModal(target);
+      else this.render();
+    });
+
+    this.root
+      .querySelector('#sp-ctx-pin')
+      ?.addEventListener('click', async () => {
+        if (!this.contextMenu) return;
+        const target = this.items.find((i) => i.id === this.contextMenu?.itemId);
+        this.contextMenu = null;
+        if (!target) return;
+        target.pinned = !target.pinned;
+        target.updatedAtEpochMs = Date.now();
+        await this.persistSingleItemEncrypted(target);
+        this.render();
+      });
+
+    this.root
+      .querySelector('#sp-ctx-fav')
+      ?.addEventListener('click', async () => {
+        if (!this.contextMenu) return;
+        const target = this.items.find((i) => i.id === this.contextMenu?.itemId);
+        this.contextMenu = null;
+        if (!target) return;
+        target.favorite = !target.favorite;
+        target.updatedAtEpochMs = Date.now();
+        await this.persistSingleItemEncrypted(target);
+        this.render();
+      });
+
+    this.root
+      .querySelector('#sp-ctx-delete')
+      ?.addEventListener('click', async () => {
+        if (!this.contextMenu) return;
+        const { itemId } = this.contextMenu;
+        this.contextMenu = null;
+        await this.deleteVaultItemWithTombstone(itemId);
       });
 
     this.root
@@ -5443,13 +6660,245 @@ export class SafePocketAppShell {
         }
       });
 
+    // Smart field dropdowns, international phone formatters, HTTPS website reachability & IBAN cross-autofill
+    this.root
+      .querySelectorAll<HTMLSelectElement>('[data-smart-dropdown]')
+      .forEach((sel) => {
+        sel.addEventListener('change', () => {
+          if (!this.editorDraft) return;
+          const key = sel.dataset.smartDropdown ?? '';
+          if (!key) return;
+          if (sel.value === '__custom__') {
+            this.syncDraftFromDom();
+            this.customDropdownOpenKeys.add(key);
+            this.render();
+          } else {
+            this.syncDraftFromDom();
+            this.editorDraft.standardFieldValues[key] = sel.value;
+            this.customDropdownOpenKeys.delete(key);
+            this.render();
+          }
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-reset-dropdown]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (!this.editorDraft) return;
+          const key = btn.dataset.resetDropdown ?? '';
+          if (!key) return;
+          this.syncDraftFromDom();
+          this.customDropdownOpenKeys.delete(key);
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLSelectElement>('[data-phone-dial]')
+      .forEach((sel) => {
+        sel.addEventListener('change', () => {
+          if (!this.editorDraft) return;
+          const key = sel.dataset.phoneDial ?? '';
+          if (!key) return;
+          this.syncDraftFromDom();
+          const nextDial = sel.value;
+          this.phoneDialCodes[key] = nextDial;
+          const curVal = this.editorDraft.standardFieldValues[key] ?? '';
+          if (curVal.trim()) {
+            const stripped = curVal.replace(/^\+\d{1,3}\s*/, '');
+            this.editorDraft.standardFieldValues[key] =
+              formatInternationalPhone(stripped, nextDial);
+          }
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLInputElement>('input[data-std-type="PHONE"]')
+      .forEach((inp) => {
+        inp.addEventListener('change', () => {
+          if (!this.editorDraft) return;
+          const key = inp.dataset.stdField ?? '';
+          if (!key) return;
+          const dial =
+            this.phoneDialCodes[key] ??
+            defaultDialCodeForLocale(this.i18n.activeLocale);
+          const formatted = formatInternationalPhone(inp.value, dial);
+          inp.value = formatted;
+          this.syncDraftFromDom();
+          this.editorDraft.standardFieldValues[key] = formatted;
+          const extracted = extractDialCodeAndLocalPhone(formatted, dial);
+          this.phoneDialCodes[key] = extracted.dialCode;
+          this.render();
+        });
+      });
+
+    const domainInput = this.root.querySelector<HTMLInputElement>(
+      'input[data-std-field="field_institution_domain"]'
+    );
+    domainInput?.addEventListener('change', () => {
+      if (!this.editorDraft) return;
+      const normalized = normalizeHttpsUrl(domainInput.value);
+      domainInput.value = normalized;
+      this.syncDraftFromDom();
+      this.editorDraft.standardFieldValues.field_institution_domain = normalized;
+      this.triggerWebsiteReachabilityCheck(normalized);
+    });
+
+    this.root
+      .querySelector('#sp-verify-website-btn')
+      ?.addEventListener('click', () => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        const raw =
+          this.editorDraft.standardFieldValues.field_institution_domain ?? '';
+        const normalized = normalizeHttpsUrl(raw);
+        this.editorDraft.standardFieldValues.field_institution_domain =
+          normalized;
+        this.triggerWebsiteReachabilityCheck(normalized);
+      });
+
     this.root
       .querySelectorAll<HTMLInputElement>(
-        '[data-std-field="field_card_number"], [data-std-field="field_iban"], [data-std-field="field_issuing_bank"], [data-std-field="field_insurer_name"], [data-std-field="field_organization"], [data-std-field="field_institution_domain"], [data-std-field="field_card_network"]'
+        'input[data-std-field="field_issuing_bank"], input[data-std-field="field_insurer_name"], input[data-std-field="field_organization"]'
       )
       .forEach((inp) => {
         inp.addEventListener('change', () => {
+          if (!this.editorDraft) return;
           this.syncDraftFromDom();
+          const typed = inp.value.trim();
+          const match = suggestInstitutions(typed).find(
+            (s) => s.displayName.toLowerCase() === typed.toLowerCase()
+          );
+          if (match) {
+            if (!this.editorDraft.standardFieldValues.field_institution_domain) {
+              this.editorDraft.standardFieldValues.field_institution_domain =
+                match.httpsUrl;
+              this.triggerWebsiteReachabilityCheck(match.httpsUrl);
+            }
+            if (
+              match.defaultBic &&
+              !this.editorDraft.standardFieldValues.field_bic &&
+              (this.editorDraft.category === 'BANK_ACCOUNT' ||
+                this.editorDraft.category === 'PAYMENT_CARD')
+            ) {
+              this.editorDraft.standardFieldValues.field_bic = match.defaultBic;
+            }
+          }
+          this.render();
+        });
+      });
+
+    const ibanInput = this.root.querySelector<HTMLInputElement>(
+      'input[data-std-field="field_iban"]'
+    );
+    ibanInput?.addEventListener('change', () => {
+      if (!this.editorDraft) return;
+      const intel = analyzeAndFormatIban(ibanInput.value);
+      ibanInput.value = intel.formattedIban;
+      this.syncDraftFromDom();
+      this.editorDraft.standardFieldValues.field_iban = intel.formattedIban;
+      if (intel.isValidChecksum) {
+        if (
+          intel.inferredBankName &&
+          !this.editorDraft.standardFieldValues.field_issuing_bank
+        ) {
+          this.editorDraft.standardFieldValues.field_issuing_bank =
+            intel.inferredBankName;
+        }
+        if (
+          intel.inferredBic &&
+          !this.editorDraft.standardFieldValues.field_bic
+        ) {
+          this.editorDraft.standardFieldValues.field_bic = intel.inferredBic;
+        }
+        if (
+          intel.routingCode &&
+          !this.editorDraft.standardFieldValues.field_routing_code
+        ) {
+          this.editorDraft.standardFieldValues.field_routing_code =
+            intel.routingCode;
+        }
+        if (
+          intel.accountNumber &&
+          !this.editorDraft.standardFieldValues.field_account_number
+        ) {
+          this.editorDraft.standardFieldValues.field_account_number =
+            intel.accountNumber;
+        }
+        if (
+          intel.inferredCurrency &&
+          !this.editorDraft.standardFieldValues.field_currency
+        ) {
+          this.editorDraft.standardFieldValues.field_currency =
+            intel.inferredCurrency;
+        }
+        if (
+          intel.inferredWebsite &&
+          !this.editorDraft.standardFieldValues.field_institution_domain
+        ) {
+          this.editorDraft.standardFieldValues.field_institution_domain =
+            intel.inferredWebsite;
+          this.triggerWebsiteReachabilityCheck(intel.inferredWebsite);
+        }
+        if (intel.inferredBankName && intel.inferredBic) {
+          this.lastAutofillNotice = this.i18n.t('smart_iban_autofilled', {
+            bank: intel.inferredBankName,
+            bic: intel.inferredBic
+          });
+        }
+      }
+      this.render();
+    });
+
+    const cardInput = this.root.querySelector<HTMLInputElement>(
+      'input[data-std-field="field_card_number"]'
+    );
+    cardInput?.addEventListener('change', () => {
+      if (!this.editorDraft) return;
+      const res = analyzeAndFormatCardNumber(cardInput.value);
+      cardInput.value = res.formattedPan;
+      this.syncDraftFromDom();
+      this.editorDraft.standardFieldValues.field_card_number = res.formattedPan;
+      if (
+        res.networkBrand &&
+        res.networkBrand !== 'Card' &&
+        !this.editorDraft.standardFieldValues.field_card_network
+      ) {
+        this.editorDraft.standardFieldValues.field_card_network =
+          res.networkBrand;
+      }
+      this.render();
+    });
+
+    const bicInput = this.root.querySelector<HTMLInputElement>(
+      'input[data-std-field="field_bic"]'
+    );
+    bicInput?.addEventListener('change', () => {
+      if (!this.editorDraft) return;
+      const res = formatBicSwift(bicInput.value);
+      bicInput.value = res.formattedBic;
+      this.syncDraftFromDom();
+      this.editorDraft.standardFieldValues.field_bic = res.formattedBic;
+      this.render();
+    });
+
+    this.root
+      .querySelectorAll<HTMLInputElement>('input[data-std-type="DATE_ISO"]')
+      .forEach((inp) => {
+        inp.addEventListener('change', () => {
+          if (!this.editorDraft) return;
+          const key = inp.dataset.stdField ?? '';
+          if (!key) return;
+          const allowYm =
+            key === 'field_valid_from' ||
+            (key === 'field_expiry_date' &&
+              this.editorDraft.category === 'PAYMENT_CARD');
+          const formatted = formatIsoDateSmart(inp.value, allowYm);
+          inp.value = formatted;
+          this.syncDraftFromDom();
+          this.editorDraft.standardFieldValues[key] = formatted;
           this.render();
         });
       });
@@ -5463,6 +6912,13 @@ export class SafePocketAppShell {
         const draft = this.editorDraft;
         const title = draft.title.trim();
         if (!title) return;
+
+        if (draft.standardFieldValues.field_institution_domain?.trim()) {
+          draft.standardFieldValues.field_institution_domain =
+            normalizeHttpsUrl(
+              draft.standardFieldValues.field_institution_domain
+            );
+        }
 
         const now = Date.now();
         const fields: VaultField[] = [];
@@ -5553,6 +7009,7 @@ export class SafePocketAppShell {
           const createdRaw: VaultItem = {
             schemaVersion: 1,
             id: `item-${now}`,
+            isSampleItem: false,
             category: draft.category,
             title,
             subtitle:
@@ -5730,14 +7187,16 @@ export class SafePocketAppShell {
         this.updater.activateAndReload();
       });
 
-    // Settings: Local Storage Default & Optional Cloud Sync controls
+    // Settings: Mutually Exclusive Storage Mode (Local Storage Only XOR Cloud Sync Only)
     this.root
-      .querySelector<HTMLInputElement>('#sp-enable-cloud-sync')
-      ?.addEventListener('change', (e) => {
-        this.syncCoordinator.setCloudSyncEnabled(
-          (e.target as HTMLInputElement).checked
-        );
-        this.render();
+      .querySelectorAll<HTMLElement>('[data-storage-mode]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const nextMode = btn.dataset.storageMode as VaultStorageMode;
+          if (nextMode === 'LOCAL_ONLY' || nextMode === 'CLOUD_SYNC') {
+            void this.switchExclusiveStorageMode(nextMode);
+          }
+        });
       });
 
     this.root
@@ -5747,6 +7206,7 @@ export class SafePocketAppShell {
           this.syncCoordinator.setPreferredCloudService(
             btn.dataset.cloudService as CloudServiceId
           );
+          void this.runAutomaticCloudReconcile(false);
           this.render();
         });
       });
@@ -5810,13 +7270,12 @@ export class SafePocketAppShell {
           this.cloudAuthEmailDraft = user.email;
           this.liveCloudConfig = this.firebaseService.toEndpointConfig();
           this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+          await this.runAutomaticCloudReconcile(true);
           this.showToast(
             `Created zero-knowledge Cloud Sync user ${user.email} (${user.mode})`
           );
         } catch (err) {
-          this.showToast(
-            err instanceof Error ? err.message : 'Cloud user creation failed'
-          );
+          this.reportAppError(err, 'cloud.signup', true);
         }
       });
 
@@ -5836,121 +7295,28 @@ export class SafePocketAppShell {
           this.cloudAuthEmailDraft = user.email;
           this.liveCloudConfig = this.firebaseService.toEndpointConfig();
           this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+          await this.runAutomaticCloudReconcile(true);
           this.showToast(`Signed in to Cloud Sync as ${user.email}`);
         } catch (err) {
-          this.showToast(
-            err instanceof Error ? err.message : 'Cloud sign-in failed'
-          );
+          this.reportAppError(err, 'cloud.signin', true);
         }
       });
 
     this.root
       .querySelector('#sp-cloud-signout-btn')
-      ?.addEventListener('click', () => {
+      ?.addEventListener('click', async () => {
         this.firebaseService.signOutCloudUser();
         this.liveCloudConfig = this.firebaseService.toEndpointConfig();
         this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
-        this.showToast('Signed out of Cloud Sync');
+        await this.switchExclusiveStorageMode('LOCAL_ONLY');
+        this.showToast('Signed out of Cloud Sync — switched to Local Storage Only');
       });
 
     this.root
       .querySelector('#sp-sync-now-btn')
       ?.addEventListener('click', async () => {
         syncLiveConfigInputs();
-        try {
-          const providerKey = `${this.syncCoordinator.cloudService}:${
-            this.firebaseService.currentUser?.uid ?? 'local-default-uid'
-          }`;
-          const sinceCursor = await this.sqliteDb.getSyncCursor(providerKey);
-          const pendingBlobs =
-            await this.sqliteDb.listPendingUnsyncedBlobs('default-vault');
-          const rows = await this.localDb.loadAllRowsIncludingTombstones();
-          const res = await this.syncCoordinator.syncBidirectionalIfEnabled(
-            'default-vault',
-            rows,
-            sinceCursor,
-            pendingBlobs
-          );
-          if (!res) return;
-
-          for (const uploadedId of Object.keys(res.uploadedBlobPaths)) {
-            await this.sqliteDb.markLocalBlobSynced(uploadedId);
-          }
-
-          for (const merged of res.mergedRows) {
-            await this.localDb.saveEncryptedRow(merged);
-          }
-          await this.sqliteDb.setSyncCursor(providerKey, res.cursorHlc);
-
-          const activeHydrated: VaultItem[] = [];
-          for (const merged of res.mergedRows) {
-            if (merged.isTombstone) continue;
-            try {
-              activeHydrated.push(await this.crypto.decryptVaultRow(merged));
-            } catch {
-              // Skip rows encrypted with a different vault key
-            }
-          }
-
-          let downloadedBlobs = 0;
-          for (const item of activeHydrated) {
-            let itemMetaUpdated = false;
-            for (const att of item.attachments) {
-              if (res.uploadedBlobPaths[att.id]) {
-                att.blobSynced = true;
-                att.storageObjectPath = res.uploadedBlobPaths[att.id];
-                itemMetaUpdated = true;
-              }
-              const localOpfs = await this.opfsStore.readEncryptedBlob(att.id);
-              const localSql = localOpfs
-                ? null
-                : await this.sqliteDb.loadLocalEncryptedBlob(att.id);
-              if (!localOpfs && !localSql && !att.ciphertextBase64) {
-                const remoteBlob =
-                  await this.syncCoordinator.downloadMissingAttachmentBlobIfEnabled(
-                    'default-vault',
-                    att.id,
-                    att.sha256Hex
-                  );
-                if (remoteBlob) {
-                  await this.opfsStore.writeEncryptedBlob(att.id, remoteBlob);
-                  await this.sqliteDb.saveLocalEncryptedBlob(
-                    'default-vault',
-                    att.id,
-                    remoteBlob,
-                    att.sha256Hex,
-                    true
-                  );
-                  att.blobSynced = true;
-                  itemMetaUpdated = true;
-                  downloadedBlobs += 1;
-                }
-              }
-            }
-            if (itemMetaUpdated) {
-              await this.persistSingleItemEncrypted(item);
-            }
-          }
-
-          if (
-            activeHydrated.length > 0 ||
-            res.mergedRows.some((r) => r.isTombstone)
-          ) {
-            this.items = activeHydrated;
-            this.selectedItemId = this.selectedItemId ?? this.items[0]?.id ?? null;
-          }
-
-          this.lastSyncedCount = res.pushedCount;
-          this.lastPulledCount = res.pulledCount;
-          this.render();
-          this.showToast(
-            `Two-Way Sync (${res.service}): ↑${res.pushedCount} items • ↓${res.pulledCount} items • 📎↑${res.uploadedBlobCount}/↓${downloadedBlobs} .enc blobs`
-          );
-        } catch (err) {
-          this.showToast(
-            err instanceof Error ? err.message : 'Cloud sync error'
-          );
-        }
+        await this.runAutomaticCloudReconcile(true);
       });
 
     this.root
@@ -6395,6 +7761,36 @@ export class SafePocketAppShell {
       ?.addEventListener('click', () => {
         this.downloadEmergencyKit();
       });
+
+    this.root
+      .querySelector('#sp-copy-diagnostics-btn')
+      ?.addEventListener('click', async () => {
+        await this.clipboard.copyValue(this.diagnostics.formatReport(), false);
+        this.showToast(this.i18n.t('action_copied'));
+      });
+
+    this.root
+      .querySelector('#sp-clear-diagnostics-btn')
+      ?.addEventListener('click', () => {
+        this.diagnostics.clear();
+        this.render();
+      });
+
+    if (this.contextMenu) {
+      this.root.addEventListener(
+        'click',
+        (e) => {
+          const targetEl = e.target as HTMLElement | null;
+          if (targetEl?.closest('.sp-context-menu')) return;
+          if (targetEl?.closest('[data-entry-menu-btn]')) return;
+          if (this.contextMenu) {
+            this.contextMenu = null;
+            this.render();
+          }
+        },
+        { once: true }
+      );
+    }
   }
 
   private async encryptAndAttachPayloads(

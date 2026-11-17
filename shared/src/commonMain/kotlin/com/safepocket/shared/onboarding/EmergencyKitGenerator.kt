@@ -52,7 +52,7 @@ object EmergencyKitGenerator {
         <html lang="en">
         <head>
           <meta charset="UTF-8" />
-          <title>SafePocket v0.2 Emergency Kit — $vaultId</title>
+          <title>SafePocket v0.3 Emergency Kit — $vaultId</title>
           <style>
             @page { size: A4 portrait; margin: 14mm; }
             body { font-family: system-ui, -apple-system, sans-serif; color: #111827; max-width: 700px; margin: 28px auto; padding: 24px; border: 2px solid #111827; border-radius: 14px; }
@@ -63,7 +63,7 @@ object EmergencyKitGenerator {
           </style>
         </head>
         <body>
-          <h1>SafePocket v0.2 — Zero-Knowledge Emergency Kit</h1>
+          <h1>SafePocket v0.3 — Zero-Knowledge Emergency Kit</h1>
           <p>Store this sheet in a physical safe. SafePocket operates with strict zero-knowledge local encryption; neither SafePocket nor any cloud provider can recover your Secret Key or Master Password.</p>
           <h3>1. Local Secret Key (Required on New Devices)</h3>
           <div class="mono">$secretKeyFormatted</div>
@@ -72,7 +72,7 @@ object EmergencyKitGenerator {
           <div class="write-box"></div>
           $hintSection
           <div class="meta">
-            Vault ID: $vaultId • Created: $createdAtIso • SafePocket v0.2 (Build 4)<br/>
+            Vault ID: $vaultId • Created: $createdAtIso • SafePocket v0.3 (Build 5)<br/>
             KDF: Argon2id (${kdfParams.memoryKiB} KiB, t=${kdfParams.iterations}, p=${kdfParams.parallelism}) → HKDF-SHA256 → AES-256-GCM
           </div>
         </body>

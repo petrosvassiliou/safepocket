@@ -585,7 +585,7 @@ Home Insurance Policy: ALLIANZ-DE-9940218
         {
           id: 'db-dom',
           labelKey: 'field_institution_domain',
-          value: 'deutsche-bank.de',
+          value: 'https://www.deutsche-bank.de',
           valueType: 'TEXT'
         },
         {
@@ -639,7 +639,62 @@ Home Insurance Policy: ALLIANZ-DE-9940218
     }
   ];
 
-  return items.map((item) => applyAutoBranding(item));
+  return items.map((item) => ({
+    ...applyAutoBranding(item),
+    isSampleItem: true
+  }));
+}
+
+export function isBuiltInSampleItem(
+  item: Pick<VaultItem, 'id' | 'isSampleItem'>,
+  knownSampleIds?: ReadonlySet<string>
+): boolean {
+  if (item.isSampleItem) return true;
+  if (knownSampleIds) return knownSampleIds.has(item.id);
+  return (
+    item.id === 'item-card-db-visa' ||
+    item.id === 'item-card-n26-metal' ||
+    item.id === 'item-card-alpine-metal' ||
+    item.id === 'item-bank-ing-giro' ||
+    item.id === 'item-bank-sepa-main' ||
+    item.id === 'item-ins-tk-egk' ||
+    item.id === 'item-ins-ehic-eu' ||
+    item.id === 'item-mem-bahncard' ||
+    item.id === 'item-mem-adac-plus' ||
+    item.id === 'item-identity-primary' ||
+    item.id === 'item-id-clara' ||
+    item.id === 'item-id-eu-citizen' ||
+    item.id === 'item-doc-hellenic-passport' ||
+    item.id === 'item-doc-cie-italy' ||
+    item.id === 'item-doc-passport-de' ||
+    item.id === 'item-doc-passport-eu' ||
+    item.id === 'item-note-home-safe' ||
+    item.id === 'item-note-emergency' ||
+    item.id === 'item-note-emergency-kit' ||
+    item.id === 'item-note-vault-codes'
+  );
+}
+
+export function getPrimaryCopyableField(
+  item: VaultItem
+): VaultItem['fields'][number] | null {
+  const priorityByCategory: Record<VaultItem['category'], string[]> = {
+    PAYMENT_CARD: ['field_card_number', 'field_iban', 'field_cvv'],
+    BANK_ACCOUNT: ['field_iban', 'field_account_number', 'field_bic'],
+    INSURANCE_CARD: ['field_insurance_number', 'field_insurer_id'],
+    MEMBERSHIP_CARD: ['field_membership_id', 'field_barcode_value'],
+    IDENTITY: ['field_tax_id', 'field_ssn', 'field_email', 'field_phone'],
+    OFFICIAL_DOCUMENT: ['field_document_number', 'field_pin'],
+    SECURE_NOTE: ['field_markdown_note', 'field_pin', 'field_document_number']
+  };
+  const keys = priorityByCategory[item.category] ?? [];
+  for (const key of keys) {
+    const found = item.fields.find(
+      (f) => !f.isCustomLabel && f.labelKey === key && f.value.trim().length > 0
+    );
+    if (found) return found;
+  }
+  return item.fields.find((f) => f.value.trim().length > 0) ?? null;
 }
 
 export function buildSampleSvgScanBytes(params: {

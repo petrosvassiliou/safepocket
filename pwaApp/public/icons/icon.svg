@@ -1,7 +1,47 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <rect width="128" height="128" rx="30" fill="#12181B"/>
-  <rect x="22" y="28" width="84" height="72" rx="16" fill="#1D2A30" stroke="#5ED4B7" stroke-width="4"/>
-  <path d="M22 50H106" stroke="#5ED4B7" stroke-width="4"/>
-  <circle cx="64" cy="73" r="10" fill="#5ED4B7"/>
-  <rect x="61" y="78" width="6" height="11" rx="3" fill="#5ED4B7"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="16" y1="16" x2="240" y2="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#091524"/>
+      <stop offset="55%" stop-color="#0D2234"/>
+      <stop offset="100%" stop-color="#0E3839"/>
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="96" y1="44" x2="196" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5EEAD4"/>
+      <stop offset="55%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+    <linearGradient id="shieldRim" x1="68" y1="84" x2="188" y2="214" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F1F5F9"/>
+      <stop offset="50%" stop-color="#94A3B8"/>
+      <stop offset="100%" stop-color="#2DD4BF"/>
+    </linearGradient>
+    <linearGradient id="shieldFace" x1="82" y1="100" x2="174" y2="202" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E2E8F0"/>
+      <stop offset="48%" stop-color="#CBD5E1"/>
+      <stop offset="52%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <radialGradient id="dialCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F8FAFC"/>
+      <stop offset="70%" stop-color="#94A3B8"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </radialGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="url(#bgGrad)"/>
+  <!-- Back shield pocket shadow -->
+  <path d="M74 92C74 86.5 78.5 82 84 82H172C177.5 82 182 86.5 182 92V134C182 172.5 158.6 199.4 128 212C97.4 199.4 74 172.5 74 134V92Z" fill="#07131E" stroke="url(#shieldRim)" stroke-width="8"/>
+  <!-- Angled luminous emerald smart card -->
+  <g transform="rotate(-42 138 92)">
+    <rect x="92" y="56" width="96" height="62" rx="11" fill="url(#cardGrad)" stroke="#A7F3D0" stroke-width="2"/>
+    <rect x="92" y="68" width="96" height="12" fill="#062825" fill-opacity="0.72"/>
+    <circle cx="166" cy="100" r="8" fill="#D1FAE5" fill-opacity="0.85"/>
+    <circle cx="157" cy="100" r="8" fill="#064E3B" fill-opacity="0.65"/>
+  </g>
+  <!-- Sculpted front pocket shield -->
+  <path d="M84 108C101 108 115 103.5 128 95C141 103.5 155 108 172 108V135C172 166.2 152.6 189.8 128 201C103.4 189.8 84 166.2 84 135V108Z" fill="url(#shieldFace)" stroke="#F8FAFC" stroke-width="3"/>
+  <!-- Precision rotary vault lock dial -->
+  <circle cx="128" cy="147" r="24" fill="#0F172A" stroke="#E2E8F0" stroke-width="3"/>
+  <circle cx="128" cy="147" r="17" fill="url(#dialCore)" stroke="#34D399" stroke-width="2"/>
+  <circle cx="128" cy="147" r="8" fill="#F8FAFC"/>
+  <path d="M128 126V130M128 164V168M107 147H111M145 147H149" stroke="#99F6E4" stroke-width="2.2" stroke-linecap="round"/>
 </svg>

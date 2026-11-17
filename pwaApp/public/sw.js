@@ -1,9 +1,11 @@
-const CACHE_VERSION = 'safepocket-offline-v0.2.0';
+const CACHE_VERSION = 'safepocket-offline-v0.3.0';
 const APP_SHELL_ASSETS = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
   '/icons/icon.svg',
+  '/icons/icon-192.png',
+  '/icons/favicon-64.png',
   '/sql-wasm.wasm',
   '/sql-wasm-browser.wasm'
 ];

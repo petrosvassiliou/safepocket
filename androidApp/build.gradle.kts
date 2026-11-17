@@ -9,10 +9,10 @@ val targetAndroidSdk = (System.getenv("SAFEPOCKET_COMPILE_SDK") ?: "35").toInt()
 val minAndroidSdk = (System.getenv("SAFEPOCKET_MIN_SDK") ?: "29").toInt()
 val releaseVersionName = (project.findProperty("versionName") as String?)
     ?: System.getenv("SAFEPOCKET_RELEASE_VERSION")?.removePrefix("v")
-    ?: "0.2"
+    ?: "0.3"
 val releaseVersionCode = ((project.findProperty("versionCode") as String?)
     ?: System.getenv("SAFEPOCKET_VERSION_CODE")
-    ?: "4").toInt()
+    ?: "5").toInt()
 val configuredKeystoreFile = file(System.getenv("SAFEPOCKET_KEYSTORE_PATH") ?: "keystore/release.jks")
 
 android {

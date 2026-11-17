@@ -1,6 +1,10 @@
 import { constantTimeHexEquals, sha256Hex } from '../crypto/vaultCrypto';
 import { SqliteWasmVaultDb } from '../db/sqliteWasmVaultDb';
-import type { EncryptedBlobEnvelope, EncryptedVaultRow } from '../types';
+import type {
+  EncryptedBlobEnvelope,
+  EncryptedVaultRow,
+  VaultStorageMode
+} from '../types';
 import {
   assertStrictZeroKnowledgeBlobUpload,
   downloadEncryptedBlobFromFirebaseStorageRest,
@@ -17,7 +21,24 @@ import {
 export type CloudServiceId = 'FIREBASE' | 'GDRIVE_APPDATA';
 export type CloudProviderId = 'NONE' | CloudServiceId;
 
+export type SyncIndicatorPhase =
+  | 'LOCAL_ENCRYPTED'
+  | 'CLOUD_SYNCED'
+  | 'SYNCING'
+  | 'CLOUD_OFFLINE_READY'
+  | 'SYNC_ATTENTION';
+
+export interface SyncIndicatorSnapshot {
+  storageMode: VaultStorageMode;
+  phase: SyncIndicatorPhase;
+  isOnline: boolean;
+  queuedMutationsCount: number;
+  lastSyncedIso: string | null;
+  lastError: string | null;
+}
+
 const SYNC_ENABLED_STORAGE_KEY = 'safepocket.cloud_sync_enabled';
+const STORAGE_MODE_KEY = 'safepocket.storage_mode_v03';
 const SYNC_SERVICE_STORAGE_KEY = 'safepocket.cloud_sync_service';
 
 export class HybridClock {
@@ -109,29 +130,46 @@ export interface BidirectionalSyncSummary {
 }
 
 /**
- * Coordinates SafePocket's Storage & Cloud Sync Policy:
- * 1. Default Storage Mode: Local Encrypted Storage Only (`cloudSyncEnabled = false`).
- * 2. Default Cloud Service (when Cloud Sync is enabled): `'FIREBASE'` (pre-initialized from boot).
- * 3. Optional Cloud Service: `'GDRIVE_APPDATA'` (Google Drive hidden appDataFolder).
+ * Coordinates SafePocket's v0.3 Mutually Exclusive Storage & Cloud Sync Policy:
+ * - `LOCAL_ONLY` (Default): Device-only encrypted SQLite WASM + OPFS storage; zero cloud traffic.
+ * - `CLOUD_SYNC` (Exclusive): Standalone local vault DB (`vault_item`) is purged; Cloud is authoritative
+ *   with a session-scoped encrypted offline mirror + mutation outbox that reconciles 100% automatically
+ *   on network restoration with zero user input.
  */
 export class VaultSyncCoordinator {
   private cloudSyncEnabled = false;
   private preferredService: CloudServiceId = 'FIREBASE';
+  private onlineState =
+    typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+  private syncingInFlight = false;
+  private queuedOutboxCount = 0;
+  private lastSyncedIso: string | null = null;
+  private lastSyncError: string | null = null;
+  private statusListeners = new Set<(snap: SyncIndicatorSnapshot) => void>();
 
   constructor(
     private readonly firebaseDefaultAdapter: CloudSyncProviderAdapter,
     private readonly googleDriveOptionalAdapter: CloudSyncProviderAdapter
   ) {
     if (typeof localStorage !== 'undefined') {
-      const savedEnabled = localStorage.getItem(SYNC_ENABLED_STORAGE_KEY);
-      if (savedEnabled !== null) {
-        this.cloudSyncEnabled = savedEnabled === 'true';
+      const savedMode = localStorage.getItem(STORAGE_MODE_KEY);
+      if (savedMode === 'CLOUD_SYNC' || savedMode === 'LOCAL_ONLY') {
+        this.cloudSyncEnabled = savedMode === 'CLOUD_SYNC';
+      } else {
+        const savedEnabled = localStorage.getItem(SYNC_ENABLED_STORAGE_KEY);
+        if (savedEnabled !== null) {
+          this.cloudSyncEnabled = savedEnabled === 'true';
+        }
       }
       const savedService = localStorage.getItem(SYNC_SERVICE_STORAGE_KEY);
       if (savedService === 'FIREBASE' || savedService === 'GDRIVE_APPDATA') {
         this.preferredService = savedService;
       }
     }
+  }
+
+  get storageMode(): VaultStorageMode {
+    return this.cloudSyncEnabled ? 'CLOUD_SYNC' : 'LOCAL_ONLY';
   }
 
   get isCloudSyncEnabled(): boolean {
@@ -146,11 +184,89 @@ export class VaultSyncCoordinator {
     return this.cloudSyncEnabled ? this.preferredService : 'NONE';
   }
 
+  get indicatorSnapshot(): SyncIndicatorSnapshot {
+    let phase: SyncIndicatorPhase = 'LOCAL_ENCRYPTED';
+    if (this.cloudSyncEnabled) {
+      if (this.syncingInFlight) {
+        phase = 'SYNCING';
+      } else if (!this.onlineState) {
+        phase = 'CLOUD_OFFLINE_READY';
+      } else if (this.lastSyncError) {
+        phase = 'SYNC_ATTENTION';
+      } else {
+        phase = 'CLOUD_SYNCED';
+      }
+    }
+    return {
+      storageMode: this.storageMode,
+      phase,
+      isOnline: this.onlineState,
+      queuedMutationsCount: this.queuedOutboxCount,
+      lastSyncedIso: this.lastSyncedIso,
+      lastError: this.lastSyncError
+    };
+  }
+
+  subscribeIndicator(
+    listener: (snap: SyncIndicatorSnapshot) => void
+  ): () => void {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
+
+  private emitIndicator(): void {
+    const snap = this.indicatorSnapshot;
+    for (const listener of this.statusListeners) {
+      listener(snap);
+    }
+  }
+
+  setOnlineState(isOnline: boolean): void {
+    this.onlineState = isOnline;
+    if (isOnline && this.lastSyncError) {
+      this.lastSyncError = null;
+    }
+    this.emitIndicator();
+  }
+
+  updateRuntimeSyncTelemetry(params: {
+    syncing?: boolean;
+    queuedMutationsCount?: number;
+    lastSyncedIso?: string | null;
+    lastError?: string | null;
+  }): void {
+    if (params.syncing !== undefined) this.syncingInFlight = params.syncing;
+    if (params.queuedMutationsCount !== undefined) {
+      this.queuedOutboxCount = params.queuedMutationsCount;
+    }
+    if (params.lastSyncedIso !== undefined) {
+      this.lastSyncedIso = params.lastSyncedIso;
+    }
+    if (params.lastError !== undefined) {
+      this.lastSyncError = params.lastError;
+    }
+    this.emitIndicator();
+  }
+
+  setStorageMode(mode: VaultStorageMode): void {
+    this.setCloudSyncEnabled(mode === 'CLOUD_SYNC');
+  }
+
   setCloudSyncEnabled(enabled: boolean): void {
     this.cloudSyncEnabled = enabled;
+    if (!enabled) {
+      this.syncingInFlight = false;
+      this.queuedOutboxCount = 0;
+      this.lastSyncError = null;
+    }
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(SYNC_ENABLED_STORAGE_KEY, String(enabled));
+      localStorage.setItem(
+        STORAGE_MODE_KEY,
+        enabled ? 'CLOUD_SYNC' : 'LOCAL_ONLY'
+      );
     }
+    this.emitIndicator();
   }
 
   setPreferredCloudService(service: CloudServiceId): void {
@@ -158,6 +274,7 @@ export class VaultSyncCoordinator {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(SYNC_SERVICE_STORAGE_KEY, service);
     }
+    this.emitIndicator();
   }
 
   private get activeAdapter(): CloudSyncProviderAdapter {
@@ -576,29 +693,196 @@ export class GoogleDriveAppDataAdapter implements CloudSyncProviderAdapter {
 }
 
 /**
- * Encrypted Local Vault Store backed by SQLite WASM + OPFS (`SqliteWasmVaultDb`).
- * Persists ONLY AES-256-GCM encrypted rows (`EncryptedVaultRow`).
+ * Encrypted Vault Store backed by SQLite WASM + OPFS (`SqliteWasmVaultDb`).
+ *
+ * Enforces SafePocket v0.3 Mutually Exclusive Storage Mode (`LOCAL_ONLY` XOR `CLOUD_SYNC`):
+ * - In `LOCAL_ONLY`: persists AES-256-GCM rows strictly to `vault_item`; `cloud_offline_mirror` & `cloud_mutation_outbox` are empty.
+ * - In `CLOUD_SYNC`: `vault_item` (standalone local DB) is purged; writes go to the session-scoped
+ *   `cloud_offline_mirror` + `cloud_mutation_outbox` and sync immediately when online or automatically
+ *   upon network reconnection with zero user input.
  */
 export class EncryptedLocalVaultDb {
   readonly sqliteEngine: SqliteWasmVaultDb;
+  private boundCoordinator: VaultSyncCoordinator | null = null;
 
-  constructor(sqliteEngine?: SqliteWasmVaultDb) {
+  constructor(
+    sqliteEngine?: SqliteWasmVaultDb,
+    coordinator?: VaultSyncCoordinator
+  ) {
     this.sqliteEngine = sqliteEngine ?? new SqliteWasmVaultDb(true);
+    this.boundCoordinator = coordinator ?? null;
+  }
+
+  bindSyncCoordinator(coordinator: VaultSyncCoordinator): void {
+    this.boundCoordinator = coordinator;
+  }
+
+  get activeStorageMode(): VaultStorageMode {
+    return this.boundCoordinator?.storageMode ?? 'LOCAL_ONLY';
   }
 
   async saveEncryptedRow(row: EncryptedVaultRow): Promise<void> {
+    if (this.activeStorageMode === 'CLOUD_SYNC') {
+      await this.sqliteEngine.saveCloudMirrorRow(row);
+      await this.sqliteEngine.enqueueCloudMutationOutboxRow(row);
+      const pending = await this.sqliteEngine.listCloudMutationOutboxRows();
+      this.boundCoordinator?.updateRuntimeSyncTelemetry({
+        queuedMutationsCount: pending.length
+      });
+      return;
+    }
     await this.sqliteEngine.saveEncryptedRow(row);
   }
 
+  async saveMergedCloudRowToMirrorOnly(row: EncryptedVaultRow): Promise<void> {
+    await this.sqliteEngine.saveCloudMirrorRow(row);
+  }
+
   async loadAllRowsIncludingTombstones(): Promise<EncryptedVaultRow[]> {
+    if (this.activeStorageMode === 'CLOUD_SYNC') {
+      return this.sqliteEngine.loadAllCloudMirrorRowsIncludingTombstones();
+    }
     return this.sqliteEngine.loadAllRowsIncludingTombstones();
   }
 
   async loadAllEncryptedRows(): Promise<EncryptedVaultRow[]> {
+    if (this.activeStorageMode === 'CLOUD_SYNC') {
+      return this.sqliteEngine.loadActiveCloudMirrorRows();
+    }
     return this.sqliteEngine.loadAllEncryptedRows();
   }
 
   async clearAll(): Promise<void> {
+    if (this.activeStorageMode === 'CLOUD_SYNC') {
+      await this.sqliteEngine.purgeCloudSessionMirrorAndOutbox();
+      this.boundCoordinator?.updateRuntimeSyncTelemetry({
+        queuedMutationsCount: 0
+      });
+      return;
+    }
     await this.sqliteEngine.clearAll();
+  }
+
+  /**
+   * Transitions exclusively between `LOCAL_ONLY` and `CLOUD_SYNC` (never both simultaneously).
+   */
+  async switchExclusiveStorageMode(
+    targetMode: VaultStorageMode,
+    activeSnapshotRows: EncryptedVaultRow[],
+    vaultId = 'default-vault',
+    providerKey = 'FIREBASE:local-default-uid'
+  ): Promise<BidirectionalSyncSummary | null> {
+    const coord = this.boundCoordinator;
+    if (!coord) {
+      throw new Error('Sync coordinator not bound to EncryptedLocalVaultDb');
+    }
+
+    if (targetMode === 'CLOUD_SYNC') {
+      // 1. Seed session-scoped cloud mirror & outbox from current unlocked snapshot
+      for (const row of activeSnapshotRows) {
+        await this.sqliteEngine.saveCloudMirrorRow(row);
+        await this.sqliteEngine.enqueueCloudMutationOutboxRow(row);
+      }
+      // 2. Purge standalone local vault (`vault_item`) so Local DB is strictly zeroed out
+      await this.sqliteEngine.purgeStandaloneLocalVault();
+      coord.setStorageMode('CLOUD_SYNC');
+      const outbox = await this.sqliteEngine.listCloudMutationOutboxRows();
+      coord.updateRuntimeSyncTelemetry({ queuedMutationsCount: outbox.length });
+
+      // 3. Immediately reconcile if online; if offline, automatic outbox holds items seamlessly
+      if (coord.indicatorSnapshot.isOnline) {
+        return this.reconcileCloudSessionAutomatically(vaultId, providerKey);
+      }
+      return null;
+    }
+
+    // Switching `CLOUD_SYNC` -> `LOCAL_ONLY`:
+    // 1. Persist active snapshot to standalone `vault_item`
+    await this.sqliteEngine.purgeStandaloneLocalVault();
+    for (const row of activeSnapshotRows) {
+      await this.sqliteEngine.saveEncryptedRow(row);
+    }
+    // 2. Immediately wipe session-scoped cloud offline mirror, outbox & cursors
+    await this.sqliteEngine.purgeCloudSessionMirrorAndOutbox();
+    coord.setStorageMode('LOCAL_ONLY');
+    return null;
+  }
+
+  /**
+   * Automatically flushes queued offline mutations and pulls remote CRDT deltas
+   * with zero user input whenever Cloud Sync is active and connectivity is available.
+   */
+  async reconcileCloudSessionAutomatically(
+    vaultId = 'default-vault',
+    providerKey = 'FIREBASE:local-default-uid'
+  ): Promise<BidirectionalSyncSummary | null> {
+    const coord = this.boundCoordinator;
+    if (!coord || coord.storageMode !== 'CLOUD_SYNC') {
+      return null;
+    }
+    if (!coord.indicatorSnapshot.isOnline) {
+      const queued = await this.sqliteEngine.listCloudMutationOutboxRows();
+      coord.updateRuntimeSyncTelemetry({
+        syncing: false,
+        queuedMutationsCount: queued.length
+      });
+      return null;
+    }
+
+    coord.updateRuntimeSyncTelemetry({ syncing: true, lastError: null });
+    try {
+      const outbox = await this.sqliteEngine.listCloudMutationOutboxRows();
+      const mirror =
+        await this.sqliteEngine.loadAllCloudMirrorRowsIncludingTombstones();
+      const byId = new Map<string, EncryptedVaultRow>();
+      for (const m of mirror) byId.set(m.id, m);
+      for (const o of outbox) byId.set(o.id, o);
+
+      const sinceCursor = await this.sqliteEngine.getSyncCursor(providerKey);
+      const pendingBlobs =
+        await this.sqliteEngine.listPendingUnsyncedBlobs(vaultId);
+
+      const res = await coord.syncBidirectionalIfEnabled(
+        vaultId,
+        Array.from(byId.values()),
+        sinceCursor,
+        pendingBlobs
+      );
+      if (!res) {
+        coord.updateRuntimeSyncTelemetry({ syncing: false });
+        return null;
+      }
+
+      for (const uploadedId of Object.keys(res.uploadedBlobPaths)) {
+        await this.sqliteEngine.markLocalBlobSynced(uploadedId);
+      }
+      for (const merged of res.mergedRows) {
+        await this.sqliteEngine.saveCloudMirrorRow(merged);
+      }
+      if (outbox.length > 0) {
+        await this.sqliteEngine.removeCloudMutationOutboxRows(
+          outbox.map((r) => r.id)
+        );
+      }
+      await this.sqliteEngine.setSyncCursor(providerKey, res.cursorHlc);
+
+      const remaining = await this.sqliteEngine.listCloudMutationOutboxRows();
+      coord.updateRuntimeSyncTelemetry({
+        syncing: false,
+        queuedMutationsCount: remaining.length,
+        lastSyncedIso: new Date().toISOString(),
+        lastError: null
+      });
+      return res;
+    } catch (err) {
+      const remaining = await this.sqliteEngine.listCloudMutationOutboxRows();
+      coord.updateRuntimeSyncTelemetry({
+        syncing: false,
+        queuedMutationsCount: remaining.length,
+        lastError:
+          err instanceof Error ? err.message : 'Cloud sync reconciliation delayed'
+      });
+      throw err;
+    }
   }
 }

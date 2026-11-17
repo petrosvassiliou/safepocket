@@ -108,6 +108,9 @@ class LocalizationEngine(
         category: VaultCategory
     ): String {
         if (isCustomLabel) return labelKey
+        if (category == VaultCategory.BANK_ACCOUNT && labelKey == CanonicalFieldKeys.ISSUING_BANK) {
+            return t("field_bank_name")
+        }
         if (category == VaultCategory.IDENTITY) {
             when (labelKey) {
                 CanonicalFieldKeys.TAX_ID -> return t("identity_template_tax_id")

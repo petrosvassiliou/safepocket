@@ -1,6 +1,7 @@
 package com.safepocket.shared.update
 
 import com.safepocket.shared.crypto.CryptoPrimitives
+import com.safepocket.shared.crypto.Ed25519VerifierPure
 import com.safepocket.shared.crypto.ZeroKnowledgeEncryptionService
 import com.safepocket.shared.i18n.SupportedLocale
 import io.ktor.client.HttpClient
@@ -13,20 +14,24 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Cross-Platform Self-Update Architecture (Direct Sideload / Non-Play-Store Compliant).
+ * Cross-Platform Self-Update Architecture (Google Play Protect & Apple Direct Distribution Compliant).
  *
- * Fetches a signed `version.json` manifest (Firebase Hosting / GitHub Releases), verifies
- * detached signature & mandatory SHA-256 artifact checksums, resolves localized release notes
- * in `en`, `de`, `it`, `fr`, `es`, `el`, and delegates installation to the native platform handler:
- * - Android 17+ & Googlebook OS: `android.content.pm.PackageInstaller` Session API (`MODE_FULL_INSTALL`)
- * - ChromeOS PWA: `ServiceWorkerRegistration.update()` + `skipWaiting()` + Cache refresh
- * - macOS Desktop: Sparkle `SPUStandardUpdaterController` / signed universal bundle verifier
+ * 1. Fetches signed `version.json` manifest (EU Firebase Hosting primary + GitHub Releases fallback).
+ * 2. Cryptographically verifies the detached RFC 8032 Ed25519 signature against the pinned
+ *    SafePocket release public key (`PINNED_RELEASE_ED25519_PUBKEY_HEX`).
+ * 3. Verifies mandatory 64-hex SHA-256 artifact checksum & X.509 signing certificate pin before staging:
+ *    - Android 10+ / 17+ & Googlebook OS: `PackageInstaller.Session` (`MODE_FULL_INSTALL`)
+ *    - ChromeOS PWA: `ServiceWorkerRegistration.update()` + `skipWaiting()` + Cache refresh
+ *    - macOS Desktop: In-App `URLSession` + `CryptoKit` Ed25519/SHA-256 + `hdiutil` bundle installer
  */
 object AppBuildInfo {
     const val APP_NAME = "SafePocket"
-    const val CURRENT_VERSION_NAME = "0.2"
-    const val CURRENT_VERSION_CODE = 4
+    const val CURRENT_VERSION_NAME = "0.3"
+    const val CURRENT_VERSION_CODE = 5
     val DISPLAY_STRING: String get() = "$APP_NAME v$CURRENT_VERSION_NAME (Build $CURRENT_VERSION_CODE)"
+
+    const val PRIMARY_MANIFEST_URL = "https://safepocket-vault-eu.web.app/version.json"
+    const val FALLBACK_MANIFEST_URL = "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json"
 }
 
 @Serializable
@@ -87,7 +92,8 @@ class CrossPlatformUpdateService(
     private val httpClient: HttpClient,
     private val primitives: CryptoPrimitives,
     private val installer: PlatformUpdateInstaller,
-    private val manifestUrl: String,
+    private val manifestUrl: String = AppBuildInfo.PRIMARY_MANIFEST_URL,
+    private val fallbackManifestUrl: String = AppBuildInfo.FALLBACK_MANIFEST_URL,
     initialAutoUpdateEnabled: Boolean = true,
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
@@ -110,10 +116,14 @@ class CrossPlatformUpdateService(
     suspend fun checkForUpdates(activeLocale: SupportedLocale): UpdateCheckState {
         _state.value = UpdateCheckState.Checking
         return try {
-            val rawManifest: String = httpClient.get(manifestUrl).body()
+            val rawManifest: String = runCatching {
+                httpClient.get(manifestUrl).body<String>()
+            }.getOrElse {
+                httpClient.get(fallbackManifestUrl).body<String>()
+            }
             val manifest = json.decodeFromString<RemoteUpdateManifest>(rawManifest)
-            require(manifest.manifestSignature.startsWith("ed25519:") && manifest.manifestSignature.length > 40) {
-                "Unsigned or malformed version.json manifest rejected"
+            require(verifyManifestEd25519Signature(manifest)) {
+                "Ed25519 manifest signature verification failed — untrusted update rejected"
             }
 
             val artifact = manifest.artifacts[installer.platformArtifactKey]
@@ -170,6 +180,27 @@ class CrossPlatformUpdateService(
     }
 
     companion object {
+        fun buildCanonicalManifestMessage(manifest: RemoteUpdateManifest): String {
+            val pairs = manifest.artifacts.keys.sorted().joinToString(";") { key ->
+                val art = manifest.artifacts.getValue(key)
+                "$key:${art.sha256.lowercase()}:${art.sizeBytes}"
+            }
+            return "safepocket-manifest-v2|${manifest.channel}|${manifest.latestVersion}|${manifest.versionCode}|${manifest.minimumSupportedVersionCode}|$pairs"
+        }
+
+        fun verifyManifestEd25519Signature(
+            manifest: RemoteUpdateManifest,
+            pinnedPubKeyHex: String = Ed25519VerifierPure.PINNED_RELEASE_ED25519_PUBKEY_HEX
+        ): Boolean {
+            if (!manifest.manifestSignature.startsWith("ed25519:")) return false
+            val sigHex = manifest.manifestSignature.removePrefix("ed25519:").trim()
+            if (sigHex.length != 128) return false
+            val manifestPub = (manifest.signingPublicKeyHex ?: pinnedPubKeyHex).lowercase()
+            if (!constantTimeEquals(manifestPub, pinnedPubKeyHex.lowercase())) return false
+            val canonical = buildCanonicalManifestMessage(manifest)
+            return Ed25519VerifierPure.verifyHexSignature(pinnedPubKeyHex, canonical, sigHex)
+        }
+
         fun constantTimeEquals(a: String, b: String): Boolean {
             if (a.length != b.length) return false
             var diff = 0
