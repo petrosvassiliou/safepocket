@@ -22,13 +22,14 @@ export const SUPPORTED_LOCALES: ReadonlyArray<{
   code: SupportedLocale;
   nativeName: string;
   region: string;
+  flag: string;
 }> = [
-  { code: 'en', nativeName: 'English', region: 'US' },
-  { code: 'de', nativeName: 'Deutsch', region: 'DE' },
-  { code: 'it', nativeName: 'Italiano', region: 'IT' },
-  { code: 'fr', nativeName: 'Français', region: 'FR' },
-  { code: 'es', nativeName: 'Español', region: 'ES' },
-  { code: 'el', nativeName: 'Ελληνικά', region: 'GR' }
+  { code: 'en', nativeName: 'English', region: 'GB', flag: '🇬🇧' },
+  { code: 'de', nativeName: 'Deutsch', region: 'DE', flag: '🇩🇪' },
+  { code: 'it', nativeName: 'Italiano', region: 'IT', flag: '🇮🇹' },
+  { code: 'fr', nativeName: 'Français', region: 'FR', flag: '🇫🇷' },
+  { code: 'es', nativeName: 'Español', region: 'ES', flag: '🇪🇸' },
+  { code: 'el', nativeName: 'Ελληνικά', region: 'GR', flag: '🇬🇷' }
 ];
 
 const STORAGE_KEY = 'safepocket.locale_override';
@@ -70,6 +71,15 @@ export class SafePocketI18n {
 
   get isUsingSystemLocale(): boolean {
     return this.manualOverride === null;
+  }
+
+  getLocaleFlag(code?: SupportedLocale): string {
+    const target = code ?? this.activeLocale;
+    return SUPPORTED_LOCALES.find((l) => l.code === target)?.flag ?? '🌐';
+  }
+
+  hasKey(key: string): boolean {
+    return key in CATALOGS.en || key in CATALOGS[this.activeLocale];
   }
 
   setLocaleOverride(locale: SupportedLocale | null): void {
@@ -194,6 +204,56 @@ export class SafePocketI18n {
       case 'SECURE_NOTE':
         return this.t('category_secure_note');
     }
+  }
+
+  resolveCategorySingularName(category: VaultCategory): string {
+    switch (category) {
+      case 'PAYMENT_CARD':
+        return this.t('category_singular_payment_card');
+      case 'BANK_ACCOUNT':
+        return this.t('category_singular_bank_account');
+      case 'INSURANCE_CARD':
+        return this.t('category_singular_insurance_card');
+      case 'MEMBERSHIP_CARD':
+        return this.t('category_singular_membership_card');
+      case 'IDENTITY':
+        return this.t('category_singular_identity');
+      case 'OFFICIAL_DOCUMENT':
+        return this.t('category_singular_official_document');
+      case 'SECURE_NOTE':
+        return this.t('category_singular_secure_note');
+    }
+  }
+
+  /**
+   * Ensures raw internal enum names (e.g. `BANK_ACCOUNT`) or raw translation keys
+   * saved in `subtitle` are always rendered as localized human-readable display names.
+   */
+  resolveDisplaySubtitle(subtitle: string | undefined, category: VaultCategory): string {
+    const trimmed = (subtitle ?? '').trim();
+    if (!trimmed) {
+      return this.resolveCategorySingularName(category);
+    }
+    switch (trimmed.toUpperCase()) {
+      case 'PAYMENT_CARD':
+        return this.resolveCategorySingularName('PAYMENT_CARD');
+      case 'BANK_ACCOUNT':
+        return this.resolveCategorySingularName('BANK_ACCOUNT');
+      case 'INSURANCE_CARD':
+        return this.resolveCategorySingularName('INSURANCE_CARD');
+      case 'MEMBERSHIP_CARD':
+        return this.resolveCategorySingularName('MEMBERSHIP_CARD');
+      case 'IDENTITY':
+        return this.resolveCategorySingularName('IDENTITY');
+      case 'OFFICIAL_DOCUMENT':
+        return this.resolveCategorySingularName('OFFICIAL_DOCUMENT');
+      case 'SECURE_NOTE':
+        return this.resolveCategorySingularName('SECURE_NOTE');
+    }
+    if (this.hasKey(trimmed)) {
+      return this.t(trimmed);
+    }
+    return trimmed;
   }
 
   private syncDocumentLang(): void {

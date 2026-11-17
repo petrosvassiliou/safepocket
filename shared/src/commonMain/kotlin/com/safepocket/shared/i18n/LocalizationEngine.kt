@@ -12,14 +12,15 @@ import kotlinx.serialization.json.jsonPrimitive
 enum class SupportedLocale(
     val code: String,
     val nativeDisplayName: String,
-    val defaultRegion: String
+    val defaultRegion: String,
+    val flagEmoji: String
 ) {
-    EN("en", "English", "US"),
-    DE("de", "Deutsch", "DE"),
-    IT("it", "Italiano", "IT"),
-    FR("fr", "Français", "FR"),
-    ES("es", "Español", "ES"),
-    EL("el", "Ελληνικά", "GR");
+    EN("en", "English", "US", "🇬🇧"),
+    DE("de", "Deutsch", "DE", "🇩🇪"),
+    IT("it", "Italiano", "IT", "🇮🇹"),
+    FR("fr", "Français", "FR", "🇫🇷"),
+    ES("es", "Español", "ES", "🇪🇸"),
+    EL("el", "Ελληνικά", "GR", "🇬🇷");
 
     companion object {
         fun fromLanguageTag(tag: String?): SupportedLocale {
@@ -76,6 +77,11 @@ class LocalizationEngine(
         }
     }
 
+    fun hasKey(key: String): Boolean {
+        return parsedCatalogs[_activeLocale.value]?.containsKey(key) == true
+            || parsedCatalogs[SupportedLocale.EN]?.containsKey(key) == true
+    }
+
     fun t(key: String, params: Map<String, Any> = emptyMap()): String {
         val locale = _activeLocale.value
         val template = parsedCatalogs[locale]?.get(key)
@@ -84,6 +90,31 @@ class LocalizationEngine(
         return params.entries.fold(template) { acc, (k, v) ->
             acc.replace("{$k}", v.toString())
         }
+    }
+
+    fun resolveCategorySingularName(category: VaultCategory): String = when (category) {
+        VaultCategory.PAYMENT_CARD -> t("category_singular_payment_card")
+        VaultCategory.BANK_ACCOUNT -> t("category_singular_bank_account")
+        VaultCategory.INSURANCE_CARD -> t("category_singular_insurance_card")
+        VaultCategory.MEMBERSHIP_CARD -> t("category_singular_membership_card")
+        VaultCategory.IDENTITY -> t("category_singular_identity")
+        VaultCategory.OFFICIAL_DOCUMENT -> t("category_singular_official_document")
+        VaultCategory.SECURE_NOTE -> t("category_singular_secure_note")
+    }
+
+    fun resolveDisplaySubtitle(subtitle: String, category: VaultCategory): String {
+        val trimmed = subtitle.trim()
+        if (trimmed.isEmpty()) {
+            return resolveCategorySingularName(category)
+        }
+        val matchedCategory = VaultCategory.entries.firstOrNull { it.name.equals(trimmed, ignoreCase = true) }
+        if (matchedCategory != null) {
+            return resolveCategorySingularName(matchedCategory)
+        }
+        if (hasKey(trimmed)) {
+            return t(trimmed)
+        }
+        return trimmed
     }
 
     fun plural(baseKey: String, count: Long, extraParams: Map<String, Any> = emptyMap()): String {

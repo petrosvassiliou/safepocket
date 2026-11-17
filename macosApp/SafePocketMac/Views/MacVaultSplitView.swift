@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.2 (Build 7) with 100% Cross-Platform Parity.
+/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.3 (Build 8) with 100% Cross-Platform Parity.
 struct MacVaultSplitView: View {
     @ObservedObject var vaultState: MacVaultViewModel
     @ObservedObject var updater: MacSparkleUpdateController
@@ -33,10 +33,18 @@ struct MacVaultSplitView: View {
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
+                        MacFlagLanguageMenu(vaultState: vaultState)
+
                         Button {
                             vaultState.openCreateEditor()
                         } label: {
                             Label(vaultState.t("action_new_item"), systemImage: "plus")
+                        }
+
+                        Button {
+                            vaultState.presentSettingsSheet = true
+                        } label: {
+                            Label(vaultState.t("nav_settings"), systemImage: "gearshape")
                         }
 
                         Button {
@@ -52,7 +60,7 @@ struct MacVaultSplitView: View {
                     if vaultState.storageMode == .cloudSync && vaultState.isCloudAuthenticated {
                         Task { await vaultState.reconcileCloudSessionAutomatically() }
                     } else {
-                        vaultState.selectedCategory = "SETTINGS"
+                        vaultState.presentSettingsSheet = true
                     }
                 } label: {
                     HStack(spacing: 7) {
@@ -71,6 +79,9 @@ struct MacVaultSplitView: View {
                 .padding(16)
             }
         }
+        .sheet(isPresented: $vaultState.presentSettingsSheet) {
+            MacSettingsModalWindow(vaultState: vaultState, updater: updater)
+        }
         .sheet(isPresented: $vaultState.presentEditorSheet) {
             MacSmartItemEditorSheet(vaultState: vaultState, existing: vaultState.editingEntry)
         }
@@ -85,10 +96,16 @@ struct MacVaultSplitView: View {
         }
     }
 
-    // MARK: - Lock Screen Overlay (Touch ID + Master Password)
+    // MARK: - Lock Screen Overlay (Touch ID + Master Password + Flag Language Switcher)
 
     private var macLockedOverlay: some View {
         VStack(spacing: 16) {
+            HStack {
+                Spacer()
+                MacFlagLanguageMenu(vaultState: vaultState)
+            }
+            .frame(maxWidth: 360)
+
             Image(systemName: "lock.shield.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(vaultState.materialAccent.swiftUIColor)
@@ -113,7 +130,7 @@ struct MacVaultSplitView: View {
                 }
 
             if unlockError {
-                Text("Invalid Master Password")
+                Text(vaultState.t("security_invalid_master_password"))
                     .font(.caption)
                     .foregroundStyle(.red)
             }
@@ -145,7 +162,7 @@ struct MacVaultSplitView: View {
         .background(.ultraThinMaterial)
     }
 
-    // MARK: - Column 1: Localized Sidebar
+    // MARK: - Column 1: Localized Sidebar (Settings Opens Modal Window)
 
     private var sidebarContent: some View {
         VStack(spacing: 0) {
@@ -173,9 +190,15 @@ struct MacVaultSplitView: View {
                         .tag("SECURE_NOTE")
                 }
                 Section {
-                    Label(vaultState.t("nav_settings"), systemImage: "gearshape.fill")
-                        .lineLimit(1)
-                        .tag("SETTINGS")
+                    Button {
+                        vaultState.presentSettingsSheet = true
+                    } label: {
+                        Label(vaultState.t("nav_settings"), systemImage: "gearshape.fill")
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .listStyle(.sidebar)
@@ -183,7 +206,7 @@ struct MacVaultSplitView: View {
             Divider()
 
             VStack(spacing: 8) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Button {
                         cycleTheme()
                     } label: {
@@ -191,6 +214,8 @@ struct MacVaultSplitView: View {
                     }
                     .buttonStyle(.bordered)
                     .help(vaultState.t("settings_theme_title"))
+
+                    MacFlagLanguageMenu(vaultState: vaultState)
 
                     Button {
                         vaultState.lockVault()
@@ -216,7 +241,7 @@ struct MacVaultSplitView: View {
             .padding(.vertical, 10)
         }
         .background(.ultraThinMaterial)
-        .navigationSplitViewColumnWidth(min: 225, ideal: 252, max: 310)
+        .navigationSplitViewColumnWidth(min: 235, ideal: 260, max: 320)
     }
 
     // MARK: - Column 2: Vault List with Swipe Actions, Context Menus & Expiry Badges
@@ -293,7 +318,7 @@ struct MacVaultSplitView: View {
                                 .lineLimit(1)
                             Spacer()
                             if let days = entry.daysUntilExpiry(), days <= vaultState.expiryWindowDays {
-                                Text(days < 0 ? "EXPIRED" : "\(days)d")
+                                Text(days < 0 ? vaultState.t("badge_expired") : "\(days)d")
                                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
@@ -301,7 +326,7 @@ struct MacVaultSplitView: View {
                                     .foregroundStyle(days < 0 ? .red : .orange)
                             }
                         }
-                        Text(entry.subtitle)
+                        Text(vaultState.displaySubtitle(for: entry))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -322,6 +347,7 @@ struct MacVaultSplitView: View {
                         } label: {
                             Label(vaultState.t("action_delete"), systemImage: "trash")
                         }
+                        .tint(.red)
                         Button {
                             vaultState.openEditEditor(entry)
                         } label: {
@@ -375,13 +401,11 @@ struct MacVaultSplitView: View {
         .navigationSplitViewColumnWidth(min: 280, ideal: 335, max: 440)
     }
 
-    // MARK: - Column 3: Detail Inspector (Dual-Brand Card Header + All Category Fields) or Settings
+    // MARK: - Column 3: Detail Inspector (Dual-Brand Card Header + All Category Fields)
 
     @ViewBuilder
     private var detailContent: some View {
-        if vaultState.selectedCategory == "SETTINGS" {
-            MacSettingsAndAboutView(vaultState: vaultState, updater: updater)
-        } else if let selected = vaultState.entries.first(where: { $0.id == vaultState.selectedEntryId }) {
+        if let selected = vaultState.entries.first(where: { $0.id == vaultState.selectedEntryId }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     macVisualBrandCard(for: selected)
@@ -498,7 +522,7 @@ struct MacVaultSplitView: View {
                         Text(entry.title)
                             .font(.headline)
                             .foregroundStyle(.white)
-                        Text(entry.subtitle)
+                        Text(vaultState.displaySubtitle(for: entry))
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.85))
                     }
@@ -528,6 +552,80 @@ struct MacVaultSplitView: View {
             ),
             in: RoundedRectangle(cornerRadius: 16)
         )
+    }
+}
+
+// MARK: - Main-App Country-Flag Language Selector & Modal Settings Window
+
+struct MacFlagLanguageMenu: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+
+    private var activeFlagLabel: String {
+        if vaultState.localeOverrideCode == "__system__" || vaultState.localeOverrideCode.isEmpty {
+            return "🌐 \(vaultState.activeLocale.flagEmoji) \(vaultState.activeLocale.rawValue.uppercased())"
+        }
+        return "\(vaultState.activeLocale.flagEmoji) \(vaultState.activeLocale.rawValue.uppercased())"
+    }
+
+    var body: some View {
+        Menu {
+            Button {
+                vaultState.localeOverrideCode = "__system__"
+            } label: {
+                let sys = MacLocalizationEngine.detectedSystemLocale
+                Text("🌐 \(vaultState.t("settings_language_system", ["locale": "\(sys.flagEmoji) \(sys.nativeDisplayName)"]))")
+            }
+
+            Divider()
+
+            ForEach(MacSupportedLocale.allCases) { loc in
+                Button {
+                    vaultState.localeOverrideCode = loc.rawValue
+                } label: {
+                    let check = (!vaultState.localeOverrideCode.isEmpty && vaultState.localeOverrideCode != "__system__" && vaultState.activeLocale == loc) ? "✓ " : ""
+                    Text("\(check)\(loc.flagEmoji) \(loc.nativeDisplayName) (\(loc.rawValue.uppercased()))")
+                }
+            }
+        } label: {
+            Text(activeFlagLabel)
+                .font(.system(size: 11.5, weight: .semibold))
+        }
+        .menuStyle(.borderedButton)
+        .fixedSize()
+        .help(vaultState.t("settings_language_title"))
+    }
+}
+
+struct MacSettingsModalWindow: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+    @ObservedObject var updater: MacSparkleUpdateController
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "gearshape.fill")
+                    .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                Text(vaultState.t("nav_settings"))
+                    .font(.title3.weight(.bold))
+                Spacer()
+                MacFlagLanguageMenu(vaultState: vaultState)
+                Button(vaultState.t("action_done")) {
+                    vaultState.presentSettingsSheet = false
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
+            .background(.regularMaterial)
+
+            Divider()
+
+            MacSettingsAndAboutView(vaultState: vaultState, updater: updater)
+        }
+        .frame(minWidth: 760, idealWidth: 780, minHeight: 680, idealHeight: 720)
     }
 }
 
@@ -638,7 +736,7 @@ struct MacSmartItemEditorSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     MacSectionCard(title: vaultState.t("app_name")) {
                         HStack {
-                            Text("Category")
+                            Text(vaultState.t("editor_category_label"))
                                 .font(.system(size: 12, weight: .semibold))
                             Spacer()
                             Picker("", selection: $category) {
@@ -655,9 +753,9 @@ struct MacSmartItemEditorSheet: View {
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Title / Institution")
+                            Text(vaultState.t("editor_title_label"))
                                 .font(.system(size: 12, weight: .semibold))
-                            TextField("", text: $title, prompt: Text("e.g. Deutsche Bank, Visa, Allianz"))
+                            TextField("", text: $title, prompt: Text("Deutsche Bank, ING, Visa, Allianz…"))
                                 .labelsHidden()
                                 .textFieldStyle(.roundedBorder)
                                 .controlSize(.large)
@@ -665,44 +763,44 @@ struct MacSmartItemEditorSheet: View {
                         }
 
                         MacLabeledTextField(
-                            label: "Subtitle",
-                            placeholder: "e.g. Girokonto, Platinum Card",
+                            label: vaultState.t("editor_subtitle_label"),
+                            placeholder: vaultState.categorySingularName(category),
                             text: $subtitle
                         )
 
                         HStack(spacing: 12) {
                             MacLabeledTextField(
-                                label: "Brand Color Hex (optional)",
+                                label: vaultState.t("editor_brand_color_hex"),
                                 placeholder: "#0018A8",
                                 text: $customColorHex
                             )
                             MacLabeledTextField(
-                                label: "Tags (comma-separated)",
+                                label: vaultState.t("editor_tags_label"),
                                 placeholder: "banking, personal",
                                 text: $tagsInput
                             )
                         }
                     }
 
-                    MacSectionCard(title: "Structured Category Fields") {
+                    MacSectionCard(title: vaultState.t("editor_section_structured_fields")) {
                         ForEach(MacCategoryTemplates.specs(for: category), id: \.key) { spec in
                             smartEditorRow(for: spec)
                         }
                     }
 
-                    MacSectionCard(title: "Custom Fields") {
+                    MacSectionCard(title: vaultState.t("editor_section_custom_fields")) {
                         ForEach($customFields) { $cf in
                             HStack(spacing: 8) {
-                                TextField("", text: $cf.labelKey, prompt: Text("Field Label"))
+                                TextField("", text: $cf.labelKey, prompt: Text(vaultState.t("editor_field_label_placeholder")))
                                     .labelsHidden()
                                     .textFieldStyle(.roundedBorder)
                                     .controlSize(.large)
                                     .frame(width: 170)
-                                TextField("", text: $cf.value, prompt: Text("Value"))
+                                TextField("", text: $cf.value, prompt: Text(vaultState.t("editor_field_value_placeholder")))
                                     .labelsHidden()
                                     .textFieldStyle(.roundedBorder)
                                     .controlSize(.large)
-                                Toggle("Secret", isOn: $cf.isSensitive)
+                                Toggle(vaultState.t("editor_field_secret_toggle"), isOn: $cf.isSensitive)
                                     .toggleStyle(.checkbox)
                                 Button(role: .destructive) {
                                     customFields.removeAll { $0.id == cf.id }
@@ -712,11 +810,11 @@ struct MacSmartItemEditorSheet: View {
                                 .buttonStyle(.plain)
                             }
                         }
-                        Button("+ Add Custom Field") {
+                        Button(vaultState.t("editor_add_custom_field")) {
                             customFields.append(
                                 MacVaultField(
                                     id: "cf-\(UUID().uuidString.prefix(8))",
-                                    labelKey: "Custom Field",
+                                    labelKey: vaultState.t("editor_field_label_placeholder"),
                                     isCustomLabel: true,
                                     value: ""
                                 )
@@ -751,7 +849,7 @@ struct MacSmartItemEditorSheet: View {
             if let ex = existing {
                 category = ex.category
                 title = ex.title
-                subtitle = ex.subtitle
+                subtitle = vaultState.displaySubtitle(for: ex)
                 customColorHex = ex.customColorHex ?? ""
                 tagsInput = ex.tags.joined(separator: ", ")
                 for f in ex.fields {
@@ -837,7 +935,7 @@ struct MacSmartItemEditorSheet: View {
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.large)
-                    Button("Verify HTTPS") {
+                    Button(vaultState.t("editor_verify_https")) {
                         let normalized = MacVaultViewModel.normalizeHttpsUrl(fieldDrafts[spec.key] ?? "")
                         fieldDrafts[spec.key] = normalized
                         verifyHttpsReachability(normalized)
@@ -880,7 +978,7 @@ struct MacSmartItemEditorSheet: View {
                 }
                 if title.isEmpty { title = bank.displayName }
                 if customColorHex.isEmpty { customColorHex = bank.primaryHex }
-                autofillNotice = "IBAN verified • Auto-filled \(bank.displayName), \(bank.defaultBic) & https://www.\(bank.domain)"
+                autofillNotice = vaultState.t("smart_iban_autofilled", ["bank": bank.displayName, "bic": bank.defaultBic])
             }
         case .cardNumber:
             let res = MacSmartIntelligence.formatCardPan(newValue)
@@ -898,10 +996,10 @@ struct MacSmartItemEditorSheet: View {
 
     private func verifyHttpsReachability(_ urlString: String) {
         guard let url = URL(string: urlString), url.scheme == "https", let host = url.host else {
-            websiteStatus = "⚠ Invalid HTTPS domain"
+            websiteStatus = "⚠ \(vaultState.t("website_status_unreachable", ["hostname": urlString]))"
             return
         }
-        websiteStatus = "⏳ Verifying https://\(host)…"
+        websiteStatus = "⏳ \(vaultState.t("website_status_checking", ["hostname": host]))"
         Task {
             var req = URLRequest(url: url)
             req.httpMethod = "HEAD"
@@ -909,12 +1007,12 @@ struct MacSmartItemEditorSheet: View {
             do {
                 let (_, res) = try await URLSession.shared.data(for: req)
                 if let http = res as? HTTPURLResponse, (200..<500).contains(http.statusCode) {
-                    websiteStatus = "✓ Live HTTPS website verified (\(host))"
+                    websiteStatus = "✓ \(vaultState.t("website_status_reachable", ["hostname": host]))"
                 } else {
-                    websiteStatus = "⚠ Website responded with unexpected status (\(host))"
+                    websiteStatus = "⚠ \(vaultState.t("website_status_unreachable", ["hostname": host]))"
                 }
             } catch {
-                websiteStatus = "⚠ Website could not be reached (\(host))"
+                websiteStatus = "⚠ \(vaultState.t("website_status_unreachable", ["hostname": host]))"
             }
         }
     }
@@ -937,14 +1035,25 @@ struct MacSmartItemEditorSheet: View {
             }
         }
         builtFields.append(contentsOf: customFields.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
-        let resolvedSub = subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? (fieldDrafts["field_account_type"] ?? fieldDrafts["field_card_type"] ?? category)
-            : subtitle
+        let defaultTypeSub = fieldDrafts["field_account_type"]
+            ?? fieldDrafts["field_card_type"]
+            ?? fieldDrafts["field_insurance_type"]
+            ?? fieldDrafts["field_document_subtype"]
+        let cleanSub = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSub = cleanSub.isEmpty
+            ? ((defaultTypeSub?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+                ? defaultTypeSub!
+                : vaultState.categorySingularName(category))
+            : vaultState.i18n.resolveDisplaySubtitle(
+                subtitle: cleanSub,
+                category: category,
+                localeCode: vaultState.localeOverrideCode
+            )
         let tags = tagsInput.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let entry = MacVaultEntry(
             id: existing?.id ?? "item-\(Int(Date().timeIntervalSince1970 * 1000))",
             category: category,
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled Entry" : title,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? vaultState.t("editor_untitled_entry") : title,
             subtitle: resolvedSub,
             fields: builtFields,
             tags: tags,
@@ -1051,7 +1160,7 @@ struct MacSettingsAndAboutView: View {
                     .background(vaultState.materialAccent.swiftUIColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
                 }
 
-                // 1. APPEARANCE, ACCENT COLOR & 6-LANGUAGE SELECTOR
+                // 1. APPEARANCE, ACCENT COLOR & 6-LANGUAGE SELECTOR (WITH COUNTRY FLAGS)
                 MacSectionCard(title: vaultState.t("settings_theme_title") + " & " + vaultState.t("settings_language_title")) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(vaultState.t("settings_theme_title"))
@@ -1066,7 +1175,7 @@ struct MacSettingsAndAboutView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Material Accent")
+                        Text(vaultState.t("settings_material_color_title"))
                             .font(.system(size: 12, weight: .semibold))
                         Picker("", selection: $vaultState.materialAccent) {
                             ForEach(MacMaterialAccent.allCases) { accent in
@@ -1082,15 +1191,16 @@ struct MacSettingsAndAboutView: View {
                             .font(.system(size: 12, weight: .semibold))
                         Spacer()
                         Picker("", selection: $vaultState.localeOverrideCode) {
-                            Text(vaultState.t("settings_language_system", ["locale": MacLocalizationEngine.detectedSystemLocale.nativeDisplayName]))
+                            let sys = MacLocalizationEngine.detectedSystemLocale
+                            Text("🌐 " + vaultState.t("settings_language_system", ["locale": "\(sys.flagEmoji) \(sys.nativeDisplayName)"]))
                                 .tag("__system__")
                             ForEach(MacSupportedLocale.allCases) { loc in
-                                Text("\(loc.nativeDisplayName) (\(loc.rawValue.uppercased()))")
+                                Text("\(loc.flagEmoji) \(loc.nativeDisplayName) (\(loc.rawValue.uppercased()))")
                                     .tag(loc.rawValue)
                             }
                         }
                         .labelsHidden()
-                        .frame(maxWidth: 280)
+                        .frame(maxWidth: 310)
                     }
                 }
 
@@ -1498,6 +1608,13 @@ struct MacSettingsAndAboutView: View {
                     Toggle(vaultState.t("security_allow_screenshots_toggle"), isOn: $vaultState.allowScreenshots)
                     Toggle(vaultState.t("settings_auto_download_logos_toggle"), isOn: $vaultState.autoDownloadLogos)
 
+                    VStack(alignment: .leading, spacing: 3) {
+                        Toggle(vaultState.t("security_lock_on_standby_toggle"), isOn: $vaultState.lockOnStandby)
+                        Text(vaultState.t("security_lock_on_standby_desc"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     VStack(alignment: .leading, spacing: 6) {
                         Text(vaultState.t("expiry_window_setting_title"))
                             .font(.system(size: 12, weight: .semibold))
@@ -1517,6 +1634,7 @@ struct MacSettingsAndAboutView: View {
                             Text(vaultState.t("security_auto_lock_1m")).tag(1)
                             Text(vaultState.t("security_auto_lock_5m")).tag(5)
                             Text(vaultState.t("security_auto_lock_15m")).tag(15)
+                            Text(vaultState.t("security_auto_lock_never")).tag(0)
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)

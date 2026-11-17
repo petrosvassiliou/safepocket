@@ -219,6 +219,7 @@ export class SafePocketAppShell {
   private activeTagFilter: string | null = null;
   private items: VaultItem[] = [];
   private selectedNav: NavSelection = 'ALL';
+  private settingsModalOpen = false;
   private selectedItemId: string | null = null;
   private searchQuery = '';
   private revealedFieldIds = new Set<string>();
@@ -1036,6 +1037,7 @@ export class SafePocketAppShell {
     this.crypto.lock();
     this.autoLockMonitor.stop();
     this.revealedFieldIds.clear();
+    this.settingsModalOpen = false;
     this.editorDraft = null;
     this.restoreModalState = null;
     this.plainExportModalState = null;
@@ -1236,6 +1238,11 @@ export class SafePocketAppShell {
           this.render();
           return;
         }
+        if (this.settingsModalOpen) {
+          this.settingsModalOpen = false;
+          this.render();
+          return;
+        }
       }
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
@@ -1256,6 +1263,12 @@ export class SafePocketAppShell {
         e.preventDefault();
         if (this.crypto.isUnlocked) {
           this.lockVault(false);
+        }
+      } else if (key === ',') {
+        e.preventDefault();
+        if (this.crypto.isUnlocked) {
+          this.settingsModalOpen = !this.settingsModalOpen;
+          this.render();
         }
       }
     });
@@ -1358,7 +1371,7 @@ export class SafePocketAppShell {
       editingItemId: item.id,
       category: item.category,
       title: item.title,
-      subtitle: item.subtitle,
+      subtitle: this.i18n.resolveDisplaySubtitle(item.subtitle, item.category),
       paletteId: item.cardTheme?.paletteId ?? 'obsidian_slate',
       customColorHex: normalizeHexColor(item.cardTheme?.customColorHex),
       autoBrandColor: item.cardTheme?.autoBrandColor !== false,
@@ -1892,18 +1905,36 @@ export class SafePocketAppShell {
           </div>
 
           <div class="sp-sidebar-footer">
-            <div class="sp-lang-quick" role="group" aria-label="Language Switcher">
+            <div class="sp-lang-quick" role="group" aria-label="${this.escape(
+              this.i18n.t('settings_language_title')
+            )}">
+              <button
+                type="button"
+                id="sp-lang-system"
+                class="sp-lang-pill ${
+                  this.i18n.isUsingSystemLocale ? 'is-active' : ''
+                }"
+                data-locale="__system__"
+                title="${this.escape(
+                  this.i18n.t('settings_language_system', {
+                    locale: this.i18n.detectedSystemLocale.toUpperCase()
+                  })
+                )}"
+              >🌐</button>
               ${SUPPORTED_LOCALES.map(
                 (loc) => `
                 <button
                   type="button"
                   id="sp-lang-${loc.code}"
                   class="sp-lang-pill ${
-                    this.i18n.activeLocale === loc.code ? 'is-active' : ''
+                    !this.i18n.isUsingSystemLocale &&
+                    this.i18n.activeLocale === loc.code
+                      ? 'is-active'
+                      : ''
                   }"
                   data-locale="${loc.code}"
-                  title="${this.escape(loc.nativeName)}"
-                >${loc.code.toUpperCase()}</button>
+                  title="${this.escape(`${loc.flag} ${loc.nativeName}`)}"
+                >${loc.flag} ${loc.code.toUpperCase()}</button>
               `
               ).join('')}
             </div>
@@ -1965,6 +1996,30 @@ export class SafePocketAppShell {
                   <option value="updated_desc" ${
                     this.sortMode === 'updated_desc' ? 'selected' : ''
                   }>${this.escape(this.i18n.t('sort_updated_desc'))}</option>
+                </select>
+                <select
+                  id="sp-main-lang-select"
+                  class="sp-sort-select"
+                  aria-label="${this.escape(
+                    this.i18n.t('settings_language_title')
+                  )}"
+                >
+                  <option value="__system__" ${
+                    this.i18n.isUsingSystemLocale ? 'selected' : ''
+                  }>🌐 ${this.escape(
+                    this.i18n.t('settings_language_system', {
+                      locale: this.i18n.detectedSystemLocale.toUpperCase()
+                    })
+                  )}</option>
+                  ${SUPPORTED_LOCALES.map(
+                    (loc) =>
+                      `<option value="${loc.code}" ${
+                        !this.i18n.isUsingSystemLocale &&
+                        this.i18n.activeLocale === loc.code
+                          ? 'selected'
+                          : ''
+                      }>${loc.flag} ${this.escape(loc.nativeName)} (${loc.code.toUpperCase()})</option>`
+                  ).join('')}
                 </select>
               </div>
               <button type="button" id="sp-new-item-btn" class="sp-btn sp-btn-primary">
@@ -2054,16 +2109,14 @@ export class SafePocketAppShell {
         <main class="sp-inspector" id="sp-inspector-pane">
           <div class="sp-inspector-inner">
             ${
-              this.selectedNav === 'SETTINGS'
-                ? this.renderSettingsAndAboutView()
-                : selectedItem
-                  ? this.renderItemInspector(selectedItem)
-                  : `<div style="padding:48px 0;text-align:center;color:var(--text-muted);display:flex;flex-direction:column;align-items:center;gap:14px;">
-                       <div>${this.escape(this.i18n.t('app_tagline'))}</div>
-                       <button type="button" id="sp-empty-new-btn" class="sp-btn sp-btn-primary">
-                         + ${this.escape(this.i18n.t('action_new_item'))}
-                       </button>
-                     </div>`
+              selectedItem
+                ? this.renderItemInspector(selectedItem)
+                : `<div style="padding:48px 0;text-align:center;color:var(--text-muted);display:flex;flex-direction:column;align-items:center;gap:14px;">
+                     <div>${this.escape(this.i18n.t('app_tagline'))}</div>
+                     <button type="button" id="sp-empty-new-btn" class="sp-btn sp-btn-primary">
+                       + ${this.escape(this.i18n.t('action_new_item'))}
+                     </button>
+                   </div>`
             }
           </div>
         </main>
@@ -2071,6 +2124,7 @@ export class SafePocketAppShell {
 
       ${this.renderBottomRightSyncPill()}
       ${this.renderMobileBottomNav()}
+      ${this.settingsModalOpen ? this.renderSettingsModal() : ''}
       ${this.editorDraft ? this.renderItemEditorModal() : ''}
       ${this.activePreview ? this.renderScanPreviewModal() : ''}
       ${this.presentationState ? this.renderPresentationModal() : ''}
@@ -2130,7 +2184,8 @@ export class SafePocketAppShell {
                       this.i18n.activeLocale === loc.code ? 'is-active' : ''
                     }"
                     data-onboard-locale="${loc.code}"
-                  >${loc.code.toUpperCase()}</button>
+                    title="${this.escape(`${loc.flag} ${loc.nativeName}`)}"
+                  >${loc.flag} ${loc.code.toUpperCase()}</button>
                 `
                 ).join('')}
               </div>
@@ -2320,7 +2375,14 @@ export class SafePocketAppShell {
     label: string,
     count?: number
   ): string {
-    const active = this.selectedNav === id ? 'is-active' : '';
+    const active =
+      id === 'SETTINGS'
+        ? this.settingsModalOpen
+          ? 'is-active'
+          : ''
+        : this.selectedNav === id
+          ? 'is-active'
+          : '';
     return `
       <button
         type="button"
@@ -2399,7 +2461,7 @@ export class SafePocketAppShell {
             type="button"
             class="sp-swipe-action-btn is-delete"
             data-swipe-delete="${this.escape(item.id)}"
-          >✕</button>
+          >🗑 ${this.escape(this.i18n.t('action_delete'))}</button>
         </div>
         <button
           type="button"
@@ -2415,7 +2477,7 @@ export class SafePocketAppShell {
                   item.favorite ? '★ ' : ''
                 }${this.escape(item.title)}</span>
                 <span class="sp-item-subtitle">${this.escape(
-                  item.subtitle || this.i18n.resolveCategoryName(item.category)
+                  this.i18n.resolveDisplaySubtitle(item.subtitle, item.category)
                 )}</span>
               </div>
             </div>
@@ -2428,8 +2490,8 @@ export class SafePocketAppShell {
                 tabindex="0"
                 data-entry-menu-btn="${this.escape(item.id)}"
                 style="padding:2px 5px;border-radius:6px;color:var(--text-muted);font-size:13px;line-height:1;"
-                title="Actions"
-                aria-label="Actions"
+                title="${this.escape(this.i18n.t('action_edit'))}"
+                aria-label="${this.escape(this.i18n.t('action_edit'))}"
               >⋮</span>
             </div>
           </div>
@@ -2486,13 +2548,13 @@ export class SafePocketAppShell {
           <div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <span style="font-size:11.5px;font-weight:650;color:var(--accent-primary);text-transform:uppercase;letter-spacing:0.05em;">
-                ${this.escape(this.i18n.resolveCategoryName(item.category))}
+                ${this.escape(this.i18n.resolveCategorySingularName(item.category))}
               </span>
               ${expiryBadge}
             </div>
             <h2 class="sp-inspector-title">${this.escape(item.title)}</h2>
             <div style="font-size:13px;color:var(--text-secondary);">${this.escape(
-              item.subtitle
+              this.i18n.resolveDisplaySubtitle(item.subtitle, item.category)
             )}</div>
           </div>
 
@@ -2906,7 +2968,7 @@ export class SafePocketAppShell {
       const contact =
         item.fields.find((f) => f.labelKey === 'field_email')?.value ??
         item.fields.find((f) => f.labelKey === 'field_phone')?.value ??
-        item.subtitle;
+        this.i18n.resolveDisplaySubtitle(item.subtitle, item.category);
 
       return `
         <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
@@ -3617,6 +3679,29 @@ export class SafePocketAppShell {
     `;
   }
 
+  private renderSettingsModal(): string {
+    return `
+      <div class="sp-overlay" id="sp-settings-modal-backdrop">
+        <div
+          class="sp-modal-card is-settings-modal"
+          id="sp-settings-modal-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="${this.escape(this.i18n.t('nav_settings'))}"
+        >
+          ${this.renderSettingsAndAboutView()}
+          <div class="sp-settings-modal-footer">
+            <button
+              type="button"
+              id="sp-done-settings-modal-btn"
+              class="sp-btn sp-btn-primary"
+            >${this.escape(this.i18n.t('action_done'))}</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   private renderSettingsAndAboutView(): string {
     const upd = this.updater.currentStatus;
     const versionDisplay = this.i18n.t('update_version_display', {
@@ -3625,7 +3710,7 @@ export class SafePocketAppShell {
     });
 
     return `
-      <div class="sp-inspector-header">
+      <div class="sp-inspector-header sp-settings-modal-header">
         <div>
           <h2 class="sp-inspector-title">${this.escape(
             this.i18n.t('nav_settings')
@@ -3634,9 +3719,18 @@ export class SafePocketAppShell {
             ${this.escape(this.i18n.t('app_tagline'))}
           </div>
         </div>
-        <span class="sp-zk-chip" style="font-size:12px;padding:5px 11px;" id="sp-about-version-badge">
-          ${this.escape(versionDisplay)}
-        </span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="sp-zk-chip" style="font-size:12px;padding:5px 11px;" id="sp-about-version-badge">
+            ${this.escape(versionDisplay)}
+          </span>
+          <button
+            type="button"
+            id="sp-close-settings-modal-btn"
+            class="sp-btn"
+            aria-label="${this.escape(this.i18n.t('action_close'))}"
+            title="${this.escape(this.i18n.t('action_close'))}"
+          >✕</button>
+        </div>
       </div>
 
       <!-- 0. Appearance & Material Theme (Light Default / Dark / Use Device Theme + Material Accent) -->
@@ -3769,7 +3863,7 @@ export class SafePocketAppShell {
             type="button"
             class="sp-btn ${this.i18n.isUsingSystemLocale ? 'sp-btn-tonal' : ''}"
             data-set-locale="__system__"
-          >${this.escape(
+          >🌐 ${this.escape(
             this.i18n.t('settings_language_system', {
               locale: this.i18n.detectedSystemLocale.toUpperCase()
             })
@@ -3785,7 +3879,7 @@ export class SafePocketAppShell {
                   : ''
               }"
               data-set-locale="${loc.code}"
-            >${this.escape(loc.nativeName)} (${loc.code.toUpperCase()})</button>
+            >${loc.flag} ${this.escape(loc.nativeName)} (${loc.code.toUpperCase()})</button>
           `
           ).join('')}
         </div>
@@ -4175,6 +4269,23 @@ export class SafePocketAppShell {
           />
         </label>
 
+        <label style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;cursor:pointer;padding:8px 0;border-top:1px solid var(--border-subtle);">
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+              ${this.escape(this.i18n.t('security_lock_on_standby_toggle'))}
+            </span>
+            <span style="font-size:11.5px;color:var(--text-secondary);">
+              ${this.escape(this.i18n.t('security_lock_on_standby_desc'))}
+            </span>
+          </div>
+          <input
+            id="sp-toggle-lock-standby"
+            type="checkbox"
+            ${this.autoLockMonitor.lockOnStandby ? 'checked' : ''}
+            style="margin-top:4px;width:18px;height:18px;accent-color:var(--accent-primary);"
+          />
+        </label>
+
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <span style="font-size:12.5px;font-weight:600;color:var(--text-secondary);">
             ${this.escape(this.i18n.t('expiry_window_setting_title'))}
@@ -4201,7 +4312,7 @@ export class SafePocketAppShell {
             ${this.escape(this.i18n.t('security_auto_lock'))}
           </span>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            ${([1, 5, 15] as AutoLockMinutes[])
+            ${([1, 5, 15, 0] as AutoLockMinutes[])
               .map(
                 (min) => `
                 <button
@@ -4211,7 +4322,9 @@ export class SafePocketAppShell {
                   }"
                   data-autolock-min="${min}"
                 >${this.escape(
-                  this.i18n.t(`security_auto_lock_${min}m`)
+                  min === 0
+                    ? this.i18n.t('security_auto_lock_never')
+                    : this.i18n.t(`security_auto_lock_${min}m`)
                 )}</button>
               `
               )
@@ -4386,7 +4499,15 @@ export class SafePocketAppShell {
             (t) => `
           <button
             type="button"
-            class="sp-nav-btn ${this.selectedNav === t.id ? 'is-active' : ''}"
+            class="sp-nav-btn ${
+              t.id === 'SETTINGS'
+                ? this.settingsModalOpen
+                  ? 'is-active'
+                  : ''
+                : this.selectedNav === t.id
+                  ? 'is-active'
+                  : ''
+            }"
             data-nav="${t.id}"
             style="flex-direction:column;justify-content:center;padding:4px;font-size:10.5px;text-align:center;gap:2px;"
           >
@@ -5554,6 +5675,36 @@ export class SafePocketAppShell {
             >${this.renderThemeToggleIconSvg()}</button>
           </div>
 
+          <div class="sp-lang-quick" role="group" aria-label="${this.escape(
+            this.i18n.t('settings_language_title')
+          )}" style="padding-top:2px;">
+            <button
+              type="button"
+              class="sp-lang-pill ${this.i18n.isUsingSystemLocale ? 'is-active' : ''}"
+              data-lock-locale="__system__"
+              title="${this.escape(
+                this.i18n.t('settings_language_system', {
+                  locale: this.i18n.detectedSystemLocale.toUpperCase()
+                })
+              )}"
+            >🌐</button>
+            ${SUPPORTED_LOCALES.map(
+              (loc) => `
+              <button
+                type="button"
+                class="sp-lang-pill ${
+                  !this.i18n.isUsingSystemLocale &&
+                  this.i18n.activeLocale === loc.code
+                    ? 'is-active'
+                    : ''
+                }"
+                data-lock-locale="${loc.code}"
+                title="${this.escape(loc.nativeName)}"
+              >${loc.flag} ${loc.code.toUpperCase()}</button>
+            `
+            ).join('')}
+          </div>
+
           ${
             this.wasAutoLocked
               ? `<div class="sp-badge sp-badge-warn" style="padding:7px 11px;border-radius:var(--radius-sm);">
@@ -5626,6 +5777,17 @@ export class SafePocketAppShell {
       .querySelector('#sp-lock-theme-toggle')
       ?.addEventListener('click', () => {
         this.toggleQuickTheme();
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-lock-locale]')
+      .forEach((pill) => {
+        pill.addEventListener('click', () => {
+          const val = pill.dataset.lockLocale;
+          this.i18n.setLocaleOverride(
+            val === '__system__' ? null : (val as SupportedLocale)
+          );
+        });
       });
 
     this.root
@@ -5855,8 +6017,7 @@ export class SafePocketAppShell {
       .querySelector('#sp-error-open-diagnostics')
       ?.addEventListener('click', () => {
         this.activeErrorBanner = null;
-        this.selectedNav = 'SETTINGS';
-        this.mobileDetailOpen = true;
+        this.settingsModalOpen = true;
         this.render();
         this.root
           .querySelector('#sp-diagnostics-section')
@@ -5866,17 +6027,35 @@ export class SafePocketAppShell {
     this.root
       .querySelector('#sp-sync-status-pill')
       ?.addEventListener('click', () => {
-        if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
-          if (this.selectedNav === 'SETTINGS') {
-            void this.runAutomaticCloudReconcile(true);
-          } else {
-            this.selectedNav = 'SETTINGS';
-            this.mobileDetailOpen = true;
-            this.render();
-          }
+        if (
+          this.syncCoordinator.storageMode === 'CLOUD_SYNC' &&
+          this.settingsModalOpen
+        ) {
+          void this.runAutomaticCloudReconcile(true);
         } else {
-          this.selectedNav = 'SETTINGS';
-          this.mobileDetailOpen = true;
+          this.settingsModalOpen = true;
+          this.render();
+        }
+      });
+
+    // Settings modal close & backdrop dismiss
+    this.root
+      .querySelector('#sp-close-settings-modal-btn')
+      ?.addEventListener('click', () => {
+        this.settingsModalOpen = false;
+        this.render();
+      });
+    this.root
+      .querySelector('#sp-done-settings-modal-btn')
+      ?.addEventListener('click', () => {
+        this.settingsModalOpen = false;
+        this.render();
+      });
+    this.root
+      .querySelector('#sp-settings-modal-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+          this.settingsModalOpen = false;
           this.render();
         }
       });
@@ -5947,11 +6126,17 @@ export class SafePocketAppShell {
         });
       });
 
-    // Navigation buttons
+    // Navigation buttons (Settings opens modal dialog instead of replacing right pane)
     this.root.querySelectorAll<HTMLElement>('[data-nav]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        this.selectedNav = btn.dataset.nav as NavSelection;
-        this.mobileDetailOpen = this.selectedNav === 'SETTINGS';
+        const nav = btn.dataset.nav as NavSelection;
+        if (nav === 'SETTINGS') {
+          this.settingsModalOpen = true;
+          this.render();
+          return;
+        }
+        this.selectedNav = nav;
+        this.mobileDetailOpen = false;
         this.render();
       });
     });
@@ -5961,12 +6146,23 @@ export class SafePocketAppShell {
       this.render();
     });
 
-    // Quick language switcher pills & Settings language buttons
+    // Quick language switcher pills (with country flags), compact select & Settings language buttons
     this.root.querySelectorAll<HTMLElement>('[data-locale]').forEach((pill) => {
       pill.addEventListener('click', () => {
-        this.i18n.setLocaleOverride(pill.dataset.locale as SupportedLocale);
+        const val = pill.dataset.locale;
+        this.i18n.setLocaleOverride(
+          val === '__system__' ? null : (val as SupportedLocale)
+        );
       });
     });
+    this.root
+      .querySelector<HTMLSelectElement>('#sp-main-lang-select')
+      ?.addEventListener('change', (e) => {
+        const val = (e.target as HTMLSelectElement).value;
+        this.i18n.setLocaleOverride(
+          val === '__system__' ? null : (val as SupportedLocale)
+        );
+      });
     this.root
       .querySelectorAll<HTMLElement>('[data-set-locale]')
       .forEach((btn) => {
@@ -6980,6 +7176,21 @@ export class SafePocketAppShell {
 
         let savedTarget: VaultItem | null = null;
 
+        const rawSubTrimmed = draft.subtitle.trim();
+        const isRawCategoryEnum = [
+          'PAYMENT_CARD',
+          'BANK_ACCOUNT',
+          'INSURANCE_CARD',
+          'IDENTITY',
+          'OFFICIAL_DOCUMENT',
+          'MEMBERSHIP_CARD',
+          'SECURE_NOTE'
+        ].includes(rawSubTrimmed.toUpperCase());
+        const normalizedSubtitle =
+          rawSubTrimmed && !isRawCategoryEnum
+            ? rawSubTrimmed
+            : this.i18n.resolveCategorySingularName(draft.category);
+
         if (draft.editingItemId) {
           const existing = this.items.find(
             (i) => i.id === draft.editingItemId
@@ -6987,9 +7198,7 @@ export class SafePocketAppShell {
           if (existing) {
             existing.category = draft.category;
             existing.title = title;
-            existing.subtitle =
-              draft.subtitle.trim() ||
-              this.i18n.resolveCategoryName(draft.category);
+            existing.subtitle = normalizedSubtitle;
             existing.cardTheme = buildCardTheme(existing.cardTheme);
             existing.tags = tags;
             existing.fields = fields;
@@ -7008,9 +7217,7 @@ export class SafePocketAppShell {
             isSampleItem: false,
             category: draft.category,
             title,
-            subtitle:
-              draft.subtitle.trim() ||
-              this.i18n.resolveCategoryName(draft.category),
+            subtitle: normalizedSubtitle,
             favorite: false,
             tags,
             cardTheme: buildCardTheme(undefined),
@@ -7704,6 +7911,15 @@ export class SafePocketAppShell {
       .querySelector<HTMLInputElement>('#sp-toggle-auto-logos')
       ?.addEventListener('change', (e) => {
         this.setAutoDownloadLogos((e.target as HTMLInputElement).checked);
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-toggle-lock-standby')
+      ?.addEventListener('change', (e) => {
+        this.autoLockMonitor.setLockOnStandby(
+          (e.target as HTMLInputElement).checked
+        );
+        this.render();
       });
 
     this.root

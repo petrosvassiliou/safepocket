@@ -23,6 +23,17 @@ enum MacSupportedLocale: String, CaseIterable, Identifiable {
         case .el: return "Ελληνικά"
         }
     }
+
+    var flagEmoji: String {
+        switch self {
+        case .en: return "🇬🇧"
+        case .de: return "🇩🇪"
+        case .it: return "🇮🇹"
+        case .fr: return "🇫🇷"
+        case .es: return "🇪🇸"
+        case .el: return "🇬🇷"
+        }
+    }
 }
 
 final class MacLocalizationEngine {
@@ -48,6 +59,10 @@ final class MacLocalizationEngine {
         return MacSupportedLocale(rawValue: overrideCode) ?? Self.detectedSystemLocale
     }
 
+    func hasKey(_ key: String) -> Bool {
+        catalogs[.en]?[key] != nil || Self.builtInFallback[key] != nil
+    }
+
     func t(_ key: String, localeCode: String, params: [String: String] = [:]) -> String {
         let active = resolveActiveLocale(overrideCode: localeCode)
         let raw = catalogs[active]?[key]
@@ -58,6 +73,37 @@ final class MacLocalizationEngine {
         return params.reduce(raw) { acc, pair in
             acc.replacingOccurrences(of: "{\(pair.key)}", with: pair.value)
         }
+    }
+
+    func resolveCategorySingularName(category: String, localeCode: String) -> String {
+        switch category {
+        case "PAYMENT_CARD": return t("category_singular_payment_card", localeCode: localeCode)
+        case "BANK_ACCOUNT": return t("category_singular_bank_account", localeCode: localeCode)
+        case "INSURANCE_CARD": return t("category_singular_insurance_card", localeCode: localeCode)
+        case "MEMBERSHIP_CARD": return t("category_singular_membership_card", localeCode: localeCode)
+        case "IDENTITY": return t("category_singular_identity", localeCode: localeCode)
+        case "OFFICIAL_DOCUMENT": return t("category_singular_official_document", localeCode: localeCode)
+        case "SECURE_NOTE": return t("category_singular_secure_note", localeCode: localeCode)
+        default: return t("category_singular_secure_note", localeCode: localeCode)
+        }
+    }
+
+    func resolveDisplaySubtitle(subtitle: String, category: String, localeCode: String) -> String {
+        let trimmed = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return resolveCategorySingularName(category: category, localeCode: localeCode)
+        }
+        switch trimmed.uppercased() {
+        case "PAYMENT_CARD", "BANK_ACCOUNT", "INSURANCE_CARD", "MEMBERSHIP_CARD",
+             "IDENTITY", "OFFICIAL_DOCUMENT", "SECURE_NOTE":
+            return resolveCategorySingularName(category: trimmed.uppercased(), localeCode: localeCode)
+        default:
+            break
+        }
+        if hasKey(trimmed) {
+            return t(trimmed, localeCode: localeCode)
+        }
+        return trimmed
     }
 
     func resolveFieldLabel(key: String, isCustom: Bool, category: String, localeCode: String) -> String {
@@ -107,6 +153,7 @@ final class MacLocalizationEngine {
         "nav_all_items": "All Items",
         "nav_favorites": "Favorites",
         "nav_settings": "Settings",
+        "action_done": "Done",
         "category_payment_card": "Payment Cards",
         "category_bank_account": "Bank Accounts",
         "category_insurance_card": "Insurance Cards",
@@ -114,6 +161,16 @@ final class MacLocalizationEngine {
         "category_identity": "Identities",
         "category_official_document": "Official Documents",
         "category_secure_note": "Secure Notes",
+        "category_singular_payment_card": "Payment Card",
+        "category_singular_bank_account": "Bank Account",
+        "category_singular_insurance_card": "Insurance Policy",
+        "category_singular_membership_card": "Membership Card",
+        "category_singular_identity": "Identity & Tax ID",
+        "category_singular_official_document": "Official Document",
+        "category_singular_secure_note": "Secure Note",
+        "security_auto_lock_never": "Never",
+        "security_lock_on_standby_toggle": "Lock vault when computer / device goes to standby",
+        "security_lock_on_standby_desc": "Immediately wipes encryption keys from memory on system sleep, lid close, or screen lock — even if inactivity auto-lock is set to Never.",
         "storage_mode_section_title": "Vault Storage Mode",
         "storage_mode_local_only_title": "Local Storage Only (Encrypted Device DB)",
         "storage_mode_local_only_desc": "Stored exclusively on this device. Cloud Sync is disabled and zero vault data is stored online.",

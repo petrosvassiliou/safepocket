@@ -71,6 +71,13 @@ struct SafePocketMacApp: App {
         }
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(vaultState.t("nav_settings") + "…") {
+                    vaultState.presentSettingsSheet = true
+                }
+                .keyboardShortcut(",", modifiers: [.command])
+            }
+
             CommandGroup(after: .appInfo) {
                 Button(vaultState.t("update_check_btn") + "…") {
                     updater.checkForUpdatesInitiatedByUser()
@@ -96,16 +103,6 @@ struct SafePocketMacApp: App {
                 }
                 .keyboardShortcut("f", modifiers: [.command])
             }
-        }
-
-        Settings {
-            MacSettingsAndAboutView(vaultState: vaultState, updater: updater)
-                .frame(minWidth: 740, minHeight: 700)
-                .preferredColorScheme(resolvedColorScheme)
-                .tint(vaultState.materialAccent.swiftUIColor)
-                .onAppear {
-                    NSApplication.shared.activate(ignoringOtherApps: true)
-                }
         }
     }
 }
@@ -145,9 +142,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3.2"
-    let currentVersionCode = 7
-    let currentVersionDisplay = "SafePocket v0.3.2 (Build 7)"
+    let currentVersionName = "0.3.3"
+    let currentVersionCode = 8
+    let currentVersionDisplay = "SafePocket v0.3.3 (Build 8)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -400,6 +397,11 @@ final class MacVaultViewModel: ObservableObject {
             restartInactivityAutoLockTimer()
         }
     }
+    @Published var lockOnStandby: Bool {
+        didSet {
+            UserDefaults.standard.set(lockOnStandby, forKey: "safepocket.lock_on_standby")
+        }
+    }
     @Published var includeLoginsOnImport: Bool {
         didSet { UserDefaults.standard.set(includeLoginsOnImport, forKey: "safepocket.import_include_logins") }
     }
@@ -414,6 +416,7 @@ final class MacVaultViewModel: ObservableObject {
 
     // Navigation & UI State
     @Published var isLocked: Bool = false
+    @Published var presentSettingsSheet: Bool = false
     @Published var presentEditorSheet: Bool = false
     @Published var editingEntry: MacVaultEntry?
     @Published var focusSearchField: Bool = false
@@ -452,6 +455,7 @@ final class MacVaultViewModel: ObservableObject {
 
     private var clipboardClearTask: Task<Void, Never>?
     private var inactivityTimerTask: Task<Void, Never>?
+    private var standbyObserverTokens: [NSObjectProtocol] = []
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.safepocket.mac.netmonitor")
     private let samplePurgedKey = "safepocket.sample_data_purged_v03"
@@ -473,8 +477,17 @@ final class MacVaultViewModel: ObservableObject {
         }
         let savedExp = UserDefaults.standard.integer(forKey: "safepocket.expiry_window_days")
         self.expiryWindowDays = [30, 60, 90, 180].contains(savedExp) ? savedExp : 90
-        let savedAutoLock = UserDefaults.standard.integer(forKey: "safepocket.autolock_minutes")
-        self.autoLockMinutes = [1, 5, 15].contains(savedAutoLock) ? savedAutoLock : 5
+        if UserDefaults.standard.object(forKey: "safepocket.autolock_minutes") == nil {
+            self.autoLockMinutes = 5
+        } else {
+            let savedAutoLock = UserDefaults.standard.integer(forKey: "safepocket.autolock_minutes")
+            self.autoLockMinutes = [0, 1, 5, 15].contains(savedAutoLock) ? savedAutoLock : 5
+        }
+        if UserDefaults.standard.object(forKey: "safepocket.lock_on_standby") == nil {
+            self.lockOnStandby = true
+        } else {
+            self.lockOnStandby = UserDefaults.standard.bool(forKey: "safepocket.lock_on_standby")
+        }
         self.includeLoginsOnImport = UserDefaults.standard.bool(forKey: "safepocket.import_include_logins")
         self.masterPasswordHint = UserDefaults.standard.string(forKey: "safepocket.master_pw_hint") ?? ""
 
@@ -520,6 +533,7 @@ final class MacVaultViewModel: ObservableObject {
         selectedEntryId = entries.first?.id
         recalculateStorageIsolationCounts()
         startAutomaticConnectivityMonitor()
+        registerStandbyAndSleepObservers()
         restartInactivityAutoLockTimer()
     }
 
@@ -533,6 +547,14 @@ final class MacVaultViewModel: ObservableObject {
 
     func resolveFieldLabel(key: String, isCustom: Bool, category: String) -> String {
         i18n.resolveFieldLabel(key: key, isCustom: isCustom, category: category, localeCode: localeOverrideCode)
+    }
+
+    func categorySingularName(_ category: String) -> String {
+        i18n.resolveCategorySingularName(category: category, localeCode: localeOverrideCode)
+    }
+
+    func displaySubtitle(for entry: MacVaultEntry) -> String {
+        i18n.resolveDisplaySubtitle(subtitle: entry.subtitle, category: entry.category, localeCode: localeOverrideCode)
     }
 
     var sampleEntriesCount: Int {
@@ -582,7 +604,7 @@ final class MacVaultViewModel: ObservableObject {
         entries
             .filter { item in
                 switch selectedCategory {
-                case "all", "SETTINGS": return true
+                case "all": return true
                 case "favorites": return item.favorite
                 default: return item.category == selectedCategory
                 }
@@ -591,6 +613,7 @@ final class MacVaultViewModel: ObservableObject {
                 let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 guard !q.isEmpty else { return true }
                 return item.title.lowercased().contains(q)
+                    || displaySubtitle(for: item).lowercased().contains(q)
                     || item.subtitle.lowercased().contains(q)
                     || item.websiteUrl.lowercased().contains(q)
                     || item.fields.contains(where: { $0.value.lowercased().contains(q) })
@@ -613,9 +636,36 @@ final class MacVaultViewModel: ObservableObject {
         }
     }
 
+    private func registerStandbyAndSleepObservers() {
+        let wsCenter = NSWorkspace.shared.notificationCenter
+        let handleStandby: @Sendable (Notification) -> Void = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.lockOnStandby, !self.isLocked else { return }
+                self.lockVault()
+                self.recordDiagnostic(operation: "security.standbyLock", detail: "Vault locked automatically on system standby / sleep")
+            }
+        }
+        standbyObserverTokens.append(
+            wsCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main, using: handleStandby)
+        )
+        standbyObserverTokens.append(
+            wsCenter.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main, using: handleStandby)
+        )
+        standbyObserverTokens.append(
+            DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name("com.apple.screenIsLocked"),
+                object: nil,
+                queue: .main,
+                using: handleStandby
+            )
+        )
+    }
+
     func restartInactivityAutoLockTimer() {
         inactivityTimerTask?.cancel()
-        let seconds = UInt64(max(1, autoLockMinutes)) * 60
+        inactivityTimerTask = nil
+        guard autoLockMinutes > 0 else { return }
+        let seconds = UInt64(autoLockMinutes) * 60
         inactivityTimerTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
             guard !Task.isCancelled else { return }

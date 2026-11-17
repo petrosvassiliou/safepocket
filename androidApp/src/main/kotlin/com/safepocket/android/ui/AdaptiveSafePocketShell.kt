@@ -198,12 +198,30 @@ fun AdaptiveSafePocketShell(
     }
     var autoLockMinutes by remember {
         val saved = prefs.getInt("auto_lock_minutes", 5)
-        mutableIntStateOf(if (saved in listOf(1, 5, 15)) saved else 5)
+        mutableIntStateOf(if (saved in listOf(0, 1, 5, 15)) saved else 5)
+    }
+    var lockOnStandby by remember {
+        mutableStateOf(prefs.getBoolean("lock_on_standby", true))
+    }
+
+    DisposableEffect(context, lockOnStandby) {
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: android.content.Intent?) {
+                if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF && lockOnStandby) {
+                    onLockVault()
+                }
+            }
+        }
+        val filter = android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF)
+        runCatching { context.registerReceiver(receiver, filter) }
+        onDispose {
+            runCatching { context.unregisterReceiver(receiver) }
+        }
     }
 
     LaunchedEffect(autoLockMinutes, isVaultLocked, items, selectedItem, searchQuery, showSettingsDialog, showEditorDialog) {
-        if (!isVaultLocked) {
-            delay(autoLockMinutes.coerceAtLeast(1) * 60_000L)
+        if (!isVaultLocked && autoLockMinutes > 0) {
+            delay(autoLockMinutes * 60_000L)
             onLockVault()
         }
     }
@@ -299,6 +317,7 @@ fun AdaptiveSafePocketShell(
                                     Key.N -> { onNewItem(); true }
                                     Key.E -> { selectedItem?.let { onEditItem(it) }; true }
                                     Key.L -> { onLockVault(); true }
+                                    Key.Comma -> { onOpenSettings(); true }
                                     else -> false
                                 }
                             } else false
@@ -326,6 +345,9 @@ fun AdaptiveSafePocketShell(
                                 if (isVaultLocked) {
                                     LockedVaultView(
                                         i18n = i18n,
+                                        activeLocale = activeLocale,
+                                        manualLocaleOverride = manualLocaleOverride,
+                                        onSelectLocaleOverride = onSelectLocaleOverride,
                                         requiresPassword = hasCustomMasterPassword,
                                         onUnlockWithPassword = onUnlockVaultWithPassword
                                     )
@@ -364,8 +386,8 @@ fun AdaptiveSafePocketShell(
                                                         }
 
                                                         // Fixed Non-Truncated Sidebar Footer:
-                                                        // Row 1: Full-width Settings button (never clips "Einstellungen"!)
-                                                        // Row 2: Bottom-Left Theme Toggle + Version + Lock
+                                                        // Row 1: Full-width Settings button (opens modal dialog)
+                                                        // Row 2: Theme Toggle + Flag Language Selector + Lock + Version
                                                         Column(
                                                             modifier = Modifier.padding(top = 8.dp),
                                                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -387,26 +409,31 @@ fun AdaptiveSafePocketShell(
                                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                                 verticalAlignment = Alignment.CenterVertically
                                                             ) {
-                                                                // Bottom-Left Corner Theme Switcher Icon
                                                                 SmoothOutlinedButton(
                                                                     onClick = cycleTheme,
-                                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                                                                 ) {
                                                                     Text(themeGlyph)
                                                                 }
-                                                                Text(
-                                                                    text = "v${AppBuildInfo.CURRENT_VERSION_NAME} (b${AppBuildInfo.CURRENT_VERSION_CODE})",
-                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                    maxLines = 1
+                                                                MainAppFlagLanguageSelector(
+                                                                    i18n = i18n,
+                                                                    activeLocale = activeLocale,
+                                                                    manualLocaleOverride = manualLocaleOverride,
+                                                                    onSelectLocaleOverride = onSelectLocaleOverride
                                                                 )
                                                                 SmoothOutlinedButton(
                                                                     onClick = onLockVault,
-                                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                                                                 ) {
                                                                     Text("🔒")
                                                                 }
                                                             }
+                                                            Text(
+                                                                text = "v${AppBuildInfo.CURRENT_VERSION_NAME} (b${AppBuildInfo.CURRENT_VERSION_CODE})",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                maxLines = 1
+                                                            )
                                                         }
                                                     }
                                                 }
@@ -526,11 +553,23 @@ fun AdaptiveSafePocketShell(
                                                                 )
                                                             }
                                                         }
-                                                        SmoothOutlinedButton(
-                                                            onClick = cycleTheme,
-                                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                                        Column(
+                                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                                            verticalArrangement = Arrangement.spacedBy(6.dp)
                                                         ) {
-                                                            Text(themeGlyph)
+                                                            MainAppFlagLanguageSelector(
+                                                                i18n = i18n,
+                                                                activeLocale = activeLocale,
+                                                                manualLocaleOverride = manualLocaleOverride,
+                                                                onSelectLocaleOverride = onSelectLocaleOverride,
+                                                                compact = true
+                                                            )
+                                                            SmoothOutlinedButton(
+                                                                onClick = cycleTheme,
+                                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                                            ) {
+                                                                Text(themeGlyph)
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -605,7 +644,17 @@ fun AdaptiveSafePocketShell(
                                                                 verticalAlignment = Alignment.CenterVertically
                                                             ) {
                                                                 BrandHeaderRow(title = i18n.t("app_name"))
-                                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                                Row(
+                                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    MainAppFlagLanguageSelector(
+                                                                        i18n = i18n,
+                                                                        activeLocale = activeLocale,
+                                                                        manualLocaleOverride = manualLocaleOverride,
+                                                                        onSelectLocaleOverride = onSelectLocaleOverride,
+                                                                        compact = true
+                                                                    )
                                                                     SmoothPrimaryButton(
                                                                         onClick = onNewItem,
                                                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
@@ -616,7 +665,7 @@ fun AdaptiveSafePocketShell(
                                                                         onClick = onOpenSettings,
                                                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                                                                     ) {
-                                                                        Text("⚙ ${i18n.t("nav_settings")}", maxLines = 1)
+                                                                        Text("⚙")
                                                                     }
                                                                 }
                                                             }
@@ -838,6 +887,11 @@ fun AdaptiveSafePocketShell(
                             onSelectAutoLockMinutes = { mins ->
                                 autoLockMinutes = mins
                                 prefs.edit().putInt("auto_lock_minutes", mins).apply()
+                            },
+                            lockOnStandby = lockOnStandby,
+                            onToggleLockOnStandby = { enabled ->
+                                lockOnStandby = enabled
+                                prefs.edit().putBoolean("lock_on_standby", enabled).apply()
                             },
                             manualLocaleOverride = manualLocaleOverride,
                             localDbStatus = localDbStatus,
@@ -1098,15 +1152,7 @@ private fun categoryLabel(i18n: LocalizationEngine, category: VaultCategory): St
     }
 
 private fun categorySingularLabel(i18n: LocalizationEngine, category: VaultCategory): String =
-    when (category) {
-        VaultCategory.PAYMENT_CARD -> i18n.t("category_payment_card")
-        VaultCategory.BANK_ACCOUNT -> i18n.t("category_bank_account")
-        VaultCategory.INSURANCE_CARD -> i18n.t("category_insurance_card")
-        VaultCategory.MEMBERSHIP_CARD -> i18n.t("category_membership_card")
-        VaultCategory.IDENTITY -> i18n.t("category_identity")
-        VaultCategory.OFFICIAL_DOCUMENT -> i18n.t("category_official_document")
-        VaultCategory.SECURE_NOTE -> i18n.t("category_secure_note")
-    }
+    i18n.resolveCategorySingularName(category)
 
 private fun categoryIcon(category: VaultCategory): String =
     when (category) {
@@ -1235,7 +1281,7 @@ private fun SwipeAndContextVaultItemRow(
     onDelete: () -> Unit
 ) {
     val density = LocalDensity.current
-    val actionTrayWidthPx = with(density) { 184.dp.toPx() }
+    val actionTrayWidthPx = with(density) { 216.dp.toPx() }
     val pinTriggerPx = with(density) { 88.dp.toPx() }
 
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
@@ -1300,14 +1346,24 @@ private fun SwipeAndContextVaultItemRow(
                     Text("⎘")
                 }
                 Spacer(Modifier.width(4.dp))
-                SmoothOutlinedButton(
+                Button(
                     onClick = {
                         dragOffsetPx = 0f
                         onDelete()
                     },
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFDC2626),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                 ) {
-                    Text("🗑")
+                    Text(
+                        text = "🗑 ${i18n.t("action_delete")}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
                 }
             }
         }
@@ -1405,7 +1461,7 @@ private fun SwipeAndContextVaultItemRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    val subtitle = item.subtitle.ifBlank { categorySingularLabel(i18n, item.category) }
+                    val subtitle = i18n.resolveDisplaySubtitle(item.subtitle, item.category)
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
@@ -1559,12 +1615,17 @@ private fun VaultDetailInspectorPane(
         if (selectedItem.category != VaultCategory.SECURE_NOTE && selectedItem.cardTheme?.showVisualCard != false) {
             DualBrandVisualCardHero(
                 item = selectedItem,
-                categoryLabelText = categorySingularLabel(i18n, selectedItem.category)
+                categoryLabelText = categorySingularLabel(i18n, selectedItem.category),
+                displaySubtitleText = i18n.resolveDisplaySubtitle(selectedItem.subtitle, selectedItem.category)
             )
         } else {
             Text(selectedItem.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
             if (selectedItem.subtitle.isNotBlank()) {
-                Text(selectedItem.subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    i18n.resolveDisplaySubtitle(selectedItem.subtitle, selectedItem.category),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -1753,11 +1814,14 @@ private fun VaultItemEditorDialog(
                 isSensitive = cf.isSensitive
             )
         }
+        val cleanedSubtitle = subtitle.trim()
+            .takeUnless { raw -> VaultCategory.entries.any { it.name.equals(raw, ignoreCase = true) } }
+            .orEmpty()
         val rawItem = VaultItemPayload(
             id = existingItem?.id ?: "item-$now",
             category = category,
             title = title.trim().ifBlank { categorySingularLabel(i18n, category) },
-            subtitle = subtitle.trim(),
+            subtitle = cleanedSubtitle,
             favorite = existingItem?.favorite ?: false,
             pinned = existingItem?.pinned ?: false,
             isSampleItem = false,
@@ -1806,7 +1870,8 @@ private fun VaultItemEditorDialog(
                     if (category != VaultCategory.SECURE_NOTE) {
                         DualBrandVisualCardHero(
                             item = livePreviewItem,
-                            categoryLabelText = categorySingularLabel(i18n, category)
+                            categoryLabelText = categorySingularLabel(i18n, category),
+                            displaySubtitleText = i18n.resolveDisplaySubtitle(livePreviewItem.subtitle, category)
                         )
                         val detectedInst = liveBrand.institution
                         if (detectedInst != null) {
@@ -2039,7 +2104,7 @@ private fun VaultItemEditorDialog(
                                     OutlinedTextField(
                                         value = draft.value,
                                         onValueChange = { customFields[index] = draft.copy(value = it) },
-                                        label = { Text("Value") },
+                                        label = { Text(i18n.t("editor_field_value_placeholder")) },
                                         singleLine = true,
                                         modifier = Modifier.weight(1f)
                                     )
@@ -2106,6 +2171,8 @@ private fun SafePocketSettingsDialog(
     onSelectExpiryWindowDays: (Int) -> Unit = {},
     autoLockMinutes: Int = 5,
     onSelectAutoLockMinutes: (Int) -> Unit = {},
+    lockOnStandby: Boolean = true,
+    onToggleLockOnStandby: (Boolean) -> Unit = {},
     manualLocaleOverride: SupportedLocale?,
     localDbStatus: LocalEncryptedDbStatus?,
     cloudSyncStatus: CloudSyncStatusSnapshot?,
@@ -3058,6 +3125,29 @@ private fun SafePocketSettingsDialog(
                                 }
                             }
                             HorizontalDivider()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                    Text(
+                                        text = i18n.t("security_lock_on_standby_toggle"),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = i18n.t("security_lock_on_standby_desc"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = lockOnStandby,
+                                    onCheckedChange = onToggleLockOnStandby
+                                )
+                            }
+                            HorizontalDivider()
                             Text(
                                 text = i18n.t("security_auto_lock"),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -3070,7 +3160,8 @@ private fun SafePocketSettingsDialog(
                                 listOf(
                                     1 to i18n.t("security_auto_lock_1m"),
                                     5 to i18n.t("security_auto_lock_5m"),
-                                    15 to i18n.t("security_auto_lock_15m")
+                                    15 to i18n.t("security_auto_lock_15m"),
+                                    0 to i18n.t("security_auto_lock_never")
                                 ).forEach { (mins, label) ->
                                     SmoothFilterPill(
                                         selected = autoLockMinutes == mins,
@@ -3160,16 +3251,16 @@ private fun SafePocketSettingsDialog(
                                 SmoothFilterPill(
                                     selected = manualLocaleOverride == null,
                                     onClick = { onSelectLocaleOverride(null) },
-                                    label = i18n.t(
+                                    label = "🌐 " + i18n.t(
                                         "settings_language_system",
-                                        mapOf("locale" to i18n.detectedSystemLocale.nativeDisplayName)
+                                        mapOf("locale" to "${i18n.detectedSystemLocale.flagEmoji} ${i18n.detectedSystemLocale.nativeDisplayName}")
                                     )
                                 )
                                 SupportedLocale.entries.forEach { locale ->
                                     SmoothFilterPill(
                                         selected = manualLocaleOverride == locale,
                                         onClick = { onSelectLocaleOverride(locale) },
-                                        label = locale.nativeDisplayName
+                                        label = "${locale.flagEmoji} ${locale.nativeDisplayName}"
                                     )
                                 }
                             }
@@ -3249,7 +3340,7 @@ private fun SafePocketSettingsDialog(
         confirmButton = {
             ProvideSeamFreeHoverIndication {
                 SmoothPrimaryButton(onClick = onDismiss) {
-                    Text("OK")
+                    Text(i18n.t("action_done"))
                 }
             }
         }
@@ -3257,8 +3348,85 @@ private fun SafePocketSettingsDialog(
 }
 
 @Composable
+private fun MainAppFlagLanguageSelector(
+    i18n: LocalizationEngine,
+    activeLocale: SupportedLocale,
+    manualLocaleOverride: SupportedLocale?,
+    onSelectLocaleOverride: (SupportedLocale?) -> Unit,
+    compact: Boolean = false
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val badgeFlag = if (manualLocaleOverride == null) {
+        "🌐 ${activeLocale.flagEmoji}"
+    } else {
+        activeLocale.flagEmoji
+    }
+
+    Box {
+        SmoothOutlinedButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(
+                horizontal = if (compact) 8.dp else 10.dp,
+                vertical = if (compact) 6.dp else 8.dp
+            )
+        ) {
+            Text(
+                text = if (compact) {
+                    activeLocale.flagEmoji
+                } else {
+                    "$badgeFlag ${activeLocale.code.uppercase()}"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            ProvideSeamFreeHoverIndication {
+                Column {
+                    DropdownMenuItem(
+                        text = {
+                            val check = if (manualLocaleOverride == null) "✓ " else ""
+                            Text(
+                                "${check}🌐 " + i18n.t(
+                                    "settings_language_system",
+                                    mapOf("locale" to "${i18n.detectedSystemLocale.flagEmoji} ${i18n.detectedSystemLocale.nativeDisplayName}")
+                                )
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            onSelectLocaleOverride(null)
+                        }
+                    )
+                    HorizontalDivider()
+                    SupportedLocale.entries.forEach { locale ->
+                        DropdownMenuItem(
+                            text = {
+                                val check = if (manualLocaleOverride == locale) "✓ " else ""
+                                Text("$check${locale.flagEmoji}  ${locale.nativeDisplayName} (${locale.code.uppercase()})")
+                            },
+                            onClick = {
+                                expanded = false
+                                onSelectLocaleOverride(locale)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun LockedVaultView(
     i18n: LocalizationEngine,
+    activeLocale: SupportedLocale,
+    manualLocaleOverride: SupportedLocale?,
+    onSelectLocaleOverride: (SupportedLocale?) -> Unit,
     requiresPassword: Boolean,
     onUnlockWithPassword: suspend (String) -> Boolean
 ) {
@@ -3273,6 +3441,17 @@ private fun LockedVaultView(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    MainAppFlagLanguageSelector(
+                        i18n = i18n,
+                        activeLocale = activeLocale,
+                        manualLocaleOverride = manualLocaleOverride,
+                        onSelectLocaleOverride = onSelectLocaleOverride
+                    )
+                }
                 Image(
                     painter = painterResource(id = R.drawable.ic_safepocket_brand),
                     contentDescription = i18n.t("app_name"),
@@ -3299,6 +3478,13 @@ private fun LockedVaultView(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (unlockError) {
+                        Text(
+                            text = i18n.t("security_invalid_master_password"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
                 Spacer(Modifier.height(4.dp))
                 SmoothPrimaryButton(

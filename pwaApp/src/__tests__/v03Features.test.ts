@@ -16,7 +16,8 @@ import {
   SafePocketDiagnosticsCenter,
   scrubSensitiveDiagnosticText
 } from '../error/errorHandler';
-import { SafePocketI18n } from '../i18n/l10n';
+import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
+import { IdleAutoLockMonitor } from '../security/autoLockMonitor';
 import {
   FirebaseZeroKnowledgeAdapter,
   GoogleDriveAppDataAdapter,
@@ -34,7 +35,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
+describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -298,9 +299,9 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.2 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.2');
-    expect(APP_BUILD_INFO.versionCode).toBe(7);
+  it('7. Cross-Platform v0.3.3 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.3');
+    expect(APP_BUILD_INFO.versionCode).toBe(8);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -374,7 +375,7 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.2 (Build 7)');
+    expect(macApp).toContain('SafePocket v0.3.3 (Build 8)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
@@ -536,5 +537,185 @@ describe('SafePocket v0.3 (Build 5) Feature Suite', () => {
     expect(macSplit).not.toContain('!cloudEmailInput.contains("@")');
     expect(macSplit).not.toContain('cloudPasswordInput.count < 6');
     expect(androidShell).not.toContain('&& cloudEmail.contains("@")');
+  });
+
+  it('10. v0.3.3 Display-String Hygiene & Cross-Repo ARB Completeness (Zero Raw Enum Subtitles or Unlocalized Keys)', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const locales = ['en', 'de', 'it', 'fr', 'es', 'el'] as const;
+    const catalogs = locales.map(
+      (loc) =>
+        JSON.parse(
+          fs.readFileSync(path.join(repoRoot, `i18n/${loc}.arb.json`), 'utf-8')
+        ) as Record<string, string>
+    );
+
+    const enKeySet = new Set(
+      Object.keys(catalogs[0]).filter((k) => !k.startsWith('@'))
+    );
+    expect(enKeySet.size).toBeGreaterThanOrEqual(367);
+    for (const cat of catalogs) {
+      const locKeys = Object.keys(cat).filter((k) => !k.startsWith('@'));
+      expect(locKeys.length).toBe(enKeySet.size);
+      for (const k of enKeySet) {
+        expect(typeof cat[k]).toBe('string');
+        expect(cat[k].trim().length).toBeGreaterThan(0);
+      }
+    }
+
+    // Collect every literal localization key referenced via .t('...') / .t("...") or labelKey across Swift, Kotlin, and TypeScript
+    const walkFiles = (dir: string, exts: string[]): string[] => {
+      if (!fs.existsSync(dir)) return [];
+      const out: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '__tests__') {
+            continue;
+          }
+          out.push(...walkFiles(full, exts));
+        } else if (exts.some((ext) => entry.name.endsWith(ext))) {
+          out.push(full);
+        }
+      }
+      return out;
+    };
+
+    const sourceFiles = [
+      ...walkFiles(path.join(repoRoot, 'macosApp'), ['.swift']),
+      ...walkFiles(path.join(repoRoot, 'androidApp/src'), ['.kt']),
+      ...walkFiles(path.join(repoRoot, 'shared/src'), ['.kt']),
+      ...walkFiles(path.join(repoRoot, 'pwaApp/src'), ['.ts'])
+    ];
+
+    const missingKeys: string[] = [];
+    const literalTRegex = /\.t\(\s*['"]([a-z0-9_]+)['"]/g;
+    const literalPluralRegex = /\.plural\(\s*['"]([a-z0-9_]+)['"]/g;
+    const fieldKeyRegex = /['"](field_[a-z0-9_]+)['"]/g;
+    for (const file of sourceFiles) {
+      const content = fs.readFileSync(file, 'utf-8');
+      for (const match of content.matchAll(literalTRegex)) {
+        const key = match[1];
+        if (!enKeySet.has(key)) {
+          missingKeys.push(`${path.relative(repoRoot, file)} -> ${key}`);
+        }
+      }
+      for (const match of content.matchAll(literalPluralRegex)) {
+        const base = match[1];
+        if (!enKeySet.has(`${base}_one`) || !enKeySet.has(`${base}_other`)) {
+          missingKeys.push(`${path.relative(repoRoot, file)} -> plural:${base}`);
+        }
+      }
+      for (const match of content.matchAll(fieldKeyRegex)) {
+        const key = match[1];
+        if (!enKeySet.has(key)) {
+          missingKeys.push(`${path.relative(repoRoot, file)} -> ${key}`);
+        }
+      }
+    }
+    expect(missingKeys).toEqual([]);
+
+    // Verify raw internal enum names (e.g. BANK_ACCOUNT) resolve to localized display strings
+    const i18n = new SafePocketI18n();
+    i18n.setLocaleOverride('en');
+    expect(i18n.resolveDisplaySubtitle('BANK_ACCOUNT', 'BANK_ACCOUNT')).toBe(
+      'Bank Account'
+    );
+    expect(i18n.resolveDisplaySubtitle('', 'OFFICIAL_DOCUMENT')).toBe(
+      'Official Document'
+    );
+    expect(i18n.resolveDisplaySubtitle('Personal Checking', 'BANK_ACCOUNT')).toBe(
+      'Personal Checking'
+    );
+
+    i18n.setLocaleOverride('de');
+    expect(i18n.resolveDisplaySubtitle('BANK_ACCOUNT', 'BANK_ACCOUNT')).toBe(
+      'Bankkonto'
+    );
+    expect(i18n.resolveCategorySingularName('PAYMENT_CARD')).toBe(
+      'Zahlungskarte'
+    );
+  });
+
+  it('11. v0.3.3 Modal Settings, Solid Red Swipe-Delete, Flag Language Selector & Standby/Never Lock Parity', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const pwaShell = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/ui/appShell.ts'),
+      'utf-8'
+    );
+    const pwaCss = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/styles/m3-expressive.css'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const macApp = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+
+    // 1) Modal Settings Window from Sidebar across PWA, macOS, and Android
+    expect(pwaShell).toContain('id="sp-settings-modal-dialog"');
+    expect(pwaShell).toContain('this.settingsModalOpen = true');
+    expect(macSplit).toContain('.sheet(isPresented: $vaultState.presentSettingsSheet)');
+    expect(macSplit).toContain('MacSettingsModalWindow');
+    expect(macSplit).not.toContain('case settings = "SETTINGS"');
+    expect(androidShell).toContain('SafePocketSettingsDialog(');
+
+    // 2) Solid Red Swipe-to-Delete across PWA, macOS, and Android
+    expect(pwaCss).toContain('#dc2626');
+    expect(pwaShell).toContain("this.i18n.t('action_delete')");
+    expect(macSplit).toContain('.tint(.red)');
+    expect(androidShell).toContain('Color(0xFFDC2626)');
+
+    // 3) Country Flags in Main-App Language Selector across all 6 languages
+    const expectedFlags = ['🇬🇧', '🇩🇪', '🇮🇹', '🇫🇷', '🇪🇸', '🇬🇷'];
+    expect(SUPPORTED_LOCALES.map((l) => l.flag)).toEqual(expectedFlags);
+    expect(pwaShell).toContain('id="sp-main-lang-select"');
+    expect(macSplit).toContain('MacFlagLanguageMenu');
+    expect(androidShell).toContain('MainAppFlagLanguageSelector');
+
+    // 4) Standby / System Sleep Lock + Never Lock (0m) across PWA, macOS, and Android
+    expect(macApp).toContain('NSWorkspace.willSleepNotification');
+    expect(macSplit).toContain('security_auto_lock_never');
+    expect(androidShell).toContain('Intent.ACTION_SCREEN_OFF');
+    expect(androidShell).toContain('security_auto_lock_never');
+    expect(pwaShell).toContain('id="sp-toggle-lock-standby"');
+    expect(pwaShell).toContain("this.i18n.t('security_auto_lock_never')");
+
+    // Verify runtime IdleAutoLockMonitor behavior for Never (0) + Standby Lock
+    let lockCount = 0;
+    const monitor = new IdleAutoLockMonitor(() => {
+      lockCount += 1;
+    });
+
+    monitor.setMinutes(5);
+    expect(monitor.hasPendingIdleTimer).toBe(true);
+
+    // Setting minutes to 0 (Never) clears any pending idle timeout timer
+    monitor.setMinutes(0);
+    expect(monitor.minutes).toBe(0);
+    expect(monitor.hasPendingIdleTimer).toBe(false);
+    expect(lockCount).toBe(0);
+
+    // Standby lock enabled by default -> simulated standby locks immediately even when idle timer is Never (0)
+    expect(monitor.lockOnStandby).toBe(true);
+    expect(monitor.handleSystemStandbyEvent()).toBe(true);
+    expect(lockCount).toBe(1);
+
+    // Disabling standby lock prevents sleep/standby from locking vault
+    monitor.setLockOnStandby(false);
+    expect(monitor.lockOnStandby).toBe(false);
+    expect(monitor.handleSystemStandbyEvent()).toBe(false);
+    expect(lockCount).toBe(1);
+    monitor.stop();
   });
 });

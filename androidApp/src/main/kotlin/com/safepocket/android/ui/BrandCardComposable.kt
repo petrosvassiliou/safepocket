@@ -70,7 +70,8 @@ import kotlin.math.sin
 fun DualBrandVisualCardHero(
     item: VaultItemPayload,
     categoryLabelText: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    displaySubtitleText: String? = null
 ) {
     val resolved = remember(item) { InstitutionBrandRegistry.resolveForItem(item) }
     val (gradStart, gradEnd) = remember(item.cardTheme, resolved) {
@@ -100,6 +101,7 @@ fun DualBrandVisualCardHero(
             .ifBlank { item.fieldValue(CanonicalFieldKeys.MEMBER_NAME) }
     }
     val expiry = remember(item) { item.fieldValue(CanonicalFieldKeys.EXPIRY_DATE) }
+    val resolvedSubtitle = (displaySubtitleText ?: item.subtitle).trim()
 
     Box(
         modifier = modifier
@@ -200,9 +202,9 @@ fun DualBrandVisualCardHero(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                } else if (item.subtitle.isNotBlank()) {
+                } else if (resolvedSubtitle.isNotBlank()) {
                     Text(
-                        text = item.subtitle,
+                        text = resolvedSubtitle,
                         style = MaterialTheme.typography.bodyMedium,
                         fontFamily = FontFamily.Monospace,
                         color = fgMuted,
