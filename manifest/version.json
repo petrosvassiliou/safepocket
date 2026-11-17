@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-17T08:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:fd7195dfe5913f1ad37aeb6a94072cbea590616bd5b25daa8b9ceda4c7b54a1d04b77f69d07a83950476f759092a9c4c9ab0256c05faf3f590586d4140d48308",
+  "manifestSignature": "ed25519:4df1bb0db0d06127af02692192c33f850556431b53bce4f6f8307045595dfc3045ffa9533358164f76e974c3837a1bf9a7c02b60d62dd821ea45ca2129d69c0b",
   "releaseNotes": {
     "en": "• SafePocket v0.3.2 fixes macOS foreground window activation, bordered text inputs across all views/dialogs, and clickable non-grayed-out action buttons.\n• Explicit rounded-border input boxes, automatic focus, and inline validation across Cloud Sync Login, Live Endpoint Config, Item Editor, Backup, and Security.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.",
     "de": "• SafePocket v0.3.2 behebt die macOS-Fensteraktivierung, sichtbare umrandete Eingabefelder in allen Ansichten/Dialogen sowie klickbare (nicht ausgegraute) Aktionsschaltflächen.\n• Klare Eingabefelder mit Fokusring, Auto-Fokus und direkter Validierung für Cloud-Sync-Login, Endpunktkonfiguration, Eintrags-Editor, Backup und Sicherheit.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.2/SafePocket-v0.3.2-b7-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "930f44e34395da778265a5c56aff26e0e8f25d0ff4849e419baf36d5bb4c8db7",
+      "sizeBytes": 38150684,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.2/SafePocket-0.3.2-7-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "cab8a34db8fb58b534e740ec87b5e5fb0c9a2238b5220221deb8212547b207a6",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 3121661,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
