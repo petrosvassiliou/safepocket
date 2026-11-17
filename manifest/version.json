@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-17T07:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:993bb30e29535d9376582ef64487ce8f32b4e6e95978a68493228107f1c032113b893701e299c85bddcd9e046bb4ccc393b7d8d7c2a379e170742bdbf44de308",
+  "manifestSignature": "ed25519:f90fe23cb4cc5a00aac73fe3d19bdab0ea4c44114b2c2c26f9bcad85b25f323d370c4816c34b9304bae26f7dbb519500265a79991496617a351d39ae3418d604",
   "releaseNotes": {
     "en": "• SafePocket v0.3.1 delivers 100% Settings & Feature Parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.\n• Full Firebase Zero-Knowledge Cloud Sync login, account creation, and endpoint configuration on macOS, plus clean radio-button Storage Mode selection.\n• Bundled 6-language selection (EN, DE, IT, FR, ES, EL + System Default) on macOS alongside encrypted .safepocket backup/restore, 1Password & CSV portability, and security controls.",
     "de": "• SafePocket v0.3.1 bietet 100 % Funktions- und Einstellungsparität über macOS, Android / Googlebook OS und ChromeOS / Web PWA hinweg.\n• Vollständige Firebase-Zero-Knowledge-Cloud-Sync-Anmeldung, Kontoerstellung und Endpunktkonfiguration unter macOS sowie klare Optionsfelder für den Tresor-Speichermodus.\n• Integrierte 6-Sprachen-Auswahl (EN, DE, IT, FR, ES, EL + Systemstandard) unter macOS inklusive verschlüsseltem .safepocket-Backup, 1Password-/CSV-Portabilität und Sicherheitsoptionen.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.1/SafePocket-v0.3.1-b6-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "5d032a97ff5a6cc6423b5233b3bf11774bfedb144afa1378d7aa220dd5ea60c0",
+      "sizeBytes": 38150678,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.1/SafePocket-0.3.1-6-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "751b429cacfa9438da0214e07d8ae09685478b4c110ee7af7f137626234ac8b3",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 3016826,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
