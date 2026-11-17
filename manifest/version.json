@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-17T14:15:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:a3ebf9971a3cc5534114908c20c3eb97ef987af21dac8d56c96a8484e341d87bab779d06a6a63fe4521d681b277f3327c20b635eb2c7a1f45e84255bec85ff03",
+  "manifestSignature": "ed25519:d6cfd0b1545681fcc8668014a3cebc5bd48e8b5b5cbf2d46b31df94680edd17c7adbed8116167ecef42f922838f8f6f258816d551054c5749e9c283a9876420c",
   "releaseNotes": {
     "en": "• SafePocket v0.3.5 refines 3-column UI alignment across sidebar, toolbar, list, and inspector field cards.\n• Moves the Cloud-Sync status into a compact, unobtrusive bottom status bar so it never overlaps vault fields or buttons.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.",
     "de": "• SafePocket v0.3.5 verbessert die 3-Spalten-UI-Ausrichtung über Seitenleiste, Symbolleiste, Eintragsliste und Detailfelder hinweg.\n• Kompakter, dezenter Cloud-Sync-Status in einer eigenen unteren Statusleiste mit klarem Abstand zum Inhalt.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.5/SafePocket-v0.3.5-b10-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "a558d17ba31a2862b05bc88f37a4ceec25d8adea1a2e8d7c834ede87c5838ab2",
+      "sizeBytes": 38187256,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.5/SafePocket-0.3.5-10-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "10dd186356a58c0373fba8ea99e07065052eb3bbbb16a53b4f4cd5a411ad95de",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 3167154,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
