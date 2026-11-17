@@ -299,9 +299,9 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.3 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.3');
-    expect(APP_BUILD_INFO.versionCode).toBe(8);
+  it('7. Cross-Platform v0.3.4 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.4');
+    expect(APP_BUILD_INFO.versionCode).toBe(9);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -375,7 +375,7 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.3 (Build 8)');
+    expect(macApp).toContain('SafePocket v0.3.4 (Build 9)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
@@ -662,13 +662,16 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
       'utf-8'
     );
 
-    // 1) Modal Settings Window from Sidebar across PWA, macOS, and Android
+    // 1) Modal Settings Window from Top Bar (no redundant sidebar Settings item) across PWA, macOS, and Android
     expect(pwaShell).toContain('id="sp-settings-modal-dialog"');
     expect(pwaShell).toContain('this.settingsModalOpen = true');
+    expect(pwaShell).not.toContain("this.renderNavBtn('SETTINGS'");
     expect(macSplit).toContain('.sheet(isPresented: $vaultState.presentSettingsSheet)');
     expect(macSplit).toContain('MacSettingsModalWindow');
-    expect(macSplit).not.toContain('case settings = "SETTINGS"');
+    expect(macSplit).toContain('Label(vaultState.t("nav_settings"), systemImage: "gearshape")');
+    expect(macSplit).not.toContain('Label(vaultState.t("nav_settings"), systemImage: "gearshape.fill")');
     expect(androidShell).toContain('SafePocketSettingsDialog(');
+    expect(androidShell).not.toContain('⚙  ${i18n.t("nav_settings")}');
 
     // 2) Solid Red Swipe-to-Delete across PWA, macOS, and Android
     expect(pwaCss).toContain('#dc2626');

@@ -1898,10 +1898,6 @@ export class SafePocketAppShell {
                 this.items.filter((i) => i.category === 'SECURE_NOTE').length
               )}
             </nav>
-
-            <nav class="sp-nav-group">
-              ${this.renderNavBtn('SETTINGS', this.i18n.t('nav_settings'))}
-            </nav>
           </div>
 
           <div class="sp-sidebar-footer">
@@ -2022,9 +2018,19 @@ export class SafePocketAppShell {
                   ).join('')}
                 </select>
               </div>
-              <button type="button" id="sp-new-item-btn" class="sp-btn sp-btn-primary">
-                + ${this.escape(this.i18n.t('action_new_item'))}
-              </button>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <button type="button" id="sp-new-item-btn" class="sp-btn sp-btn-primary">
+                  + ${this.escape(this.i18n.t('action_new_item'))}
+                </button>
+                <button
+                  type="button"
+                  id="sp-nav-settings"
+                  class="sp-btn ${this.settingsModalOpen ? 'sp-btn-tonal' : ''}"
+                  data-nav="SETTINGS"
+                  title="${this.escape(this.i18n.t('nav_settings'))}"
+                  aria-label="${this.escape(this.i18n.t('nav_settings'))}"
+                >⚙</button>
+              </div>
             </div>
             ${
               allTags.length > 0

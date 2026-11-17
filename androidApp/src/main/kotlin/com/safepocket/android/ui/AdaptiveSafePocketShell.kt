@@ -393,17 +393,6 @@ fun AdaptiveSafePocketShell(
                                                             verticalArrangement = Arrangement.spacedBy(8.dp)
                                                         ) {
                                                             HorizontalDivider()
-                                                            SmoothTonalButton(
-                                                                onClick = onOpenSettings,
-                                                                modifier = Modifier.fillMaxWidth(),
-                                                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
-                                                            ) {
-                                                                Text(
-                                                                    text = "⚙  ${i18n.t("nav_settings")}",
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                            }
                                                             Row(
                                                                 modifier = Modifier.fillMaxWidth(),
                                                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -451,6 +440,7 @@ fun AdaptiveSafePocketShell(
                                                         query = searchQuery,
                                                         onQueryChange = { searchQuery = it },
                                                         onNewItem = onNewItem,
+                                                        onOpenSettings = onOpenSettings,
                                                         searchFocusRequester = searchFocusRequester
                                                     )
                                                     if (exampleItemsCount > 0) {
@@ -532,12 +522,6 @@ fun AdaptiveSafePocketShell(
                                                                     .size(32.dp)
                                                                     .clip(RoundedCornerShape(8.dp))
                                                             )
-                                                            SmoothTonalButton(
-                                                                onClick = onOpenSettings,
-                                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                                                            ) {
-                                                                Text("⚙")
-                                                            }
                                                             NavigationRailItem(
                                                                 selected = selectedCategory == null && !favoritesOnly,
                                                                 onClick = { onSelectCategory(null) },
@@ -587,6 +571,7 @@ fun AdaptiveSafePocketShell(
                                                             query = searchQuery,
                                                             onQueryChange = { searchQuery = it },
                                                             onNewItem = onNewItem,
+                                                            onOpenSettings = onOpenSettings,
                                                             searchFocusRequester = searchFocusRequester
                                                         )
                                                         if (exampleItemsCount > 0) {
@@ -1171,6 +1156,7 @@ private fun SearchAndCreateHeader(
     query: String,
     onQueryChange: (String) -> Unit,
     onNewItem: () -> Unit,
+    onOpenSettings: () -> Unit,
     searchFocusRequester: FocusRequester
 ) {
     Row(
@@ -1195,6 +1181,12 @@ private fun SearchAndCreateHeader(
         )
         SmoothPrimaryButton(onClick = onNewItem) {
             Text("+ ${i18n.t("shortcut_hint_new")}")
+        }
+        SmoothTonalButton(
+            onClick = onOpenSettings,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Text("⚙")
         }
     }
 }

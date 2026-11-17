@@ -142,9 +142,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3.3"
-    let currentVersionCode = 8
-    let currentVersionDisplay = "SafePocket v0.3.3 (Build 8)"
+    let currentVersionName = "0.3.4"
+    let currentVersionCode = 9
+    let currentVersionDisplay = "SafePocket v0.3.4 (Build 9)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(

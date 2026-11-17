@@ -189,17 +189,6 @@ struct MacVaultSplitView: View {
                     Label(vaultState.t("category_secure_note"), systemImage: "lock.doc")
                         .tag("SECURE_NOTE")
                 }
-                Section {
-                    Button {
-                        vaultState.presentSettingsSheet = true
-                    } label: {
-                        Label(vaultState.t("nav_settings"), systemImage: "gearshape.fill")
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
             }
             .listStyle(.sidebar)
 
