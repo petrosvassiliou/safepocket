@@ -399,11 +399,16 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
     { encryptedBytes: Uint8Array; sha256Hex: string }
   >();
   private liveConfig: LiveCloudEndpointConfig = {};
+  private refreshTokenCallback?: () => Promise<string | undefined>;
 
   constructor(
     private readonly sqliteReplica?: SqliteWasmVaultDb,
     private readonly fetcher: typeof fetch = fetch
   ) {}
+
+  setRefreshTokenCallback(cb?: () => Promise<string | undefined>): void {
+    this.refreshTokenCallback = cb;
+  }
 
   setLiveEndpointConfig(config: LiveCloudEndpointConfig): void {
     this.liveConfig = { ...config };
@@ -411,6 +416,25 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
 
   get liveEndpointConfig(): LiveCloudEndpointConfig {
     return { ...this.liveConfig };
+  }
+
+  private async executeWith401Retry<T>(
+    op: (bearerToken: string) => Promise<T>
+  ): Promise<T> {
+    const initialToken = this.liveConfig.bearerToken || '';
+    try {
+      return await op(initialToken);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('HTTP 401') && this.refreshTokenCallback) {
+        const refreshed = await this.refreshTokenCallback();
+        if (refreshed && refreshed !== initialToken) {
+          this.liveConfig = { ...this.liveConfig, bearerToken: refreshed };
+          return op(refreshed);
+        }
+      }
+      throw err;
+    }
   }
 
   async pushEncryptedDeltas(
@@ -441,15 +465,18 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
     }
 
     if (this.liveConfig.firebaseProjectId && this.liveConfig.bearerToken) {
-      return pushRowsToFirestoreRest(
-        vaultId,
-        rows,
-        {
-          firebaseProjectId: this.liveConfig.firebaseProjectId,
-          bearerToken: this.liveConfig.bearerToken,
-          firebaseUserId: this.liveConfig.firebaseUserId
-        },
-        this.fetcher
+      const projectId = this.liveConfig.firebaseProjectId;
+      return this.executeWith401Retry((bearerToken) =>
+        pushRowsToFirestoreRest(
+          vaultId,
+          rows,
+          {
+            firebaseProjectId: projectId,
+            bearerToken,
+            firebaseUserId: this.liveConfig.firebaseUserId
+          },
+          this.fetcher
+        )
       );
     }
     return { pushedCount: rows.length, cursorHlc: maxHlc };
@@ -460,15 +487,18 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
     sinceCursorHlc: string | null
   ): Promise<EncryptedVaultRow[]> {
     if (this.liveConfig.firebaseProjectId && this.liveConfig.bearerToken) {
-      return pullRowsFromFirestoreRest(
-        vaultId,
-        sinceCursorHlc,
-        {
-          firebaseProjectId: this.liveConfig.firebaseProjectId,
-          bearerToken: this.liveConfig.bearerToken,
-          firebaseUserId: this.liveConfig.firebaseUserId
-        },
-        this.fetcher
+      const projectId = this.liveConfig.firebaseProjectId;
+      return this.executeWith401Retry((bearerToken) =>
+        pullRowsFromFirestoreRest(
+          vaultId,
+          sinceCursorHlc,
+          {
+            firebaseProjectId: projectId,
+            bearerToken,
+            firebaseUserId: this.liveConfig.firebaseUserId
+          },
+          this.fetcher
+        )
       );
     }
 
@@ -500,15 +530,18 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
       this.liveConfig.firebaseStorageBucket &&
       this.liveConfig.bearerToken
     ) {
-      return uploadEncryptedBlobToFirebaseStorageRest(
-        vaultId,
-        blob,
-        {
-          firebaseStorageBucket: this.liveConfig.firebaseStorageBucket,
-          bearerToken: this.liveConfig.bearerToken,
-          firebaseUserId: uid
-        },
-        this.fetcher
+      const bucket = this.liveConfig.firebaseStorageBucket;
+      return this.executeWith401Retry((bearerToken) =>
+        uploadEncryptedBlobToFirebaseStorageRest(
+          vaultId,
+          blob,
+          {
+            firebaseStorageBucket: bucket,
+            bearerToken,
+            firebaseUserId: uid
+          },
+          this.fetcher
+        )
       );
     }
 
@@ -540,16 +573,19 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
       this.liveConfig.firebaseStorageBucket &&
       this.liveConfig.bearerToken
     ) {
-      return downloadEncryptedBlobFromFirebaseStorageRest(
-        vaultId,
-        attachmentId,
-        expectedSha256Hex,
-        {
-          firebaseStorageBucket: this.liveConfig.firebaseStorageBucket,
-          bearerToken: this.liveConfig.bearerToken,
-          firebaseUserId: uid
-        },
-        this.fetcher
+      const bucket = this.liveConfig.firebaseStorageBucket;
+      return this.executeWith401Retry((bearerToken) =>
+        downloadEncryptedBlobFromFirebaseStorageRest(
+          vaultId,
+          attachmentId,
+          expectedSha256Hex,
+          {
+            firebaseStorageBucket: bucket,
+            bearerToken,
+            firebaseUserId: uid
+          },
+          this.fetcher
+        )
       );
     }
 

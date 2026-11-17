@@ -29,15 +29,19 @@ import com.safepocket.shared.intelligence.WebsiteReachabilityResult
 import com.safepocket.shared.model.VaultItemPayload
 import com.safepocket.shared.model.VaultStorageMode
 import com.safepocket.shared.onboarding.EmergencyKitGenerator
+import com.safepocket.shared.sync.CloudAuthExpiredException
+import com.safepocket.shared.sync.CloudSyncAdapter
 import com.safepocket.shared.sync.CloudSyncUserSession
 import com.safepocket.shared.sync.CrdtReconciler
 import com.safepocket.shared.sync.EncryptedSyncRecord
 import com.safepocket.shared.sync.FirebaseSyncAdapter
 import com.safepocket.shared.sync.FirebaseZeroKnowledgeAuthService
+import com.safepocket.shared.sync.GoogleDriveSyncAdapter
 import com.safepocket.shared.sync.HybridLogicalClock
 import com.safepocket.shared.sync.ProvisionedFirebaseProject
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -136,24 +140,68 @@ class AndroidVaultRepository(
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncMutex = Mutex()
 
+    private fun configuredFirebaseProjectId(): String =
+        prefs.getString("cfg_fb_project_id", null)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: ProvisionedFirebaseProject.PROJECT_ID
+
+    private fun configuredFirebaseApiKey(): String =
+        prefs.getString("cfg_fb_api_key", null)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: ProvisionedFirebaseProject.WEB_API_KEY
+
+    private fun configuredFirebaseBucket(): String =
+        prefs.getString("cfg_fb_bucket", null)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: ProvisionedFirebaseProject.STORAGE_BUCKET
+
+    private fun selectedCloudProviderId(): String =
+        prefs.getString("cloud_provider_id", "FIREBASE")?.trim()?.uppercase() ?: "FIREBASE"
+
+    private fun configuredGdriveToken(): String =
+        prefs.getString("cfg_gdrive_token", null)?.trim().orEmpty()
+
+    private fun isGoogleDriveConfigured(): Boolean =
+        selectedCloudProviderId() == "GDRIVE_APPDATA" && configuredGdriveToken().isNotEmpty()
+
+    private fun hasActiveCloudAuth(): Boolean =
+        if (selectedCloudProviderId() == "GDRIVE_APPDATA") {
+            configuredGdriveToken().isNotEmpty()
+        } else {
+            firebaseAuth.currentUser != null
+        }
+
     val firebaseAuth = FirebaseZeroKnowledgeAuthService(
         httpClient = httpClient,
-        primitives = primitives
+        primitives = primitives,
+        apiKeyProvider = ::configuredFirebaseApiKey,
+        projectIdProvider = ::configuredFirebaseProjectId,
+        onSessionRefreshed = ::saveFirebaseSession
     )
 
     private val firebaseAdapter = FirebaseSyncAdapter(
         httpClient = httpClient,
+        projectIdProvider = ::configuredFirebaseProjectId,
+        storageBucketProvider = ::configuredFirebaseBucket,
         userIdProvider = {
-            firebaseAuth.refreshIdTokenIfPossible()?.uid
+            firebaseAuth.refreshIdTokenIfPossible(force = false)?.uid
                 ?: firebaseAuth.currentUser?.uid
                 ?: error("Not signed in to Firebase Cloud Sync")
         },
         idTokenProvider = {
-            firebaseAuth.refreshIdTokenIfPossible()?.idToken
+            firebaseAuth.refreshIdTokenIfPossible(force = false)?.idToken
                 ?: firebaseAuth.currentUser?.idToken
                 ?: error("Not signed in to Firebase Cloud Sync")
+        },
+        forceRefreshTokenProvider = {
+            firebaseAuth.refreshIdTokenIfPossible(force = true)?.idToken
         }
     )
+
+    private val googleDriveAdapter = GoogleDriveSyncAdapter(
+        httpClient = httpClient,
+        oauthAccessTokenProvider = { configuredGdriveToken() }
+    )
+
+    private fun activeSyncAdapter(): CloudSyncAdapter =
+        if (selectedCloudProviderId() == "GDRIVE_APPDATA") googleDriveAdapter else firebaseAdapter
 
     private val nodeId: String = prefs.getString(KEY_NODE_ID, null) ?: run {
         val generated = "and-${ZeroKnowledgeEncryptionService.bytesToHex(primitives.secureRandomBytes(3))}"
@@ -196,7 +244,7 @@ class AndroidVaultRepository(
         }
         // Migrate v0.2 cloud_sync_enabled flag into v0.3 VaultStorageMode
         if (!prefs.contains(KEY_STORAGE_MODE)) {
-            val migratedMode = if (prefs.getBoolean(KEY_CLOUD_SYNC_ENABLED, false) && firebaseAuth.currentUser != null) {
+            val migratedMode = if (prefs.getBoolean(KEY_CLOUD_SYNC_ENABLED, false) && hasActiveCloudAuth()) {
                 VaultStorageMode.CLOUD_SYNC
             } else {
                 VaultStorageMode.LOCAL_ONLY
@@ -222,7 +270,7 @@ class AndroidVaultRepository(
                     _isNetworkOnline.value = true
                     refreshSyncIndicator()
                     // Zero-user-input automatic Cloud Sync reconciliation when returning online!
-                    if (storageMode == VaultStorageMode.CLOUD_SYNC && firebaseAuth.currentUser != null) {
+                    if (storageMode == VaultStorageMode.CLOUD_SYNC && hasActiveCloudAuth()) {
                         backgroundScope.launch {
                             runCatching {
                                 val report = syncNow(latestKnownItems, surfaceErrorBanner = false)
@@ -244,7 +292,7 @@ class AndroidVaultRepository(
         get() {
             val raw = prefs.getString(KEY_STORAGE_MODE, VaultStorageMode.LOCAL_ONLY.name)
             val parsed = runCatching { VaultStorageMode.valueOf(raw!!) }.getOrDefault(VaultStorageMode.LOCAL_ONLY)
-            return if (parsed == VaultStorageMode.CLOUD_SYNC && firebaseAuth.currentUser == null) {
+            return if (parsed == VaultStorageMode.CLOUD_SYNC && !hasActiveCloudAuth()) {
                 VaultStorageMode.LOCAL_ONLY
             } else {
                 parsed
@@ -565,9 +613,20 @@ class AndroidVaultRepository(
     suspend fun switchToCloudSyncExclusiveMode(
         currentItems: List<VaultItemPayload>
     ): List<VaultItemPayload> = withContext(Dispatchers.IO) {
-        check(firebaseAuth.currentUser != null) {
-            "Sign in or create a Firebase Cloud Sync account first to activate Cloud Sync Only mode."
+        check(hasActiveCloudAuth()) {
+            "Sign in or create a Cloud Sync account first to activate Cloud Sync Only mode."
         }
+        // Validate / refresh Firebase token BEFORE deleting local standalone DB so dead sessions fail safely!
+        if (!isGoogleDriveConfigured() && _isNetworkOnline.value) {
+            try {
+                firebaseAuth.refreshIdTokenIfPossible(force = false)
+            } catch (expired: CloudAuthExpiredException) {
+                prefs.edit().remove(KEY_FIREBASE_SESSION).apply()
+                refreshSyncIndicator(errorMessage = expired.message)
+                throw expired
+            }
+        }
+
         closeCurrentDatabase()
         runCatching { context.deleteDatabase(LOCAL_STANDALONE_DB_NAME) }
         prefs.edit().remove(LEGACY_KEY_VAULT_ITEMS).apply()
@@ -577,15 +636,38 @@ class AndroidVaultRepository(
         database?.let { db -> persistSnapshotToDbInternal(db, currentItems) }
         latestKnownItems = currentItems
 
-        return@withContext runCatching {
+        return@withContext try {
             val rep = syncNow(currentItems, surfaceErrorBanner = false)
             latestKnownItems = rep.updatedItems
             rep.updatedItems
-        }.getOrElse {
-            // Offline right now: queue all items in encrypted outbox so they sync automatically with zero user input!
-            val queued = currentItems.map { encryptItemToSyncRecord(it) }
-            savePendingCloudOutbox(queued)
-            currentItems
+        } catch (t: Throwable) {
+            val msg = t.message.orEmpty()
+            val isAuthOrPermissionError = t is CloudAuthExpiredException ||
+                msg.contains("(401)") ||
+                msg.contains("(403)") ||
+                msg.contains("authentication", ignoreCase = true)
+            if (isAuthOrPermissionError) {
+                // Queue items safely in offline outbox so zero items are lost, AND surface the auth error immediately!
+                val queued = currentItems.map { encryptItemToSyncRecord(it) }
+                savePendingCloudOutbox(queued)
+                SafePocketErrorHandler.record(
+                    operation = "cloudSync",
+                    throwable = t,
+                    epochMs = System.currentTimeMillis(),
+                    surfaceBanner = true
+                )
+                throw t
+            }
+            if (t is IOException || !_isNetworkOnline.value) {
+                // Genuine offline state: queue all items in encrypted outbox so they sync automatically with zero user input!
+                val queued = currentItems.map { encryptItemToSyncRecord(it) }
+                savePendingCloudOutbox(queued)
+                currentItems
+            } else {
+                val queued = currentItems.map { encryptItemToSyncRecord(it) }
+                savePendingCloudOutbox(queued)
+                throw t
+            }
         }
     }
 
@@ -631,11 +713,11 @@ class AndroidVaultRepository(
                 }
                 if (storageMode == VaultStorageMode.LOCAL_ONLY) {
                     prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(allItemsAfterUpsert)).apply()
-                } else if (firebaseAuth.currentUser != null) {
+                } else if (hasActiveCloudAuth()) {
                     val rec = encryptItemToSyncRecord(item)
                     if (_isNetworkOnline.value) {
                         runCatching {
-                            firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
+                            activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
                             prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
                             refreshSyncIndicator()
                         }.onFailure {
@@ -666,7 +748,7 @@ class AndroidVaultRepository(
         prefs.edit().putBoolean(KEY_DB_INITIALIZED_V02, true).apply()
         if (storageMode == VaultStorageMode.LOCAL_ONLY) {
             prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(items)).apply()
-        } else if (firebaseAuth.currentUser != null) {
+        } else if (hasActiveCloudAuth()) {
             runCatching { syncNow(items, surfaceErrorBanner = false) }
         }
     }
@@ -682,11 +764,11 @@ class AndroidVaultRepository(
                 }
                 if (storageMode == VaultStorageMode.LOCAL_ONLY) {
                     prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(remainingItems)).apply()
-                } else if (firebaseAuth.currentUser != null && tombstoneRecord != null) {
+                } else if (hasActiveCloudAuth() && tombstoneRecord != null) {
                     val rec = tombstoneRecord!!
                     if (_isNetworkOnline.value) {
                         runCatching {
-                            firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
+                            activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
                             prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
                             refreshSyncIndicator()
                         }.onFailure {
@@ -725,10 +807,10 @@ class AndroidVaultRepository(
 
         if (storageMode == VaultStorageMode.LOCAL_ONLY) {
             prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(userCreated)).apply()
-        } else if (firebaseAuth.currentUser != null && tombstones.isNotEmpty()) {
+        } else if (hasActiveCloudAuth() && tombstones.isNotEmpty()) {
             if (_isNetworkOnline.value) {
                 runCatching {
-                    firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, tombstones)
+                    activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, tombstones)
                     prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
                     refreshSyncIndicator()
                 }.onFailure {
@@ -772,13 +854,15 @@ class AndroidVaultRepository(
 
     fun getCloudSyncStatus(): CloudSyncStatusSnapshot {
         val user = firebaseAuth.currentUser
+        val gdriveActive = isGoogleDriveConfigured()
         return CloudSyncStatusSnapshot(
             storageMode = storageMode,
             cloudSyncEnabled = storageMode == VaultStorageMode.CLOUD_SYNC,
             isNetworkOnline = _isNetworkOnline.value,
             queuedOfflineMutations = loadPendingCloudOutbox().size,
-            signedInEmail = user?.email,
-            signedInUid = user?.uid,
+            projectId = if (gdriveActive) "google-drive-appdata" else configuredFirebaseProjectId(),
+            signedInEmail = if (gdriveActive) "Google Drive (appDataFolder)" else user?.email,
+            signedInUid = if (gdriveActive) "gdrive" else user?.uid,
             lastSyncedPushed = prefs.getInt(KEY_LAST_SYNC_PUSHED, 0),
             lastSyncedPulled = prefs.getInt(KEY_LAST_SYNC_PULLED, 0),
             lastSyncedIso = prefs.getString(KEY_LAST_SYNC_ISO, null)
@@ -925,9 +1009,15 @@ class AndroidVaultRepository(
         syncMutex.withLock {
             refreshSyncIndicator(explicitSyncing = true)
             try {
-                val session = firebaseAuth.refreshIdTokenIfPossible()
-                    ?: error("Please sign in to Firebase Cloud Sync first")
-                saveFirebaseSession(session)
+                val cursorScope: String = if (isGoogleDriveConfigured()) {
+                    "gdrive"
+                } else {
+                    val session = firebaseAuth.refreshIdTokenIfPossible(force = false)
+                        ?: error("Please sign in to Firebase Cloud Sync first")
+                    saveFirebaseSession(session)
+                    session.uid
+                }
+                val adapter = activeSyncAdapter()
 
                 ensureActiveDatabaseOpened()
                 val db = database
@@ -949,13 +1039,13 @@ class AndroidVaultRepository(
                 }
                 val recordsToPush = mergedPushMap.values.toList()
 
-                val pushRes = firebaseAdapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, recordsToPush)
+                val pushRes = adapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, recordsToPush)
                 // Outbox successfully flushed to Cloud!
                 savePendingCloudOutbox(emptyList())
 
-                val cursorKey = "${KEY_LAST_SYNC_CURSOR}_${session.uid}"
+                val cursorKey = "${KEY_LAST_SYNC_CURSOR}_$cursorScope"
                 val sinceCursor = prefs.getString(cursorKey, null)
-                val pulledRecords = firebaseAdapter.pullEncryptedDeltasSince(CLOUD_VAULT_COLLECTION_ID, sinceCursor)
+                val pulledRecords = adapter.pullEncryptedDeltasSince(CLOUD_VAULT_COLLECTION_ID, sinceCursor)
 
                 val localMap = recordsToPush.associateBy { it.entityId }.toMutableMap()
                 var appliedRemote = 0
@@ -999,6 +1089,9 @@ class AndroidVaultRepository(
                     updatedItems = updatedItems
                 )
             } catch (t: Throwable) {
+                if (t is CloudAuthExpiredException) {
+                    prefs.edit().remove(KEY_FIREBASE_SESSION).apply()
+                }
                 val diag = SafePocketErrorHandler.record(
                     operation = "cloudSync",
                     throwable = t,

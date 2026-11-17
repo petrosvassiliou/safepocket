@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
-  "latestVersion": "0.3.5",
-  "versionCode": 10,
+  "latestVersion": "0.3.6",
+  "versionCode": 11,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-17T14:15:00Z",
+  "publishedAt": "2026-11-17T19:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:d6cfd0b1545681fcc8668014a3cebc5bd48e8b5b5cbf2d46b31df94680edd17c7adbed8116167ecef42f922838f8f6f258816d551054c5749e9c283a9876420c",
+  "manifestSignature": "ed25519:eb1b1d532863e4f7db67fdd32f9fcac45401fea72d63f50fa386fd95f5db7b32d5c32abb85b15311638e4955c4e312162d0d9b18d90a9c47fa7a73732180f607",
   "releaseNotes": {
-    "en": "• SafePocket v0.3.5 refines 3-column UI alignment across sidebar, toolbar, list, and inspector field cards.\n• Moves the Cloud-Sync status into a compact, unobtrusive bottom status bar so it never overlaps vault fields or buttons.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.",
-    "de": "• SafePocket v0.3.5 verbessert die 3-Spalten-UI-Ausrichtung über Seitenleiste, Symbolleiste, Eintragsliste und Detailfelder hinweg.\n• Kompakter, dezenter Cloud-Sync-Status in einer eigenen unteren Statusleiste mit klarem Abstand zum Inhalt.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.",
-    "it": "• SafePocket v0.3.5 perfeziona l'allineamento UI a 3 colonne tra barra laterale, barra superiore, elenco e schede campi.\n• Stato Cloud-Sync compatto in una barra di stato inferiore dedicata senza mai sovrapporsi ai contenuti.\n• Piena parità multipiattaforma su macOS, Android / Googlebook OS e ChromeOS / Web PWA.",
-    "fr": "• SafePocket v0.3.5 affine l'alignement de l'interface à 3 colonnes entre barre latérale, barre d'outils, liste et champs.\n• Indicateur Cloud-Sync compact intégré dans une barre d'état inférieure dédiée sans jamais chevaucher le contenu.\n• Parité complète sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.",
-    "es": "• SafePocket v0.3.5 perfecciona la alineación de la interfaz de 3 columnas en barra lateral, barra superior, lista y tarjetas.\n• Indicador Cloud-Sync compacto en una barra de estado inferior dedicada sin superponerse nunca al contenido.\n• Paridad total entre macOS, Android / Googlebook OS y ChromeOS / Web PWA.",
-    "el": "• Το SafePocket v0.3.5 βελτιώνει τη στοίχιση του 3-στήλου περιβάλλοντος σε πλαϊνή μπάρα, εργαλειοθήκη, λίστα και πεδία.\n• Συμπαγής ένδειξη Cloud-Sync σε διακριτή κάτω γραμμή κατάστασης χωρίς επικάλυψη περιεχομένου.\n• Πλήρης ισοτιμία σε macOS, Android / Googlebook OS και ChromeOS / Web PWA."
+    "en": "• SafePocket v0.3.6 moves all sidebar footer controls (Theme, Flag Language, Lock, and version) flush into the true bottom-left corner.\n• Fixes Cloud Sync HTTP 401 authentication failures via JSON refresh-token encoding, JWT expiry checks, and automatic 401 token renewal.\n• Full cross-platform parity across Android / Googlebook OS, ChromeOS / Web PWA, and macOS.",
+    "de": "• SafePocket v0.3.6 platziert alle Elemente der linken unteren Seitenleiste (Design, Sprache, Sperren und Version) bündig unten links.\n• Behebt Cloud-Sync-HTTP-401-Authentifizierungsfehler durch JSON-Refresh-Token-Kodierung, JWT-Ablaufprüfung und automatische Token-Erneuerung.\n• Volle Plattformparität für Android / Googlebook OS, ChromeOS / Web PWA und macOS.",
+    "it": "• SafePocket v0.3.6 posiziona tutti i controlli inferiori della barra laterale a filo nell'angolo inferiore sinistro.\n• Risolve gli errori HTTP 401 di Cloud Sync con codifica JSON del refresh token e rinnovo automatico.\n• Piena parità multipiattaforma su Android / Googlebook OS, ChromeOS / Web PWA e macOS.",
+    "fr": "• SafePocket v0.3.6 aligne tous les contrôles du bas de la barre latérale tout en bas à gauche.\n• Corrige les erreurs HTTP 401 de Cloud Sync grâce à l'encodage JSON du refresh token et au renouvellement automatique.\n• Parité complète sur Android / Googlebook OS, ChromeOS / Web PWA et macOS.",
+    "es": "• SafePocket v0.3.6 sitúa todos los controles inferiores de la barra lateral al ras de la esquina inferior izquierda.\n• Corrige los errores HTTP 401 de Cloud Sync mediante codificación JSON del refresh token y renovación automática.\n• Paridad total en Android / Googlebook OS, ChromeOS / Web PWA y macOS.",
+    "el": "• Το SafePocket v0.3.6 τοποθετεί όλα τα στοιχεία της πλαϊνής μπάρας ακριβώς στην κάτω αριστερή γωνία.\n• Επιλύει τα σφάλματα HTTP 401 του Cloud Sync μέσω JSON κωδικοποίησης του refresh token και αυτόματης ανανέωσης.\n• Πλήρης ισοτιμία σε Android / Googlebook OS, ChromeOS / Web PWA και macOS."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.5/SafePocket-v0.3.5-b10-universal-arm64-x86_64.apk",
-      "sha256": "a558d17ba31a2862b05bc88f37a4ceec25d8adea1a2e8d7c834ede87c5838ab2",
-      "sizeBytes": 38187256,
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.6/SafePocket-v0.3.6-b11-universal-arm64-x86_64.apk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 18432960,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -34,17 +34,17 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.5/SafePocket-0.3.5-10-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.6/SafePocket-0.3.6-11-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "10dd186356a58c0373fba8ea99e07065052eb3bbbb16a53b4f4cd5a411ad95de",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 3167154,
+      "sizeBytes": 14208512,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "1765ee7fc02c8c8bd1ffde7070d21ac6e06ffe3f88b910a52c739a66b479a0e2",
+      "sha256": "32e4517270e6f07824c37ff012aa9baab5fb272a526399cd62b97e35cb1cf144",
       "sizeBytes": 2709
     }
   }

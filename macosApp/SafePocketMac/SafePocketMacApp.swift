@@ -142,9 +142,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3.5"
-    let currentVersionCode = 10
-    let currentVersionDisplay = "SafePocket v0.3.5 (Build 10)"
+    let currentVersionName = "0.3.6"
+    let currentVersionCode = 11
+    let currentVersionDisplay = "SafePocket v0.3.6 (Build 11)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -893,9 +893,11 @@ final class MacVaultViewModel: ObservableObject {
             )
 
             if cloudProvider == .firebase, var activeSession = cloudSession {
-                activeSession = await MacCloudSyncClient.refreshFirebaseTokenIfPossible(
+                activeSession = try await MacCloudSyncClient.refreshFirebaseTokenIfPossible(
                     session: activeSession,
-                    apiKey: endpointConfig.firebaseWebApiKey
+                    apiKey: endpointConfig.firebaseWebApiKey,
+                    expectedProjectId: endpointConfig.firebaseProjectId,
+                    force: false
                 )
                 cloudSession = activeSession
                 if let encoded = try? JSONEncoder().encode(activeSession) {
@@ -924,16 +926,41 @@ final class MacVaultViewModel: ObservableObject {
                     )
                 }
 
-                let pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
-                    deltas: outboundDeltas,
-                    session: activeSession,
-                    config: endpointConfig
-                )
-                let pulledDeltas = try await MacCloudSyncClient.pullDeltasFromFirestore(
-                    sinceHlc: nil,
-                    session: activeSession,
-                    config: endpointConfig
-                )
+                let pushed: Int
+                let pulledDeltas: [MacEncryptedSyncDelta]
+                do {
+                    pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
+                        deltas: outboundDeltas,
+                        session: activeSession,
+                        config: endpointConfig
+                    )
+                    pulledDeltas = try await MacCloudSyncClient.pullDeltasFromFirestore(
+                        sinceHlc: nil,
+                        session: activeSession,
+                        config: endpointConfig
+                    )
+                } catch let syncErr as NSError where syncErr.code == 401 {
+                    activeSession = try await MacCloudSyncClient.refreshFirebaseTokenIfPossible(
+                        session: activeSession,
+                        apiKey: endpointConfig.firebaseWebApiKey,
+                        expectedProjectId: endpointConfig.firebaseProjectId,
+                        force: true
+                    )
+                    cloudSession = activeSession
+                    if let encoded = try? JSONEncoder().encode(activeSession) {
+                        MacKeychainStore.saveData(encoded, account: "cloud_session")
+                    }
+                    pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
+                        deltas: outboundDeltas,
+                        session: activeSession,
+                        config: endpointConfig
+                    )
+                    pulledDeltas = try await MacCloudSyncClient.pullDeltasFromFirestore(
+                        sinceHlc: nil,
+                        session: activeSession,
+                        config: endpointConfig
+                    )
+                }
 
                 var mergedById = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
                 var pulledApplied = 0
@@ -984,6 +1011,10 @@ final class MacVaultViewModel: ObservableObject {
                 recordDiagnostic(operation: "cloud.gdriveSync", detail: "Synced \(flushed) encrypted item(s) to Google Drive appDataFolder")
             }
         } catch {
+            if (error as NSError).code == 401 {
+                cloudSession = nil
+                MacKeychainStore.delete(account: "cloud_session")
+            }
             recordDiagnostic(operation: "cloud.syncError", detail: error.localizedDescription, isError: true)
         }
     }

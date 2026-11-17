@@ -306,6 +306,11 @@ export class SafePocketAppShell {
     this.autoDownloadLogos = this.loadSavedAutoDownloadLogos();
     this.applyThemeToDocument();
     this.localDb.bindSyncCoordinator(this.syncCoordinator);
+    this.firebaseAdapter.setRefreshTokenCallback(async () => {
+      const refreshed = await this.firebaseService.ensureValidSession(true);
+      this.liveCloudConfig = this.firebaseService.toEndpointConfig();
+      return refreshed?.idToken;
+    });
 
     this.clipboard = new ClipboardHygieneController((seconds, cleared) => {
       this.clipboardSecondsLeft = seconds;
@@ -534,6 +539,15 @@ export class SafePocketAppShell {
       });
   }
 
+  private resolveEndpointConfig(): LiveCloudEndpointConfig {
+    const useManualToken =
+      this.syncCoordinator.cloudService === 'GDRIVE_APPDATA' ||
+      !this.firebaseService.currentUser;
+    return this.firebaseService.toEndpointConfig(
+      useManualToken ? this.liveCloudConfig.bearerToken : undefined
+    );
+  }
+
   async runAutomaticCloudReconcile(showSuccessToast = false): Promise<void> {
     if (
       !this.crypto.isUnlocked ||
@@ -544,9 +558,10 @@ export class SafePocketAppShell {
     }
     this.autoReconcileInFlight = true;
     try {
-      this.liveCloudConfig = this.firebaseService.toEndpointConfig(
-        this.liveCloudConfig.bearerToken
-      );
+      if (this.syncCoordinator.cloudService === 'FIREBASE') {
+        await this.firebaseService.ensureValidSession(false);
+      }
+      this.liveCloudConfig = this.resolveEndpointConfig();
       this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
       this.gdriveAdapter.setLiveEndpointConfig(this.liveCloudConfig);
 
@@ -650,6 +665,12 @@ export class SafePocketAppShell {
   ): Promise<void> {
     if (this.syncCoordinator.storageMode === targetMode) return;
     try {
+      if (
+        targetMode === 'CLOUD_SYNC' &&
+        this.syncCoordinator.cloudService === 'FIREBASE'
+      ) {
+        await this.firebaseService.ensureValidSession(false);
+      }
       const snapshotRows = [];
       for (const item of this.items) {
         const hlcPacked = this.hlc.nowPacked();
@@ -659,9 +680,7 @@ export class SafePocketAppShell {
           })
         );
       }
-      this.liveCloudConfig = this.firebaseService.toEndpointConfig(
-        this.liveCloudConfig.bearerToken
-      );
+      this.liveCloudConfig = this.resolveEndpointConfig();
       this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
       this.gdriveAdapter.setLiveEndpointConfig(this.liveCloudConfig);
 
@@ -1950,9 +1969,14 @@ export class SafePocketAppShell {
                 aria-label="${this.escape(this.i18n.t('settings_theme_title'))}"
               >${this.renderThemeToggleIconSvg()}</button>
 
-              <button type="button" id="sp-lock-btn" class="sp-btn" style="flex:1;justify-content:space-between;">
-                <span>${this.escape(this.i18n.t('action_lock_vault'))}</span>
-                <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);">Ctrl+L</span>
+              <button
+                type="button"
+                id="sp-lock-btn"
+                class="sp-btn"
+                title="${this.escape(this.i18n.t('action_lock_vault'))} (Ctrl+L)"
+                style="padding:6px 10px;gap:6px;"
+              >
+                <span>🔒 ${this.escape(this.i18n.t('action_lock_vault'))}</span>
               </button>
             </div>
 
@@ -7485,6 +7509,9 @@ export class SafePocketAppShell {
           this.cloudAuthEmailDraft = user.email;
           this.liveCloudConfig = this.firebaseService.toEndpointConfig();
           this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+          if (this.syncCoordinator.storageMode !== 'CLOUD_SYNC') {
+            await this.switchExclusiveStorageMode('CLOUD_SYNC');
+          }
           await this.runAutomaticCloudReconcile(true);
           this.showToast(
             `Created zero-knowledge Cloud Sync user ${user.email} (${user.mode})`
@@ -7510,6 +7537,9 @@ export class SafePocketAppShell {
           this.cloudAuthEmailDraft = user.email;
           this.liveCloudConfig = this.firebaseService.toEndpointConfig();
           this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+          if (this.syncCoordinator.storageMode !== 'CLOUD_SYNC') {
+            await this.switchExclusiveStorageMode('CLOUD_SYNC');
+          }
           await this.runAutomaticCloudReconcile(true);
           this.showToast(`Signed in to Cloud Sync as ${user.email}`);
         } catch (err) {

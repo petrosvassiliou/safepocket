@@ -29,33 +29,69 @@ class FirebaseSyncAdapter(
     private val httpClient: HttpClient,
     private val projectId: String = ProvisionedFirebaseProject.PROJECT_ID,
     private val storageBucket: String = ProvisionedFirebaseProject.STORAGE_BUCKET,
+    private val projectIdProvider: (() -> String)? = null,
+    private val storageBucketProvider: (() -> String)? = null,
     private val userIdProvider: suspend () -> String,
     private val idTokenProvider: suspend () -> String,
+    private val forceRefreshTokenProvider: (suspend () -> String?)? = null,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 ) : CloudSyncAdapter {
 
     override val providerType: SyncProviderType = SyncProviderType.FIREBASE
+
+    private fun activeProjectId(): String =
+        projectIdProvider?.invoke()?.trim()?.takeIf { it.isNotEmpty() } ?: projectId.trim()
+
+    private fun activeStorageBucket(): String =
+        storageBucketProvider?.invoke()?.trim()?.takeIf { it.isNotEmpty() } ?: storageBucket.trim()
+
+    private fun sanitizeBearerToken(raw: String): String {
+        val trimmed = raw.trim().removePrefix("Bearer ").removePrefix("bearer ").trim()
+        check(trimmed.isNotEmpty() && !trimmed.startsWith("local-fb-jwt-")) {
+            "Valid Firebase Cloud Sync session required — please sign in again."
+        }
+        return trimmed
+    }
 
     override suspend fun pushEncryptedDeltas(
         vaultId: String,
         deltas: List<EncryptedSyncRecord>
     ): SyncPushResult {
         if (deltas.isEmpty()) return SyncPushResult(0, null)
-        val uid = userIdProvider()
-        val token = idTokenProvider()
+        val proj = activeProjectId()
+        val uid = userIdProvider().trim()
+        var token = sanitizeBearerToken(idTokenProvider())
         val commitUrl =
-            "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents:commit"
+            "https://firestore.googleapis.com/v1/projects/$proj/databases/(default)/documents:commit"
 
         val writes = deltas.map { delta ->
-            FirestoreWriteEnvelope.fromSyncRecord(projectId, uid, vaultId, delta)
+            FirestoreWriteEnvelope.fromSyncRecord(proj, uid, vaultId, delta)
         }
-        val resp = httpClient.post(commitUrl) {
+        val requestBody = json.encodeToString(FirestoreCommitRequest(writes))
+
+        var resp = httpClient.post(commitUrl) {
             header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
-            setBody(json.encodeToString(FirestoreCommitRequest(writes)))
+            setBody(requestBody)
+        }
+        if (resp.status.value == 401 && forceRefreshTokenProvider != null) {
+            val refreshed = forceRefreshTokenProvider.invoke()?.let(::sanitizeBearerToken)
+            if (!refreshed.isNullOrEmpty()) {
+                token = refreshed
+                resp = httpClient.post(commitUrl) {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody(requestBody)
+                }
+            }
         }
         if (!resp.status.isSuccess()) {
             val errText: String = runCatching { resp.body<String>() }.getOrDefault("")
+            if (resp.status.value == 401) {
+                throw CloudAuthExpiredException(
+                    "Firestore authentication expired or rejected (401) — please sign out and sign in again to refresh your Cloud Sync token."
+                )
+            }
             throw IllegalStateException("Firestore sync push failed (${resp.status.value}): ${errText.take(180)}")
         }
         return SyncPushResult(
@@ -68,17 +104,36 @@ class FirebaseSyncAdapter(
         vaultId: String,
         sinceHlcPacked: String?
     ): List<EncryptedSyncRecord> {
-        val uid = userIdProvider()
-        val token = idTokenProvider()
+        val proj = activeProjectId()
+        val uid = userIdProvider().trim()
+        var token = sanitizeBearerToken(idTokenProvider())
         val queryUrl =
-            "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/users/$uid/vaults/$vaultId:runQuery"
-        val resp = httpClient.post(queryUrl) {
+            "https://firestore.googleapis.com/v1/projects/$proj/databases/(default)/documents/users/$uid/vaults/$vaultId:runQuery"
+        val queryBody = FirestoreDeltaQuery.since(sinceHlcPacked)
+
+        var resp = httpClient.post(queryUrl) {
             header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
-            setBody(FirestoreDeltaQuery.since(sinceHlcPacked))
+            setBody(queryBody)
+        }
+        if (resp.status.value == 401 && forceRefreshTokenProvider != null) {
+            val refreshed = forceRefreshTokenProvider.invoke()?.let(::sanitizeBearerToken)
+            if (!refreshed.isNullOrEmpty()) {
+                token = refreshed
+                resp = httpClient.post(queryUrl) {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody(queryBody)
+                }
+            }
         }
         if (!resp.status.isSuccess()) {
             val errText: String = runCatching { resp.body<String>() }.getOrDefault("")
+            if (resp.status.value == 401) {
+                throw CloudAuthExpiredException(
+                    "Firestore authentication expired or rejected (401) — please sign out and sign in again to refresh your Cloud Sync token."
+                )
+            }
             throw IllegalStateException("Firestore sync pull failed (${resp.status.value}): ${errText.take(180)}")
         }
         val responseText: String = resp.body()
@@ -91,8 +146,9 @@ class FirebaseSyncAdapter(
         encryptedBytes: ByteArray,
         expectedSha256Hex: String
     ) {
-        val uid = userIdProvider()
-        val token = idTokenProvider()
+        val bucket = activeStorageBucket()
+        val uid = userIdProvider().trim()
+        var token = sanitizeBearerToken(idTokenProvider())
         val rawPath = "users/$uid/vaults/$vaultId/blobs/$attachmentId.enc"
         val encodedPath = "users%2F$uid%2Fvaults%2F$vaultId%2Fblobs%2F$attachmentId.enc"
         val boundary = "safepocket_zk_storage_blob_v1"
@@ -102,11 +158,26 @@ class FirebaseSyncAdapter(
         val bodyBytes = prefix + encryptedBytes + suffix
 
         val uploadUrl =
-            "https://firebasestorage.googleapis.com/v0/b/$storageBucket/o?uploadType=multipart&name=$encodedPath"
-        httpClient.post(uploadUrl) {
+            "https://firebasestorage.googleapis.com/v0/b/$bucket/o?uploadType=multipart&name=$encodedPath"
+        var resp = httpClient.post(uploadUrl) {
             header(HttpHeaders.Authorization, "Bearer $token")
             header(HttpHeaders.ContentType, "multipart/related; boundary=$boundary")
             setBody(bodyBytes)
+        }
+        if (resp.status.value == 401 && forceRefreshTokenProvider != null) {
+            val refreshed = forceRefreshTokenProvider.invoke()?.let(::sanitizeBearerToken)
+            if (!refreshed.isNullOrEmpty()) {
+                token = refreshed
+                resp = httpClient.post(uploadUrl) {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    header(HttpHeaders.ContentType, "multipart/related; boundary=$boundary")
+                    setBody(bodyBytes)
+                }
+            }
+        }
+        if (!resp.status.isSuccess()) {
+            val errText: String = runCatching { resp.body<String>() }.getOrDefault("")
+            throw IllegalStateException("Firebase Storage blob upload failed (${resp.status.value}): ${errText.take(160)}")
         }
     }
 
@@ -114,14 +185,28 @@ class FirebaseSyncAdapter(
         vaultId: String,
         attachmentId: String
     ): ByteArray {
-        val uid = userIdProvider()
-        val token = idTokenProvider()
+        val bucket = activeStorageBucket()
+        val uid = userIdProvider().trim()
+        var token = sanitizeBearerToken(idTokenProvider())
         val encodedPath = "users%2F$uid%2Fvaults%2F$vaultId%2Fblobs%2F$attachmentId.enc"
         val downloadUrl =
-            "https://firebasestorage.googleapis.com/v0/b/$storageBucket/o/$encodedPath?alt=media"
-        return httpClient.get(downloadUrl) {
+            "https://firebasestorage.googleapis.com/v0/b/$bucket/o/$encodedPath?alt=media"
+        var resp = httpClient.get(downloadUrl) {
             header(HttpHeaders.Authorization, "Bearer $token")
-        }.body()
+        }
+        if (resp.status.value == 401 && forceRefreshTokenProvider != null) {
+            val refreshed = forceRefreshTokenProvider.invoke()?.let(::sanitizeBearerToken)
+            if (!refreshed.isNullOrEmpty()) {
+                token = refreshed
+                resp = httpClient.get(downloadUrl) {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                }
+            }
+        }
+        if (!resp.status.isSuccess()) {
+            throw IllegalStateException("Firebase Storage blob download failed (${resp.status.value})")
+        }
+        return resp.body()
     }
 }
 

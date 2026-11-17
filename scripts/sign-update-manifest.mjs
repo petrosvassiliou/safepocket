@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.5').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.6').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '10');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '11');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-17T14:15:00Z',
+    publishedAt: '2026-11-17T19:00:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} refines 3-column UI alignment across sidebar, toolbar, list, and inspector field cards.\n• Moves the Cloud-Sync status into a compact, unobtrusive bottom status bar so it never overlaps vault fields or buttons.\n• Full cross-platform parity across macOS, Android / Googlebook OS, and ChromeOS / Web PWA.`,
-      de: `• SafePocket v${latestVersion} verbessert die 3-Spalten-UI-Ausrichtung über Seitenleiste, Symbolleiste, Eintragsliste und Detailfelder hinweg.\n• Kompakter, dezenter Cloud-Sync-Status in einer eigenen unteren Statusleiste mit klarem Abstand zum Inhalt.\n• Volle Plattformparität für macOS, Android / Googlebook OS und ChromeOS / Web PWA.`,
-      it: `• SafePocket v${latestVersion} perfeziona l'allineamento UI a 3 colonne tra barra laterale, barra superiore, elenco e schede campi.\n• Stato Cloud-Sync compatto in una barra di stato inferiore dedicata senza mai sovrapporsi ai contenuti.\n• Piena parità multipiattaforma su macOS, Android / Googlebook OS e ChromeOS / Web PWA.`,
-      fr: `• SafePocket v${latestVersion} affine l'alignement de l'interface à 3 colonnes entre barre latérale, barre d'outils, liste et champs.\n• Indicateur Cloud-Sync compact intégré dans une barre d'état inférieure dédiée sans jamais chevaucher le contenu.\n• Parité complète sur macOS, Android / Googlebook OS et ChromeOS / Web PWA.`,
-      es: `• SafePocket v${latestVersion} perfecciona la alineación de la interfaz de 3 columnas en barra lateral, barra superior, lista y tarjetas.\n• Indicador Cloud-Sync compacto en una barra de estado inferior dedicada sin superponerse nunca al contenido.\n• Paridad total entre macOS, Android / Googlebook OS y ChromeOS / Web PWA.`,
-      el: `• Το SafePocket v${latestVersion} βελτιώνει τη στοίχιση του 3-στήλου περιβάλλοντος σε πλαϊνή μπάρα, εργαλειοθήκη, λίστα και πεδία.\n• Συμπαγής ένδειξη Cloud-Sync σε διακριτή κάτω γραμμή κατάστασης χωρίς επικάλυψη περιεχομένου.\n• Πλήρης ισοτιμία σε macOS, Android / Googlebook OS και ChromeOS / Web PWA.`
+      en: `• SafePocket v${latestVersion} moves all sidebar footer controls (Theme, Flag Language, Lock, and version) flush into the true bottom-left corner.\n• Fixes Cloud Sync HTTP 401 authentication failures via JSON refresh-token encoding, JWT expiry checks, and automatic 401 token renewal.\n• Full cross-platform parity across Android / Googlebook OS, ChromeOS / Web PWA, and macOS.`,
+      de: `• SafePocket v${latestVersion} platziert alle Elemente der linken unteren Seitenleiste (Design, Sprache, Sperren und Version) bündig unten links.\n• Behebt Cloud-Sync-HTTP-401-Authentifizierungsfehler durch JSON-Refresh-Token-Kodierung, JWT-Ablaufprüfung und automatische Token-Erneuerung.\n• Volle Plattformparität für Android / Googlebook OS, ChromeOS / Web PWA und macOS.`,
+      it: `• SafePocket v${latestVersion} posiziona tutti i controlli inferiori della barra laterale a filo nell'angolo inferiore sinistro.\n• Risolve gli errori HTTP 401 di Cloud Sync con codifica JSON del refresh token e rinnovo automatico.\n• Piena parità multipiattaforma su Android / Googlebook OS, ChromeOS / Web PWA e macOS.`,
+      fr: `• SafePocket v${latestVersion} aligne tous les contrôles du bas de la barre latérale tout en bas à gauche.\n• Corrige les erreurs HTTP 401 de Cloud Sync grâce à l'encodage JSON du refresh token et au renouvellement automatique.\n• Parité complète sur Android / Googlebook OS, ChromeOS / Web PWA et macOS.`,
+      es: `• SafePocket v${latestVersion} sitúa todos los controles inferiores de la barra lateral al ras de la esquina inferior izquierda.\n• Corrige los errores HTTP 401 de Cloud Sync mediante codificación JSON del refresh token y renovación automática.\n• Paridad total en Android / Googlebook OS, ChromeOS / Web PWA y macOS.`,
+      el: `• Το SafePocket v${latestVersion} τοποθετεί όλα τα στοιχεία της πλαϊνής μπάρας ακριβώς στην κάτω αριστερή γωνία.\n• Επιλύει τα σφάλματα HTTP 401 του Cloud Sync μέσω JSON κωδικοποίησης του refresh token και αυτόματης ανανέωσης.\n• Πλήρης ισοτιμία σε Android / Googlebook OS, ChromeOS / Web PWA και macOS.`
     },
     artifacts: {
       'android-universal': {

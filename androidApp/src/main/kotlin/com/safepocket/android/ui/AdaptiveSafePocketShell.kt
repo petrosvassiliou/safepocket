@@ -360,17 +360,17 @@ fun AdaptiveSafePocketShell(
                                                 PermanentDrawerSheet(
                                                     modifier = Modifier
                                                         .width(272.dp)
-                                                        .fillMaxHeight()
+                                                        .fillMaxHeight(),
+                                                    windowInsets = WindowInsets(0, 0, 0, 0)
                                                 ) {
                                                     Column(
-                                                        modifier = Modifier
-                                                            .fillMaxSize()
-                                                            .padding(horizontal = 14.dp, vertical = 16.dp),
+                                                        modifier = Modifier.fillMaxSize(),
                                                         verticalArrangement = Arrangement.SpaceBetween
                                                     ) {
                                                         Column(
                                                             modifier = Modifier
                                                                 .weight(1f)
+                                                                .padding(start = 10.dp, end = 12.dp, top = 14.dp)
                                                                 .verticalScroll(rememberScrollState()),
                                                             verticalArrangement = Arrangement.spacedBy(4.dp)
                                                         ) {
@@ -387,18 +387,21 @@ fun AdaptiveSafePocketShell(
                                                         }
 
                                                         Column(
-                                                            modifier = Modifier.padding(top = 8.dp),
-                                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(start = 8.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                                                            horizontalAlignment = Alignment.Start
                                                         ) {
                                                             HorizontalDivider()
                                                             Row(
                                                                 modifier = Modifier.fillMaxWidth(),
-                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.Start),
                                                                 verticalAlignment = Alignment.CenterVertically
                                                             ) {
                                                                 SmoothOutlinedButton(
                                                                     onClick = cycleTheme,
-                                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                                                                 ) {
                                                                     Text(themeGlyph)
                                                                 }
@@ -410,7 +413,7 @@ fun AdaptiveSafePocketShell(
                                                                 )
                                                                 SmoothOutlinedButton(
                                                                     onClick = onLockVault,
-                                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                                                                 ) {
                                                                     Text("🔒")
                                                                 }
@@ -419,7 +422,8 @@ fun AdaptiveSafePocketShell(
                                                                 text = "v${AppBuildInfo.CURRENT_VERSION_NAME} (b${AppBuildInfo.CURRENT_VERSION_CODE})",
                                                                 style = MaterialTheme.typography.labelSmall,
                                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                maxLines = 1
+                                                                maxLines = 1,
+                                                                modifier = Modifier.padding(start = 2.dp)
                                                             )
                                                         }
                                                     }
@@ -463,33 +467,63 @@ fun AdaptiveSafePocketShell(
                                                     )
                                                 }
 
-                                                // Column 3: Detail Inspector (dedicated bottom status bar sits outside below)
-                                                Box(
+                                                // Column 3: Detail Inspector + Right-Aligned Bottom Status Bar
+                                                Column(
                                                     modifier = Modifier
                                                         .weight(1f)
                                                         .fillMaxHeight()
-                                                        .dragAndDropTarget(
-                                                            shouldStartDragAndDrop = { true },
-                                                            target = remember {
-                                                                object : DragAndDropTarget {
-                                                                    override fun onDrop(event: DragAndDropEvent): Boolean =
-                                                                        onDropDocumentAttachment(event)
-                                                                }
-                                                            }
-                                                        )
-                                                        .padding(horizontal = 24.dp, vertical = 20.dp)
                                                 ) {
-                                                    VaultDetailInspectorPane(
-                                                        i18n = i18n,
-                                                        selectedItem = selectedItem,
-                                                        copiedNotice = copiedNotice ?: statusBannerMessage,
-                                                        onCopyField = copyWith30sHygiene,
-                                                        onEdit = onEditItem,
-                                                        onDuplicate = onDuplicateItem,
-                                                        onTogglePin = onTogglePinItem,
-                                                        onToggleFavorite = onToggleFavoriteItem,
-                                                        onDelete = onDeleteItem
-                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .weight(1f)
+                                                            .fillMaxWidth()
+                                                            .dragAndDropTarget(
+                                                                shouldStartDragAndDrop = { true },
+                                                                target = remember {
+                                                                    object : DragAndDropTarget {
+                                                                        override fun onDrop(event: DragAndDropEvent): Boolean =
+                                                                            onDropDocumentAttachment(event)
+                                                                    }
+                                                                }
+                                                            )
+                                                            .padding(horizontal = 24.dp, vertical = 20.dp)
+                                                    ) {
+                                                        VaultDetailInspectorPane(
+                                                            i18n = i18n,
+                                                            selectedItem = selectedItem,
+                                                            copiedNotice = copiedNotice ?: statusBannerMessage,
+                                                            onCopyField = copyWith30sHygiene,
+                                                            onEdit = onEditItem,
+                                                            onDuplicate = onDuplicateItem,
+                                                            onTogglePin = onTogglePinItem,
+                                                            onToggleFavorite = onToggleFavoriteItem,
+                                                            onDelete = onDeleteItem
+                                                        )
+                                                    }
+                                                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                                                    Surface(color = MaterialTheme.colorScheme.surface) {
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                                                            horizontalArrangement = Arrangement.End,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            BottomRightSyncStatusPill(
+                                                                i18n = i18n,
+                                                                snapshot = syncIndicator,
+                                                                onClick = {
+                                                                    if (syncIndicator.storageMode == VaultStorageMode.CLOUD_SYNC) {
+                                                                        coroutineScope.launch {
+                                                                            runCatching { onSyncNow() }.onFailure { onOpenSettings() }
+                                                                        }
+                                                                    } else {
+                                                                        onOpenSettings()
+                                                                    }
+                                                                }
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -502,7 +536,7 @@ fun AdaptiveSafePocketShell(
                                                         modifier = Modifier
                                                             .fillMaxHeight()
                                                             .width(88.dp)
-                                                            .padding(vertical = 8.dp),
+                                                            .padding(top = 8.dp, bottom = 6.dp),
                                                         horizontalAlignment = Alignment.CenterHorizontally,
                                                         verticalArrangement = Arrangement.SpaceBetween
                                                     ) {
@@ -537,7 +571,7 @@ fun AdaptiveSafePocketShell(
                                                         }
                                                         Column(
                                                             horizontalAlignment = Alignment.CenterHorizontally,
-                                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                            verticalArrangement = Arrangement.spacedBy(5.dp)
                                                         ) {
                                                             MainAppFlagLanguageSelector(
                                                                 i18n = i18n,
@@ -546,70 +580,112 @@ fun AdaptiveSafePocketShell(
                                                                 onSelectLocaleOverride = onSelectLocaleOverride,
                                                                 compact = true
                                                             )
-                                                            SmoothOutlinedButton(
-                                                                onClick = cycleTheme,
-                                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                                                            ) {
-                                                                Text(themeGlyph)
+                                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                                SmoothOutlinedButton(
+                                                                    onClick = cycleTheme,
+                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                                ) {
+                                                                    Text(themeGlyph)
+                                                                }
+                                                                SmoothOutlinedButton(
+                                                                    onClick = onLockVault,
+                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                                ) {
+                                                                    Text("🔒")
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
 
-                                                Row(modifier = Modifier.weight(1f)) {
-                                                    Column(
+                                                Column(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .fillMaxHeight()
+                                                ) {
+                                                    Row(
                                                         modifier = Modifier
-                                                            .weight(0.45f)
-                                                            .fillMaxHeight()
-                                                            .padding(12.dp),
-                                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                                            .weight(1f)
+                                                            .fillMaxWidth()
                                                     ) {
-                                                        SearchAndCreateHeader(
-                                                            i18n = i18n,
-                                                            query = searchQuery,
-                                                            onQueryChange = { searchQuery = it },
-                                                            onNewItem = onNewItem,
-                                                            onOpenSettings = onOpenSettings,
-                                                            searchFocusRequester = searchFocusRequester
-                                                        )
-                                                        if (exampleItemsCount > 0) {
-                                                            DeleteExampleDataInlineCard(
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .weight(0.45f)
+                                                                .fillMaxHeight()
+                                                                .padding(12.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                                        ) {
+                                                            SearchAndCreateHeader(
                                                                 i18n = i18n,
-                                                                exampleCount = exampleItemsCount,
-                                                                onRequestDelete = { showPurgeConfirmDialog = true }
+                                                                query = searchQuery,
+                                                                onQueryChange = { searchQuery = it },
+                                                                onNewItem = onNewItem,
+                                                                onOpenSettings = onOpenSettings,
+                                                                searchFocusRequester = searchFocusRequester
+                                                            )
+                                                            if (exampleItemsCount > 0) {
+                                                                DeleteExampleDataInlineCard(
+                                                                    i18n = i18n,
+                                                                    exampleCount = exampleItemsCount,
+                                                                    onRequestDelete = { showPurgeConfirmDialog = true }
+                                                                )
+                                                            }
+                                                            VaultItemListPane(
+                                                                i18n = i18n,
+                                                                items = filteredItems,
+                                                                selectedItem = selectedItem,
+                                                                onSelectItem = { onSelectItem(it) },
+                                                                onCopyPrimary = copyItemPrimaryField,
+                                                                onEditItem = onEditItem,
+                                                                onTogglePinItem = onTogglePinItem,
+                                                                onToggleFavoriteItem = onToggleFavoriteItem,
+                                                                onDuplicateItem = onDuplicateItem,
+                                                                onDeleteItem = onDeleteItem,
+                                                                modifier = Modifier.weight(1f)
                                                             )
                                                         }
-                                                        VaultItemListPane(
-                                                            i18n = i18n,
-                                                            items = filteredItems,
-                                                            selectedItem = selectedItem,
-                                                            onSelectItem = { onSelectItem(it) },
-                                                            onCopyPrimary = copyItemPrimaryField,
-                                                            onEditItem = onEditItem,
-                                                            onTogglePinItem = onTogglePinItem,
-                                                            onToggleFavoriteItem = onToggleFavoriteItem,
-                                                            onDuplicateItem = onDuplicateItem,
-                                                            onDeleteItem = onDeleteItem,
-                                                            modifier = Modifier.weight(1f)
-                                                        )
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .weight(0.55f)
+                                                                .fillMaxHeight()
+                                                                .padding(16.dp)
+                                                        ) {
+                                                            VaultDetailInspectorPane(
+                                                                i18n = i18n,
+                                                                selectedItem = selectedItem,
+                                                                copiedNotice = copiedNotice ?: statusBannerMessage,
+                                                                onCopyField = copyWith30sHygiene,
+                                                                onEdit = onEditItem,
+                                                                onDuplicate = onDuplicateItem,
+                                                                onTogglePin = onTogglePinItem,
+                                                                onToggleFavorite = onToggleFavoriteItem,
+                                                                onDelete = onDeleteItem
+                                                            )
+                                                        }
                                                     }
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .weight(0.55f)
-                                                            .fillMaxHeight()
-                                                            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 52.dp)
-                                                    ) {
-                                                        VaultDetailInspectorPane(
-                                                            i18n = i18n,
-                                                            selectedItem = selectedItem,
-                                                            copiedNotice = copiedNotice ?: statusBannerMessage,
-                                                            onCopyField = copyWith30sHygiene,
-                                                            onEdit = onEditItem,
-                                                            onDuplicate = onDuplicateItem,
-                                                            onTogglePin = onTogglePinItem,
-                                                            onToggleFavorite = onToggleFavoriteItem,
-                                                            onDelete = onDeleteItem
-                                                        )
+                                                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                                                    Surface(color = MaterialTheme.colorScheme.surface) {
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                                                            horizontalArrangement = Arrangement.End,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            BottomRightSyncStatusPill(
+                                                                i18n = i18n,
+                                                                snapshot = syncIndicator,
+                                                                onClick = {
+                                                                    if (syncIndicator.storageMode == VaultStorageMode.CLOUD_SYNC) {
+                                                                        coroutineScope.launch {
+                                                                            runCatching { onSyncNow() }.onFailure { onOpenSettings() }
+                                                                        }
+                                                                    } else {
+                                                                        onOpenSettings()
+                                                                    }
+                                                                }
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -694,21 +770,21 @@ fun AdaptiveSafePocketShell(
                                                         Row(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                                                                .padding(start = 8.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
                                                             horizontalArrangement = Arrangement.SpaceBetween,
                                                             verticalAlignment = Alignment.CenterVertically
                                                         ) {
-                                                            // Bottom-Left Theme Icon + Lock
+                                                            // Flush Bottom-Left Theme Icon + Lock
                                                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                                                 SmoothOutlinedButton(
                                                                     onClick = cycleTheme,
-                                                                    contentPadding = PaddingValues(horizontal = 11.dp, vertical = 6.dp)
+                                                                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp)
                                                                 ) {
                                                                     Text(themeGlyph)
                                                                 }
                                                                 SmoothOutlinedButton(
                                                                     onClick = onLockVault,
-                                                                    contentPadding = PaddingValues(horizontal = 11.dp, vertical = 6.dp)
+                                                                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp)
                                                                 ) {
                                                                     Text("🔒")
                                                                 }
@@ -780,34 +856,6 @@ fun AdaptiveSafePocketShell(
                                                 }
                                             }
                                         }
-                                    }
-                                }
-                            }
-
-                            // Dedicated Non-Overlapping Slim Bottom Status Bar on Tablet/Foldable/Desktop (`widthDp >= 600`)
-                            if (!isVaultLocked && widthDp >= 600) {
-                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                                Surface(color = MaterialTheme.colorScheme.surface) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.End,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        BottomRightSyncStatusPill(
-                                            i18n = i18n,
-                                            snapshot = syncIndicator,
-                                            onClick = {
-                                                if (syncIndicator.storageMode == VaultStorageMode.CLOUD_SYNC) {
-                                                    coroutineScope.launch {
-                                                        runCatching { onSyncNow() }.onFailure { onOpenSettings() }
-                                                    }
-                                                } else {
-                                                    onOpenSettings()
-                                                }
-                                            }
-                                        )
                                     }
                                 }
                             }
@@ -2479,6 +2527,30 @@ private fun SafePocketSettingsDialog(
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth()
                                     )
+                                    SmoothPrimaryButton(
+                                        enabled = !busyOperation && gdriveBearerToken.isNotBlank(),
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                busyOperation = true
+                                                runCatching {
+                                                    if (currentStorageMode != VaultStorageMode.CLOUD_SYNC) {
+                                                        onSwitchStorageMode(VaultStorageMode.CLOUD_SYNC)
+                                                    }
+                                                    val rep = onSyncNow()
+                                                    statusFeedback = if (rep != null) {
+                                                        "✓ Synced via Google Drive (↑${rep.pushedCount} • ↓${rep.pulledCount})"
+                                                    } else {
+                                                        "✓ ${i18n.t("storage_mode_cloud_only_title")}"
+                                                    }
+                                                }.onFailure { err ->
+                                                    statusFeedback = "⚠ ${err.message}"
+                                                }
+                                                busyOperation = false
+                                            }
+                                        }
+                                    ) {
+                                        Text("⇄ ${i18n.t("sync_now")}")
+                                    }
                                 } else if (!cloudSyncStatus?.signedInEmail.isNullOrBlank()) {
                                     Text(
                                         text = i18n.t(

@@ -6,6 +6,8 @@ import {
   type FirebaseAuthResult,
   firebaseAuthSignInRest,
   firebaseAuthSignUpRest,
+  firebaseRefreshIdTokenRest,
+  inspectFirebaseJwtClaims,
   type LiveCloudEndpointConfig,
   verifyEmbeddedAuthDigest
 } from '../sync/liveCloudConnectors';
@@ -290,6 +292,65 @@ export class FirebaseVaultService {
     };
     this.persistSession(session);
     return session;
+  }
+
+  async ensureValidSession(
+    forceRefresh = false,
+    fetcher: typeof fetch = fetch
+  ): Promise<FirebaseAuthResult | null> {
+    const current = this.activeSession;
+    if (!current) return null;
+    if (current.mode !== 'live-firebase' || !this.isLiveProjectLinked) {
+      return { ...current };
+    }
+
+    const claims = inspectFirebaseJwtClaims(current.idToken);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const matchesProject = !claims?.aud || claims.aud === this.config.projectId;
+    const isFresh =
+      Boolean(claims?.exp) &&
+      (claims?.exp ?? 0) - nowSec > 300 &&
+      matchesProject;
+
+    if (!forceRefresh && isFresh) {
+      return { ...current };
+    }
+
+    if (current.refreshToken && matchesProject) {
+      try {
+        const refreshed = await firebaseRefreshIdTokenRest(
+          this.config.apiKey,
+          current.refreshToken,
+          fetcher
+        );
+        const updated: FirebaseAuthResult = {
+          ...current,
+          uid: refreshed.uid || current.uid,
+          idToken: refreshed.idToken,
+          refreshToken: refreshed.refreshToken
+        };
+        this.persistSession(updated);
+        return { ...updated };
+      } catch (err) {
+        if (!claims?.exp || claims.exp <= nowSec + 10) {
+          this.signOutCloudUser();
+          throw new Error(
+            `Cloud Sync session expired — please sign in again (${
+              err instanceof Error ? err.message : String(err)
+            })`
+          );
+        }
+        return { ...current };
+      }
+    }
+
+    if (!matchesProject || !claims?.exp || claims.exp <= nowSec + 10) {
+      this.signOutCloudUser();
+      throw new Error(
+        'Cloud Sync session expired — please sign in again in Settings.'
+      );
+    }
+    return { ...current };
   }
 
   signOutCloudUser(): void {

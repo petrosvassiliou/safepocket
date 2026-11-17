@@ -153,6 +153,88 @@ export async function firebaseAuthSignInRest(
 }
 
 /**
+ * Inspects Base64URL-encoded Firebase JWT `exp` and `aud` claims without requiring external libraries.
+ */
+export function inspectFirebaseJwtClaims(
+  idToken: string
+): { exp?: number; aud?: string } | null {
+  if (!idToken) return null;
+  const parts = idToken.trim().split('.');
+  if (parts.length < 2) return null;
+  try {
+    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+      base64 += '=';
+    }
+    const decoded =
+      typeof atob === 'function'
+        ? atob(base64)
+        : Buffer.from(base64, 'base64').toString('utf-8');
+    const parsed = JSON.parse(decoded) as Record<string, unknown>;
+    return {
+      exp: typeof parsed.exp === 'number' ? parsed.exp : undefined,
+      aud: typeof parsed.aud === 'string' ? parsed.aud : undefined
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeBearerToken(raw: string): string {
+  const trimmed = raw.trim();
+  return /^bearer\s+/i.test(trimmed)
+    ? trimmed.replace(/^bearer\s+/i, '').trim()
+    : trimmed;
+}
+
+/**
+ * Refreshes an expired or near-expiry Firebase `idToken` via `securetoken.googleapis.com/v1/token`
+ * using `application/json` so Base64 `+`, `/`, and `=` characters in `refreshToken` are never corrupted.
+ */
+export async function firebaseRefreshIdTokenRest(
+  apiKey: string,
+  refreshToken: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ idToken: string; refreshToken: string; uid?: string }> {
+  const cleanKey = apiKey.trim();
+  const cleanRefresh = refreshToken.trim();
+  if (!cleanKey || !cleanRefresh) {
+    throw new Error('Missing Firebase API key or refreshToken');
+  }
+  const res = await fetcher(
+    `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(
+      cleanKey
+    )}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: cleanRefresh
+      })
+    }
+  );
+  const data = (await res.json()) as Record<string, any>;
+  if (!res.ok) {
+    throw new Error(
+      data?.error?.message ||
+        `Firebase securetoken refresh failed (HTTP ${res.status})`
+    );
+  }
+  const nextIdToken = String(data.id_token || data.idToken || '').trim();
+  if (!nextIdToken) {
+    throw new Error('Firebase securetoken response missing id_token');
+  }
+  return {
+    idToken: nextIdToken,
+    refreshToken: String(
+      data.refresh_token || data.refreshToken || cleanRefresh
+    ).trim(),
+    uid: data.user_id ? String(data.user_id) : undefined
+  };
+}
+
+/**
  * Constant-time local auth verifier helper for embedded SQLite Firebase replica.
  */
 export async function computeEmbeddedAuthVerifier(
@@ -242,7 +324,7 @@ export async function pushRowsToFirestoreRest(
   const res = await fetcher(commitUrl, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${config.bearerToken}`,
+      Authorization: `Bearer ${sanitizeBearerToken(config.bearerToken)}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({ writes })
@@ -292,7 +374,7 @@ export async function pullRowsFromFirestoreRest(
   const res = await fetcher(parentUrl, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${config.bearerToken}`,
+      Authorization: `Bearer ${sanitizeBearerToken(config.bearerToken)}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({ structuredQuery })

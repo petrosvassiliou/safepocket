@@ -290,31 +290,99 @@ enum MacCloudSyncClient {
         }
     }
 
+    private static func inspectJwtClaims(_ idToken: String) -> (exp: TimeInterval?, aud: String?) {
+        let parts = idToken.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ".")
+        guard parts.count >= 2 else { return (nil, nil) }
+        var base64 = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 {
+            base64.append("=")
+        }
+        guard let data = Data(base64Encoded: base64),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (nil, nil)
+        }
+        let exp: TimeInterval? = (obj["exp"] as? NSNumber)?.doubleValue
+        let aud: String? = obj["aud"] as? String
+        return (exp, aud)
+    }
+
+    private static func sanitizeBearerToken(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("bearer ") {
+            return String(trimmed.dropFirst("bearer ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return trimmed
+    }
+
     static func refreshFirebaseTokenIfPossible(
         session: MacCloudUserSession,
-        apiKey: String
-    ) async -> MacCloudUserSession {
-        guard !session.idToken.hasPrefix("local-fb-jwt-"),
-              let refresh = session.refreshToken, !refresh.isEmpty,
-              let url = URL(string: "https://securetoken.googleapis.com/v1/token?key=\(apiKey)") else {
+        apiKey: String,
+        expectedProjectId: String? = nil,
+        force: Bool = false
+    ) async throws -> MacCloudUserSession {
+        if session.idToken.hasPrefix("local-fb-jwt-") {
             return session
         }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        req.httpBody = Data("grant_type=refresh_token&refresh_token=\(refresh)".utf8)
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let nextToken = obj["id_token"] as? String else {
+
+        let claims = inspectJwtClaims(session.idToken)
+        let nowSec = Date().timeIntervalSince1970
+        let cleanProject = expectedProjectId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchesProject = cleanProject == nil || cleanProject!.isEmpty || claims.aud == nil || claims.aud == cleanProject
+        let isFresh = (claims.exp != nil) && ((claims.exp ?? 0) - nowSec > 300) && matchesProject
+
+        if !force && isFresh {
             return session
         }
-        var updated = session
-        updated.idToken = nextToken
-        if let nextRefresh = obj["refresh_token"] as? String {
-            updated.refreshToken = nextRefresh
+
+        let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanRefresh = session.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if !cleanKey.isEmpty, !cleanRefresh.isEmpty, matchesProject,
+           var components = URLComponents(string: "https://securetoken.googleapis.com/v1/token") {
+            components.queryItems = [URLQueryItem(name: "key", value: cleanKey)]
+            if let url = components.url {
+                var req = URLRequest(url: url)
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.timeoutInterval = 15
+                req.httpBody = try? JSONSerialization.data(withJSONObject: [
+                    "grant_type": "refresh_token",
+                    "refresh_token": cleanRefresh
+                ])
+                if let (data, resp) = try? await URLSession.shared.data(for: req),
+                   let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let nextToken = (obj["id_token"] as? String) ?? (obj["idToken"] as? String),
+                   !nextToken.isEmpty {
+                    var updated = session
+                    updated.idToken = nextToken
+                    if let nextRefresh = (obj["refresh_token"] as? String) ?? (obj["refreshToken"] as? String),
+                       !nextRefresh.isEmpty {
+                        updated.refreshToken = nextRefresh
+                    }
+                    if let nextUid = obj["user_id"] as? String, !nextUid.isEmpty {
+                        updated = MacCloudUserSession(
+                            uid: nextUid,
+                            email: updated.email,
+                            idToken: updated.idToken,
+                            refreshToken: updated.refreshToken
+                        )
+                    }
+                    return updated
+                }
+            }
         }
-        return updated
+
+        if !matchesProject || claims.exp == nil || (claims.exp ?? 0) <= nowSec + 10 {
+            throw NSError(
+                domain: "SafePocketCloudAuth",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "Cloud Sync session expired — please sign in again in Settings."]
+            )
+        }
+        return session
     }
 
     static func pushDeltasToFirestore(
@@ -323,14 +391,15 @@ enum MacCloudSyncClient {
         config: MacCloudEndpointConfig
     ) async throws -> Int {
         guard !deltas.isEmpty else { return 0 }
-        if session.idToken.hasPrefix("local-fb-jwt-") || config.firebaseProjectId.trimmingCharacters(in: .whitespaces).isEmpty {
+        let cleanProjectId = config.firebaseProjectId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if session.idToken.hasPrefix("local-fb-jwt-") || cleanProjectId.isEmpty {
             return deltas.count
         }
-        let urlStr = "https://firestore.googleapis.com/v1/projects/\(config.firebaseProjectId)/databases/(default)/documents:commit"
+        let urlStr = "https://firestore.googleapis.com/v1/projects/\(cleanProjectId)/databases/(default)/documents:commit"
         guard let url = URL(string: urlStr) else { throw URLError(.badURL) }
 
         let writes: [[String: Any]] = deltas.map { d in
-            let docName = "projects/\(config.firebaseProjectId)/databases/(default)/documents/users/\(session.uid)/vaults/\(config.vaultCollectionId)/deltas/\(d.entityId)"
+            let docName = "projects/\(cleanProjectId)/databases/(default)/documents/users/\(session.uid)/vaults/\(config.vaultCollectionId)/deltas/\(d.entityId)"
             return [
                 "update": [
                     "name": docName,
@@ -350,7 +419,7 @@ enum MacCloudSyncClient {
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("Bearer \(session.idToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(sanitizeBearerToken(session.idToken))", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.timeoutInterval = 20
         req.httpBody = try JSONSerialization.data(withJSONObject: ["writes": writes])
@@ -368,10 +437,11 @@ enum MacCloudSyncClient {
         session: MacCloudUserSession,
         config: MacCloudEndpointConfig
     ) async throws -> [MacEncryptedSyncDelta] {
-        if session.idToken.hasPrefix("local-fb-jwt-") || config.firebaseProjectId.trimmingCharacters(in: .whitespaces).isEmpty {
+        let cleanProjectId = config.firebaseProjectId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if session.idToken.hasPrefix("local-fb-jwt-") || cleanProjectId.isEmpty {
             return []
         }
-        let urlStr = "https://firestore.googleapis.com/v1/projects/\(config.firebaseProjectId)/databases/(default)/documents/users/\(session.uid)/vaults/\(config.vaultCollectionId):runQuery"
+        let urlStr = "https://firestore.googleapis.com/v1/projects/\(cleanProjectId)/databases/(default)/documents/users/\(session.uid)/vaults/\(config.vaultCollectionId):runQuery"
         guard let url = URL(string: urlStr) else { throw URLError(.badURL) }
 
         var structuredQuery: [String: Any] = [
@@ -390,7 +460,7 @@ enum MacCloudSyncClient {
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("Bearer \(session.idToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(sanitizeBearerToken(session.idToken))", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.timeoutInterval = 20
         req.httpBody = try JSONSerialization.data(withJSONObject: ["structuredQuery": structuredQuery])

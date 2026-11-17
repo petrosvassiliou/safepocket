@@ -19,6 +19,10 @@ import {
 import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
 import { IdleAutoLockMonitor } from '../security/autoLockMonitor';
 import {
+  firebaseRefreshIdTokenRest,
+  inspectFirebaseJwtClaims
+} from '../sync/liveCloudConnectors';
+import {
   FirebaseZeroKnowledgeAdapter,
   GoogleDriveAppDataAdapter,
   VaultSyncCoordinator
@@ -35,7 +39,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
+describe('SafePocket v0.3.6 (Build 11) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -299,9 +303,9 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.5 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.5');
-    expect(APP_BUILD_INFO.versionCode).toBe(10);
+  it('7. Cross-Platform v0.3.6 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.6');
+    expect(APP_BUILD_INFO.versionCode).toBe(11);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -376,7 +380,7 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.5 (Build 10)');
+    expect(macApp).toContain('SafePocket v0.3.6 (Build 11)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
@@ -771,5 +775,135 @@ describe('SafePocket v0.3.3 (Build 8) Feature Suite', () => {
     expect(androidShell).not.toContain('.align(Alignment.BottomEnd)');
     expect(androidShell).toContain('fontSize = 10.5.sp');
     expect(androidShell).toContain('shadowElevation = 0.dp');
+  });
+
+  it('13. v0.3.6 Flush Bottom-Left Sidebar Controls & Firebase JSON RefreshToken + HTTP 401 Auto-Retry Recovery', async () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+
+    // 1) Base64URL JWT claim inspection + JSON refreshToken preservation of +, /, and = characters
+    const fakeHeader = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+    const fakePayload = Buffer.from(
+      JSON.stringify({ aud: 'safepocket-vault-eu', exp: 1999999999 })
+    ).toString('base64url');
+    const fakeJwt = `${fakeHeader}.${fakePayload}.sig`;
+    const claims = inspectFirebaseJwtClaims(fakeJwt);
+    expect(claims?.aud).toBe('safepocket-vault-eu');
+    expect(claims?.exp).toBe(1999999999);
+
+    const trickyRefreshToken = 'AEu4IL2+abc/def==+xyz/99=';
+    let capturedContentType = '';
+    let capturedBodyText = '';
+    const refreshed = await firebaseRefreshIdTokenRest(
+      'AIzaTestKey',
+      trickyRefreshToken,
+      (async (_url, init) => {
+        capturedContentType = String(
+          (init?.headers as Record<string, string>)?.['Content-Type'] ?? ''
+        );
+        capturedBodyText = String(init?.body ?? '');
+        return new Response(
+          JSON.stringify({
+            id_token: fakeJwt,
+            refresh_token: trickyRefreshToken,
+            user_id: 'uid-googlebook-1'
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch
+    );
+    expect(capturedContentType).toBe('application/json');
+    expect(JSON.parse(capturedBodyText).refresh_token).toBe(trickyRefreshToken);
+    expect(refreshed.idToken).toBe(fakeJwt);
+
+    // 2) FirebaseZeroKnowledgeAdapter automatically refreshes once on HTTP 401 and succeeds on retry
+    const cryptoEngine = new ZeroKnowledgeVaultCrypto({
+      memorySizeKiB: 2048,
+      iterations: 1,
+      parallelism: 1
+    });
+    await cryptoEngine.initializeOrUnlock('retry-pw', generateFormattedSecretKey());
+    const sample = createInitialSampleVaultItems()[0];
+    const encRow = await cryptoEngine.encryptVaultItem(
+      sample,
+      '001763300001000-0000-googlebook',
+      { googlebook: 1 }
+    );
+
+    const seenAuthHeaders: string[] = [];
+    const adapter = new FirebaseZeroKnowledgeAdapter(
+      undefined,
+      (async (_url, init) => {
+        const auth = String(
+          (init?.headers as Record<string, string>)?.Authorization ?? ''
+        );
+        seenAuthHeaders.push(auth);
+        if (auth === 'Bearer expired-jwt') {
+          return new Response(
+            JSON.stringify({
+              error: { code: 401, message: 'Request had invalid authentication credentials.' }
+            }),
+            { status: 401 }
+          );
+        }
+        return new Response(JSON.stringify({ writeResults: [{}] }), { status: 200 });
+      }) as typeof fetch
+    );
+    adapter.setLiveEndpointConfig({
+      firebaseProjectId: 'safepocket-vault-eu',
+      firebaseUserId: 'uid-googlebook-1',
+      bearerToken: 'expired-jwt'
+    });
+    adapter.setRefreshTokenCallback(async () => 'fresh-renewed-jwt');
+
+    const pushRes = await adapter.pushEncryptedDeltas('default-vault', [encRow]);
+    expect(pushRes.pushedCount).toBe(1);
+    expect(seenAuthHeaders).toEqual(['Bearer expired-jwt', 'Bearer fresh-renewed-jwt']);
+
+    // 3) Cross-platform flush bottom-left sidebar controls & JSON securetoken refresh in Kotlin + Swift
+    const ktAuth = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'shared/src/commonMain/kotlin/com/safepocket/shared/sync/FirebaseAuthService.kt'
+      ),
+      'utf-8'
+    );
+    const ktSync = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'shared/src/commonMain/kotlin/com/safepocket/shared/sync/FirebaseSyncAdapter.kt'
+      ),
+      'utf-8'
+    );
+    const macCloud = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/CloudSyncAndPortability.swift'),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const pwaCss = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/styles/m3-expressive.css'),
+      'utf-8'
+    );
+
+    expect(ktAuth).not.toContain('FormUrlEncoded');
+    expect(ktAuth).toContain('SecureTokenRefreshRequest');
+    expect(ktAuth).toContain('CloudAuthExpiredException');
+    expect(ktSync).toContain('resp.status.value == 401 && forceRefreshTokenProvider != null');
+    expect(macCloud).not.toContain('application/x-www-form-urlencoded');
+    expect(androidShell).toContain('windowInsets = WindowInsets(0, 0, 0, 0)');
+    expect(androidShell).toContain('Arrangement.spacedBy(6.dp, Alignment.Start)');
+    expect(androidShell).not.toContain('if (!isVaultLocked && widthDp >= 600)');
+    expect(macSplit).toContain('.padding(.leading, 8)');
+    expect(pwaCss).toContain('padding: 14px 10px 6px 8px;');
+    expect(pwaCss).toContain('justify-content: flex-start;');
   });
 });

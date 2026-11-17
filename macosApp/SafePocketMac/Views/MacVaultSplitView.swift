@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.5 (Build 10) with 100% Cross-Platform Parity.
+/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.6 (Build 11) with 100% Cross-Platform Parity.
 struct MacVaultSplitView: View {
     @ObservedObject var vaultState: MacVaultViewModel
     @ObservedObject var updater: MacSparkleUpdateController
@@ -170,14 +170,14 @@ struct MacVaultSplitView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 5) {
                 Divider()
                 HStack(spacing: 6) {
                     Button {
                         cycleTheme()
                     } label: {
                         Image(systemName: themeMode == "dark" ? "moon.stars.fill" : (themeMode == "system" ? "circle.lefthalf.filled" : "sun.max.fill"))
-                            .frame(width: 18)
+                            .frame(width: 16)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -185,8 +185,6 @@ struct MacVaultSplitView: View {
 
                     MacFlagLanguageMenu(vaultState: vaultState)
                         .controlSize(.small)
-
-                    Spacer(minLength: 2)
 
                     Button {
                         vaultState.lockVault()
@@ -196,8 +194,12 @@ struct MacVaultSplitView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+
+                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 14)
+                .padding(.leading, 8)
+                .padding(.trailing, 10)
+                .padding(.top, 4)
 
                 HStack(spacing: 5) {
                     Image(systemName: "checkmark.shield.fill")
@@ -207,10 +209,11 @@ struct MacVaultSplitView: View {
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 10)
+                .padding(.leading, 8)
+                .padding(.trailing, 10)
+                .padding(.bottom, 6)
             }
             .background(.bar)
         }
