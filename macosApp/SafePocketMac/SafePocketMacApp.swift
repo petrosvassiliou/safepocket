@@ -926,8 +926,8 @@ final class MacVaultViewModel: ObservableObject {
                     )
                 }
 
-                let pushed: Int
-                let pulledDeltas: [MacEncryptedSyncDelta]
+                var pushed = 0
+                var pulledDeltas: [MacEncryptedSyncDelta] = []
                 do {
                     pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
                         deltas: outboundDeltas,
