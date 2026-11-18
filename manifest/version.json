@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-18T23:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:af4fb25de48ff14d30b8f8b9f1d50327bc7b27adc185f1c1389ec93bc803847333dd1bd34ca4d9fe5d587d33e6a954afb167c2786919fb895ab7a9038d3dd707",
+  "manifestSignature": "ed25519:465a33834f03c35ad0f11aaafde1804e0c6b2948edfcaa6203bd4709302a4b5b4fcb956dbb823e0f9cb0d2e04a77e79b7f462e6b14396a1383c3bf4c79790502",
   "releaseNotes": {
     "en": "• SafePocket v0.3.7 adds a direct category dropdown to + New, removes redundant category pickers from item dialogs, and centers all sidebar footer icons.\n• Introduces side-by-side Local DB vs Cloud-Sync cards with seamless 1-click sync pause/resume that keeps both your local encrypted DB and Cloud session intact.\n• Anchors right-click context menus directly on top of selected items with crisp hover highlights, and elevates modal action buttons clear of window frames across Android / Googlebook OS, ChromeOS / Web PWA, and macOS.",
     "de": "• SafePocket v0.3.7 ergänzt den Button + Neu um ein direktes Kategorie-Menü, entfernt die doppelte Kategorieauswahl im Dialog und zentriert alle Symbole unten links.\n• Neue nebeneinanderliegende Karten für Lokale DB & Cloud-Sync ermöglichen nahtloses Pausieren/Fortsetzen per Klick ohne Abmeldung oder Datenverlust.\n• Kontextmenüs erscheinen per Rechtsklick direkt über dem ausgewählten Eintrag mit Hover-Hervorhebung, und Dialog-Schaltflächen haben mehr Abstand zum Fensterrand.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.7/SafePocket-v0.3.7-b12-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "48638246ccddcf8da02697b0413c4f3963e37c402a0cab79d0eadee8aea323be",
+      "sizeBytes": 38268803,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.7/SafePocket-0.3.7-12-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "cdee6c1209c67f37d3d2bf80751e8384db904344772c282467c3a5c12f7c5140",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 3258150,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
