@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.6').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.7').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '11');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '12');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-17T19:00:00Z',
+    publishedAt: '2026-11-18T23:00:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} moves all sidebar footer controls (Theme, Flag Language, Lock, and version) flush into the true bottom-left corner.\n• Fixes Cloud Sync HTTP 401 authentication failures via JSON refresh-token encoding, JWT expiry checks, and automatic 401 token renewal.\n• Full cross-platform parity across Android / Googlebook OS, ChromeOS / Web PWA, and macOS.`,
-      de: `• SafePocket v${latestVersion} platziert alle Elemente der linken unteren Seitenleiste (Design, Sprache, Sperren und Version) bündig unten links.\n• Behebt Cloud-Sync-HTTP-401-Authentifizierungsfehler durch JSON-Refresh-Token-Kodierung, JWT-Ablaufprüfung und automatische Token-Erneuerung.\n• Volle Plattformparität für Android / Googlebook OS, ChromeOS / Web PWA und macOS.`,
-      it: `• SafePocket v${latestVersion} posiziona tutti i controlli inferiori della barra laterale a filo nell'angolo inferiore sinistro.\n• Risolve gli errori HTTP 401 di Cloud Sync con codifica JSON del refresh token e rinnovo automatico.\n• Piena parità multipiattaforma su Android / Googlebook OS, ChromeOS / Web PWA e macOS.`,
-      fr: `• SafePocket v${latestVersion} aligne tous les contrôles du bas de la barre latérale tout en bas à gauche.\n• Corrige les erreurs HTTP 401 de Cloud Sync grâce à l'encodage JSON du refresh token et au renouvellement automatique.\n• Parité complète sur Android / Googlebook OS, ChromeOS / Web PWA et macOS.`,
-      es: `• SafePocket v${latestVersion} sitúa todos los controles inferiores de la barra lateral al ras de la esquina inferior izquierda.\n• Corrige los errores HTTP 401 de Cloud Sync mediante codificación JSON del refresh token y renovación automática.\n• Paridad total en Android / Googlebook OS, ChromeOS / Web PWA y macOS.`,
-      el: `• Το SafePocket v${latestVersion} τοποθετεί όλα τα στοιχεία της πλαϊνής μπάρας ακριβώς στην κάτω αριστερή γωνία.\n• Επιλύει τα σφάλματα HTTP 401 του Cloud Sync μέσω JSON κωδικοποίησης του refresh token και αυτόματης ανανέωσης.\n• Πλήρης ισοτιμία σε Android / Googlebook OS, ChromeOS / Web PWA και macOS.`
+      en: `• SafePocket v${latestVersion} adds a direct category dropdown to + New, removes redundant category pickers from item dialogs, and centers all sidebar footer icons.\n• Introduces side-by-side Local DB vs Cloud-Sync cards with seamless 1-click sync pause/resume that keeps both your local encrypted DB and Cloud session intact.\n• Anchors right-click context menus directly on top of selected items with crisp hover highlights, and elevates modal action buttons clear of window frames across Android / Googlebook OS, ChromeOS / Web PWA, and macOS.`,
+      de: `• SafePocket v${latestVersion} ergänzt den Button + Neu um ein direktes Kategorie-Menü, entfernt die doppelte Kategorieauswahl im Dialog und zentriert alle Symbole unten links.\n• Neue nebeneinanderliegende Karten für Lokale DB & Cloud-Sync ermöglichen nahtloses Pausieren/Fortsetzen per Klick ohne Abmeldung oder Datenverlust.\n• Kontextmenüs erscheinen per Rechtsklick direkt über dem ausgewählten Eintrag mit Hover-Hervorhebung, und Dialog-Schaltflächen haben mehr Abstand zum Fensterrand.`,
+      it: `• SafePocket v${latestVersion} aggiunge un menu categorie diretto a + Nuovo, centra le icone della barra laterale e solleva i pulsanti delle finestre modali.\n• Nuove schede affiancate DB locale e Cloud-Sync per mettere in pausa o riprendere la sincronizzazione con 1 clic mantenendo intatti DB locale e sessione cloud.\n• Menu contestuale ancorato direttamente sopra l'elemento selezionato con evidenziazione al passaggio del mouse.`,
+      fr: `• SafePocket v${latestVersion} ajoute un menu déroulant de catégories au bouton + Nouveau, centre les icônes de la barre latérale et rehausse les boutons des fenêtres modales.\n• Nouvelles cartes côte à côte Base locale et Cloud-Sync permettant de suspendre/reprendre la synchronisation en 1 clic sans déconnexion.\n• Menu contextuel affiché directement au-dessus de l'élément sélectionné avec surbrillance au survol.`,
+      es: `• SafePocket v${latestVersion} añade un menú desplegable de categorías en + Nuevo, centra los iconos de la barra lateral y eleva los botones de los diálogos modales.\n• Nuevas tarjetas lado a lado BD local y Cloud-Sync para pausar o reanudar la sincronización con 1 clic conservando la base local y la sesión en la nube.\n• Menú contextual anclado directamente sobre el elemento seleccionado con resaltado al pasar el cursor.`,
+      el: `• Το SafePocket v${latestVersion} προσθέτει μενού κατηγοριών στο κουμπί + Νέο, κεντράρει τα εικονίδια της πλαϊνής μπάρας και ανυψώνει τα κουμπιά των παραθύρων διαλόγου.\n• Νέες κάρτες Τοπική ΒΔ και Cloud-Sync δίπλα-δίπλα για άμεση παύση/συνέχιση συγχρονισμού με 1 κλικ χωρίς αποσύνδεση.\n• Το μενού δεξιού κλικ εμφανίζεται ακριβώς πάνω από το επιλεγμένο στοιχείο με επισήμανση κατά την αιώρηση.`
     },
     artifacts: {
       'android-universal': {

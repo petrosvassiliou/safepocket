@@ -337,12 +337,7 @@ class AndroidVaultRepository(
     val hasCustomMasterPassword: Boolean
         get() = prefs.getBoolean(KEY_HAS_CUSTOM_MASTER_PW, false)
 
-    private fun activeTargetDbFileName(): String =
-        if (storageMode == VaultStorageMode.CLOUD_SYNC) {
-            CLOUD_OFFLINE_CACHE_DB_NAME
-        } else {
-            LOCAL_STANDALONE_DB_NAME
-        }
+    private fun activeTargetDbFileName(): String = LOCAL_STANDALONE_DB_NAME
 
     private fun loadPendingCloudOutbox(): List<EncryptedSyncRecord> {
         val raw = prefs.getString(KEY_CLOUD_OUTBOX_JSON, null) ?: return emptyList()
@@ -459,13 +454,23 @@ class AndroidVaultRepository(
             derived
         }
 
-        // Enforce exclusive storage invariant on startup
-        if (storageMode == VaultStorageMode.CLOUD_SYNC) {
-            runCatching { context.deleteDatabase(LOCAL_STANDALONE_DB_NAME) }
-            prefs.edit().remove(LEGACY_KEY_VAULT_ITEMS).apply()
-        } else {
-            runCatching { context.deleteDatabase(CLOUD_OFFLINE_CACHE_DB_NAME) }
-            savePendingCloudOutbox(emptyList())
+        // Seamless v0.3.6 -> v0.3.7 migration: preserve any existing cloud offline cache DB into unified safepocket_vault.db
+        runCatching {
+            val localDbFile = context.getDatabasePath(LOCAL_STANDALONE_DB_NAME)
+            val legacyCloudCacheFile = context.getDatabasePath(CLOUD_OFFLINE_CACHE_DB_NAME)
+            if (legacyCloudCacheFile.exists()) {
+                if (!localDbFile.exists() || localDbFile.length() == 0L) {
+                    localDbFile.parentFile?.mkdirs()
+                    legacyCloudCacheFile.copyTo(localDbFile, overwrite = true)
+                    for (suffix in listOf("-wal", "-shm", "-journal")) {
+                        val srcSidecar = java.io.File(legacyCloudCacheFile.path + suffix)
+                        if (srcSidecar.exists()) {
+                            srcSidecar.copyTo(java.io.File(localDbFile.path + suffix), overwrite = true)
+                        }
+                    }
+                }
+                context.deleteDatabase(CLOUD_OFFLINE_CACHE_DB_NAME)
+            }
         }
 
         ensureActiveDatabaseOpened()
@@ -604,19 +609,17 @@ class AndroidVaultRepository(
     // =========================================================================
 
     /**
-     * Switches exclusively to `CLOUD_SYNC` mode:
-     * 1. Requires a signed-in Firebase account.
-     * 2. Closes and physically deletes standalone `safepocket_vault.db` & local JSON backup.
-     * 3. Opens session-scoped `safepocket_cloud_offline_cache.db`, writes encrypted mirror,
-     *    and reconciles immediately with Firebase (or queues into automatic offline outbox).
+     * Switches to `CLOUD_SYNC` mode (`Lokale DB + Echtzeit-Backup über alle Geräte`):
+     * 1. Requires a signed-in Cloud Sync account.
+     * 2. Keeps unified `safepocket_vault.db` intact on device and reconciles immediately with
+     *    Firebase / Google Drive (or queues into automatic offline outbox).
      */
     suspend fun switchToCloudSyncExclusiveMode(
         currentItems: List<VaultItemPayload>
     ): List<VaultItemPayload> = withContext(Dispatchers.IO) {
         check(hasActiveCloudAuth()) {
-            "Sign in or create a Cloud Sync account first to activate Cloud Sync Only mode."
+            "Sign in or create a Cloud Sync account first to activate Cloud Sync mode."
         }
-        // Validate / refresh Firebase token BEFORE deleting local standalone DB so dead sessions fail safely!
         if (!isGoogleDriveConfigured() && _isNetworkOnline.value) {
             try {
                 firebaseAuth.refreshIdTokenIfPossible(force = false)
@@ -627,13 +630,10 @@ class AndroidVaultRepository(
             }
         }
 
-        closeCurrentDatabase()
-        runCatching { context.deleteDatabase(LOCAL_STANDALONE_DB_NAME) }
-        prefs.edit().remove(LEGACY_KEY_VAULT_ITEMS).apply()
-
         storageMode = VaultStorageMode.CLOUD_SYNC
         ensureActiveDatabaseOpened()
         database?.let { db -> persistSnapshotToDbInternal(db, currentItems) }
+        prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(currentItems)).apply()
         latestKnownItems = currentItems
 
         return@withContext try {
@@ -647,7 +647,6 @@ class AndroidVaultRepository(
                 msg.contains("(403)") ||
                 msg.contains("authentication", ignoreCase = true)
             if (isAuthOrPermissionError) {
-                // Queue items safely in offline outbox so zero items are lost, AND surface the auth error immediately!
                 val queued = currentItems.map { encryptItemToSyncRecord(it) }
                 savePendingCloudOutbox(queued)
                 SafePocketErrorHandler.record(
@@ -659,7 +658,6 @@ class AndroidVaultRepository(
                 throw t
             }
             if (t is IOException || !_isNetworkOnline.value) {
-                // Genuine offline state: queue all items in encrypted outbox so they sync automatically with zero user input!
                 val queued = currentItems.map { encryptItemToSyncRecord(it) }
                 savePendingCloudOutbox(queued)
                 currentItems
@@ -672,21 +670,14 @@ class AndroidVaultRepository(
     }
 
     /**
-     * Switches exclusively to `LOCAL_ONLY` mode:
-     * 1. Signs out of Firebase Cloud Sync and clears cloud cursors.
-     * 2. Closes and physically deletes `safepocket_cloud_offline_cache.db` & pending outbox.
-     * 3. Opens standalone `safepocket_vault.db` and persists `currentItems` strictly on device.
+     * Switches to `LOCAL_ONLY` mode (`Lokale DB`):
+     * Pauses network sync while keeping both `safepocket_vault.db` and the signed-in Cloud session
+     * intact so the user can toggle back to `Cloud-Sync` in a single click without re-authenticating.
      */
     suspend fun switchToLocalOnlyExclusiveMode(
         currentItems: List<VaultItemPayload>
     ): List<VaultItemPayload> = withContext(Dispatchers.IO) {
-        firebaseAuth.signOut()
-        closeCurrentDatabase()
-        runCatching { context.deleteDatabase(CLOUD_OFFLINE_CACHE_DB_NAME) }
-        savePendingCloudOutbox(emptyList())
-
         prefs.edit()
-            .remove(KEY_FIREBASE_SESSION)
             .putBoolean(KEY_DB_INITIALIZED_V02, true)
             .apply()
 
@@ -996,7 +987,12 @@ class AndroidVaultRepository(
 
     suspend fun signOutFirebaseAndReturnToLocal(
         currentItems: List<VaultItemPayload>
-    ): List<VaultItemPayload> = switchToLocalOnlyExclusiveMode(currentItems)
+    ): List<VaultItemPayload> = withContext(Dispatchers.IO) {
+        firebaseAuth.signOut()
+        savePendingCloudOutbox(emptyList())
+        prefs.edit().remove(KEY_FIREBASE_SESSION).apply()
+        switchToLocalOnlyExclusiveMode(currentItems)
+    }
 
     private fun saveFirebaseSession(session: CloudSyncUserSession) {
         prefs.edit().putString(KEY_FIREBASE_SESSION, json.encodeToString(session)).apply()

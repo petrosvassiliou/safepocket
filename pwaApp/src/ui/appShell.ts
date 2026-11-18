@@ -288,6 +288,8 @@ export class SafePocketAppShell {
   private lastAutofillNotice = '';
   private autoReconcileInFlight = false;
 
+  private newItemDropdownOpen = false;
+
   private contextMenu: {
     x: number;
     y: number;
@@ -1257,6 +1259,11 @@ export class SafePocketAppShell {
           this.render();
           return;
         }
+        if (this.newItemDropdownOpen) {
+          this.newItemDropdownOpen = false;
+          this.render();
+          return;
+        }
         if (this.settingsModalOpen) {
           this.settingsModalOpen = false;
           this.render();
@@ -1276,7 +1283,12 @@ export class SafePocketAppShell {
       } else if (key === 'n') {
         e.preventDefault();
         if (this.crypto.isUnlocked) {
-          this.openCreateItemModal();
+          if (VAULT_CATEGORIES.includes(this.selectedNav as VaultCategory)) {
+            this.openCreateItemModal(this.selectedNav as VaultCategory);
+          } else {
+            this.newItemDropdownOpen = !this.newItemDropdownOpen;
+            this.render();
+          }
         }
       } else if (key === 'l') {
         e.preventDefault();
@@ -1292,21 +1304,53 @@ export class SafePocketAppShell {
       }
     });
 
-    window.addEventListener('click', () => {
-      if (this.contextMenu) {
+    window.addEventListener('click', (e) => {
+      const targetEl = e.target as HTMLElement | null;
+      let changed = false;
+      if (this.contextMenu && !targetEl?.closest('.sp-context-menu')) {
         this.contextMenu = null;
+        changed = true;
+      }
+      if (
+        this.newItemDropdownOpen &&
+        !targetEl?.closest('.sp-new-item-dropdown-wrap')
+      ) {
+        this.newItemDropdownOpen = false;
+        changed = true;
+      }
+      if (changed) {
         this.render();
       }
     });
   }
 
-  private openCreateItemModal(): void {
-    const defaultCat: VaultCategory = VAULT_CATEGORIES.includes(
-      this.selectedNav as VaultCategory
-    )
-      ? (this.selectedNav as VaultCategory)
-      : 'PAYMENT_CARD';
+  private categoryMenuGlyph(category: VaultCategory): string {
+    switch (category) {
+      case 'PAYMENT_CARD':
+        return '💳';
+      case 'BANK_ACCOUNT':
+        return '🏦';
+      case 'INSURANCE_CARD':
+        return '🛡';
+      case 'MEMBERSHIP_CARD':
+        return '🎟';
+      case 'IDENTITY':
+        return '🪪';
+      case 'OFFICIAL_DOCUMENT':
+        return '🛂';
+      case 'SECURE_NOTE':
+        return '📝';
+    }
+  }
 
+  private openCreateItemModal(explicitCategory?: VaultCategory): void {
+    const defaultCat: VaultCategory =
+      explicitCategory ??
+      (VAULT_CATEGORIES.includes(this.selectedNav as VaultCategory)
+        ? (this.selectedNav as VaultCategory)
+        : 'PAYMENT_CARD');
+
+    this.newItemDropdownOpen = false;
     this.customDropdownOpenKeys.clear();
     this.phoneDialCodes = {};
     this.lastAutofillNotice = '';
@@ -1974,9 +2018,9 @@ export class SafePocketAppShell {
                 id="sp-lock-btn"
                 class="sp-btn"
                 title="${this.escape(this.i18n.t('action_lock_vault'))} (Ctrl+L)"
-                style="padding:6px 10px;gap:6px;"
               >
-                <span>🔒 ${this.escape(this.i18n.t('action_lock_vault'))}</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+                <span>${this.escape(this.i18n.t('action_lock_vault'))}</span>
               </button>
             </div>
 
@@ -2049,9 +2093,37 @@ export class SafePocketAppShell {
                 </select>
               </div>
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                <button type="button" id="sp-new-item-btn" class="sp-btn sp-btn-primary">
-                  + ${this.escape(this.i18n.t('action_new_item'))}
-                </button>
+                <div class="sp-new-item-dropdown-wrap">
+                  <button
+                    type="button"
+                    id="sp-new-item-btn"
+                    class="sp-btn sp-btn-primary"
+                    aria-haspopup="menu"
+                    aria-expanded="${this.newItemDropdownOpen}"
+                  >
+                    <span>+ ${this.escape(this.i18n.t('action_new_item'))}</span>
+                    <span aria-hidden="true" style="font-size:10px;opacity:0.9;">▾</span>
+                  </button>
+                  ${
+                    this.newItemDropdownOpen
+                      ? `<div class="sp-new-item-menu" id="sp-new-item-menu" role="menu">
+                           ${VAULT_CATEGORIES.map(
+                             (cat) => `
+                             <button
+                               type="button"
+                               class="sp-context-item"
+                               role="menuitem"
+                               data-new-item-category="${cat}"
+                             >
+                               <span aria-hidden="true">${this.categoryMenuGlyph(cat)}</span>
+                               <span>${this.escape(this.i18n.resolveCategoryName(cat))}</span>
+                             </button>
+                           `
+                           ).join('')}
+                         </div>`
+                      : ''
+                  }
+                </div>
                 <button
                   type="button"
                   id="sp-nav-settings"
@@ -2059,6 +2131,7 @@ export class SafePocketAppShell {
                   data-nav="SETTINGS"
                   title="${this.escape(this.i18n.t('nav_settings'))}"
                   aria-label="${this.escape(this.i18n.t('nav_settings'))}"
+                  style="width:34px;padding:0;"
                 >⚙</button>
               </div>
             </div>
@@ -3921,10 +3994,13 @@ export class SafePocketAppShell {
         </div>
       </section>
 
-      <!-- 3. Mutually Exclusive Storage Mode (Local Storage Only XOR Cloud Sync Only) & Portability -->
+      <!-- 3. Database & Sync (Side-by-Side 2-Column Lokale DB vs Cloud-Sync Cards) & Portability -->
       <section class="sp-settings-section">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-          <h2>${this.escape(this.i18n.t('storage_mode_section_title'))}</h2>
+          <h2 style="display:inline-flex;align-items:center;gap:8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"></path><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"></path></svg>
+            <span>${this.escape(this.i18n.t('storage_mode_section_title'))}</span>
+          </h2>
           <span class="sp-badge ${
             this.syncCoordinator.storageMode === 'CLOUD_SYNC'
               ? 'sp-badge-ok'
@@ -3961,15 +4037,13 @@ export class SafePocketAppShell {
             role="radio"
             aria-checked="${this.syncCoordinator.storageMode === 'LOCAL_ONLY'}"
           >
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;">
-              <strong style="font-size:13px;display:inline-flex;align-items:center;gap:7px;">
-                <span aria-hidden="true" style="font-size:15px;color:var(--accent-primary);">${
-                  this.syncCoordinator.storageMode === 'LOCAL_ONLY' ? '◉' : '◯'
-                }</span>
-                ${this.escape(this.i18n.t('storage_mode_local_only_title'))}
-              </strong>
-            </div>
-            <span style="font-size:11.5px;color:var(--text-secondary);line-height:1.45;">
+            <span class="sp-storage-mode-icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l20 20"></path><path d="M5.78 5.78A7 7 0 0 0 7 19h10a5 5 0 0 0 1.88-.36"></path><path d="M21.82 16.5A5 5 0 0 0 18 9h-1.26A8 8 0 0 0 8.5 4.22"></path></svg>
+            </span>
+            <strong class="sp-storage-mode-title">
+              ${this.escape(this.i18n.t('storage_mode_local_only_title'))}
+            </strong>
+            <span class="sp-storage-mode-desc">
               ${this.escape(this.i18n.t('storage_mode_local_only_desc'))}
             </span>
           </button>
@@ -3986,15 +4060,13 @@ export class SafePocketAppShell {
             role="radio"
             aria-checked="${this.syncCoordinator.storageMode === 'CLOUD_SYNC'}"
           >
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;">
-              <strong style="font-size:13px;display:inline-flex;align-items:center;gap:7px;">
-                <span aria-hidden="true" style="font-size:15px;color:var(--accent-primary);">${
-                  this.syncCoordinator.storageMode === 'CLOUD_SYNC' ? '◉' : '◯'
-                }</span>
-                ${this.escape(this.i18n.t('storage_mode_cloud_only_title'))}
-              </strong>
-            </div>
-            <span style="font-size:11.5px;color:var(--text-secondary);line-height:1.45;">
+            <span class="sp-storage-mode-icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path><path d="m9.5 14 2 2 4-4"></path></svg>
+            </span>
+            <strong class="sp-storage-mode-title">
+              ${this.escape(this.i18n.t('storage_mode_cloud_only_title'))}
+            </strong>
+            <span class="sp-storage-mode-desc">
               ${this.escape(this.i18n.t('storage_mode_cloud_only_desc'))}
             </span>
           </button>
@@ -4010,7 +4082,11 @@ export class SafePocketAppShell {
                      })
                    )}
                  </span>
-                 <span style="color:var(--text-muted);">Cloud Sync: OFF (0 cloud mirror rows)</span>`
+                 <span style="color:var(--text-muted);">Cloud-Sync: Paused${
+                   this.firebaseService.currentUser
+                     ? ` (${this.escape(this.firebaseService.currentUser.email)})`
+                     : ''
+                 }</span>`
               : `<span style="color:var(--accent-primary);">
                    ● ${this.escape(
                      this.syncCoordinator.cloudService === 'FIREBASE'
@@ -4021,7 +4097,7 @@ export class SafePocketAppShell {
                    } queued)
                  </span>
                  <span style="color:var(--text-muted);">
-                   Standalone Local DB: Purged (0 rows) • Project: ${this.escape(
+                   Lokale DB (${this.items.length}) + Cloud • Project: ${this.escape(
                      this.firebaseService.webConfig.projectId
                    )}
                  </span>`
@@ -4619,38 +4695,18 @@ export class SafePocketAppShell {
     return `
       <div class="sp-overlay" id="sp-modal-backdrop">
         <form class="sp-modal-card" id="sp-item-editor-form" style="max-width:580px;">
-          <h2 style="margin:0;font-size:18px;">${this.escape(
-            draft.editingItemId
-              ? this.i18n.t('action_edit')
-              : this.i18n.t('action_new_item')
-          )}</h2>
-
-          <label style="font-size:12px;color:var(--text-secondary);">
-            ${this.escape(this.i18n.t('field_category'))}
-            <select id="sp-edit-category" class="sp-select" style="margin-top:4px;">
-              <option value="PAYMENT_CARD" ${
-                draft.category === 'PAYMENT_CARD' ? 'selected' : ''
-              }>${this.escape(this.i18n.t('category_payment_card'))}</option>
-              <option value="BANK_ACCOUNT" ${
-                draft.category === 'BANK_ACCOUNT' ? 'selected' : ''
-              }>${this.escape(this.i18n.t('category_bank_account'))}</option>
-              <option value="INSURANCE_CARD" ${
-                draft.category === 'INSURANCE_CARD' ? 'selected' : ''
-              }>${this.escape(this.i18n.t('category_insurance_card'))}</option>
-              <option value="MEMBERSHIP_CARD" ${
-                draft.category === 'MEMBERSHIP_CARD' ? 'selected' : ''
-              }>${this.escape(this.i18n.t('category_membership_card'))}</option>
-              <option value="IDENTITY" ${
-                draft.category === 'IDENTITY' ? 'selected' : ''
-              }>${this.escape(this.i18n.t('category_identity'))}</option>
-              <option value="OFFICIAL_DOCUMENT" ${
-                draft.category === 'OFFICIAL_DOCUMENT' ? 'selected' : ''
-              }>${this.escape(this.i18n.t('category_official_document'))}</option>
-              <option value="SECURE_NOTE" ${
-                draft.category === 'SECURE_NOTE' ? 'selected' : ''
-              }>${this.escape(this.i18n.t('category_secure_note'))}</option>
-            </select>
-          </label>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <h2 style="margin:0;font-size:18px;">${this.escape(
+              draft.editingItemId
+                ? this.i18n.t('action_edit')
+                : this.i18n.t('action_new_item')
+            )}</h2>
+            <span class="sp-badge" style="background:var(--accent-tonal);color:var(--accent-primary);">
+              ${this.categoryMenuGlyph(draft.category)} ${this.escape(
+                this.i18n.resolveCategoryName(draft.category)
+              )}
+            </span>
+          </div>
 
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
             <label style="font-size:12px;color:var(--text-secondary);">
@@ -5128,7 +5184,7 @@ export class SafePocketAppShell {
             </button>
           </div>
 
-          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+          <div class="sp-modal-footer">
             <button type="button" id="sp-cancel-editor" class="sp-btn">${this.escape(
               this.i18n.t('action_cancel')
             )}</button>
@@ -5661,7 +5717,7 @@ export class SafePocketAppShell {
           <button type="button" class="sp-context-item" id="sp-ctx-duplicate">
             ⧉ ${this.escape(this.i18n.t('context_duplicate'))}
           </button>
-          <button type="button" class="sp-context-item" id="sp-ctx-delete" style="color:#d9534f;">
+          <button type="button" class="sp-context-item is-danger" id="sp-ctx-delete">
             ✕ ${this.escape(this.i18n.t('context_delete'))}
           </button>
         </div>
@@ -6389,9 +6445,20 @@ export class SafePocketAppShell {
           e.stopPropagation();
           const itemId = entryEl.dataset.entryContext ?? '';
           if (!itemId) return;
+          this.selectedItemId = itemId;
+          this.newItemDropdownOpen = false;
+          const rect = entryEl.getBoundingClientRect();
+          const anchoredX = Math.max(
+            rect.left + 8,
+            Math.min(e.clientX, Math.max(rect.left + 8, rect.right - 224))
+          );
+          const anchoredY = Math.max(
+            rect.top + 4,
+            Math.min(e.clientY, Math.max(rect.top + 4, rect.bottom - 14))
+          );
           this.contextMenu = {
-            x: e.clientX,
-            y: e.clientY,
+            x: anchoredX,
+            y: anchoredY,
             kind: 'entry',
             itemId,
             label: '',
@@ -6410,10 +6477,14 @@ export class SafePocketAppShell {
           e.stopPropagation();
           const itemId = menuBtn.dataset.entryMenuBtn ?? '';
           if (!itemId) return;
-          const rect = menuBtn.getBoundingClientRect();
+          this.selectedItemId = itemId;
+          this.newItemDropdownOpen = false;
+          const rowEl =
+            menuBtn.closest<HTMLElement>('[data-entry-context]') ?? menuBtn;
+          const rect = rowEl.getBoundingClientRect();
           this.contextMenu = {
-            x: rect.left,
-            y: rect.bottom + 4,
+            x: Math.max(8, rect.right - 228),
+            y: rect.top + 6,
             kind: 'entry',
             itemId,
             label: '',
@@ -6654,28 +6725,43 @@ export class SafePocketAppShell {
     // Create / Edit Item Modal events
     this.root
       .querySelector('#sp-new-item-btn')
-      ?.addEventListener('click', () => this.openCreateItemModal());
+      ?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.contextMenu = null;
+        this.newItemDropdownOpen = !this.newItemDropdownOpen;
+        this.render();
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-new-item-category]')
+      .forEach((optBtn) => {
+        optBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const cat = optBtn.dataset.newItemCategory as
+            | VaultCategory
+            | undefined;
+          if (cat && VAULT_CATEGORIES.includes(cat)) {
+            this.openCreateItemModal(cat);
+          }
+        });
+      });
+
     this.root
       .querySelector('#sp-empty-new-btn')
-      ?.addEventListener('click', () => this.openCreateItemModal());
+      ?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (VAULT_CATEGORIES.includes(this.selectedNav as VaultCategory)) {
+          this.openCreateItemModal(this.selectedNav as VaultCategory);
+        } else {
+          this.newItemDropdownOpen = true;
+          this.render();
+        }
+      });
 
     this.root
       .querySelector('#sp-cancel-editor')
       ?.addEventListener('click', () => {
         this.editorDraft = null;
-        this.render();
-      });
-
-    this.root
-      .querySelector<HTMLSelectElement>('#sp-edit-category')
-      ?.addEventListener('change', (e) => {
-        if (!this.editorDraft) return;
-        this.syncDraftFromDom();
-        const nextCat = (e.target as HTMLSelectElement).value as VaultCategory;
-        this.editorDraft.category = nextCat;
-        if (nextCat === 'IDENTITY' && this.editorDraft.editingItemId === null) {
-          this.editorDraft.showVisualCard = true;
-        }
         this.render();
       });
 
@@ -7553,8 +7639,11 @@ export class SafePocketAppShell {
         this.firebaseService.signOutCloudUser();
         this.liveCloudConfig = this.firebaseService.toEndpointConfig();
         this.firebaseAdapter.setLiveEndpointConfig(this.liveCloudConfig);
+        await this.sqliteDb.purgeCloudSessionMirrorAndOutbox();
         await this.switchExclusiveStorageMode('LOCAL_ONLY');
-        this.showToast('Signed out of Cloud Sync — switched to Local Storage Only');
+        this.showToast(
+          `Signed out of Cloud Sync — ${this.i18n.t('storage_mode_local_only_title')}`
+        );
       });
 
     this.root

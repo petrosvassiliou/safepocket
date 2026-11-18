@@ -23,6 +23,7 @@ import {
   inspectFirebaseJwtClaims
 } from '../sync/liveCloudConnectors';
 import {
+  EncryptedLocalVaultDb,
   FirebaseZeroKnowledgeAdapter,
   GoogleDriveAppDataAdapter,
   VaultSyncCoordinator
@@ -39,7 +40,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.3.6 (Build 11) Feature Suite', () => {
+describe('SafePocket v0.3.7 (Build 12) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -196,13 +197,15 @@ describe('SafePocket v0.3.6 (Build 11) Feature Suite', () => {
     expect(isBuiltInSampleItem(customItem)).toBe(false);
   });
 
-  it('5. Mutually Exclusive Storage Mode (LOCAL_ONLY XOR CLOUD_SYNC) & Zero-Input Offline Outbox Sync', async () => {
+  it('5. Seamless Lokale DB + Cloud-Sync Toggle (Preserves Local DB & Session) & Zero-Input Offline Outbox Sync', async () => {
     const sqlite = new SqliteWasmVaultDb(false);
     await sqlite.ensureInitialized();
 
     const firebaseAdapter = new FirebaseZeroKnowledgeAdapter(sqlite);
     const gdriveAdapter = new GoogleDriveAppDataAdapter();
     const coordinator = new VaultSyncCoordinator(firebaseAdapter, gdriveAdapter);
+    const db = new EncryptedLocalVaultDb(sqlite);
+    db.bindSyncCoordinator(coordinator);
 
     expect(coordinator.storageMode).toBe('LOCAL_ONLY');
     expect(coordinator.indicatorSnapshot.phase).toBe('LOCAL_ENCRYPTED');
@@ -224,59 +227,64 @@ describe('SafePocket v0.3.6 (Build 11) Feature Suite', () => {
       { 'node-a': 1 }
     );
 
-    await sqlite.saveEncryptedRow(row);
+    await db.saveEncryptedRow(row);
     expect(await sqlite.countStandaloneLocalVaultRows()).toBe(1);
 
-    // Switch exclusively to CLOUD_SYNC -> standalone local DB must be purged, cloud mirror active
-    await sqlite.saveCloudMirrorRow(row);
-    await sqlite.purgeStandaloneLocalVault();
-    coordinator.setStorageMode('CLOUD_SYNC');
+    // Switch to CLOUD_SYNC while offline -> Local DB remains intact AND cloud mirror/outbox receive snapshot
+    coordinator.setOnlineState(false);
+    await db.switchExclusiveStorageMode(
+      'CLOUD_SYNC',
+      [row],
+      'vault-exclusive-test',
+      'FIREBASE:test-uid'
+    );
 
     expect(coordinator.storageMode).toBe('CLOUD_SYNC');
-    expect(await sqlite.countStandaloneLocalVaultRows()).toBe(0);
+    expect(await sqlite.countStandaloneLocalVaultRows()).toBe(1);
     expect((await sqlite.loadActiveCloudMirrorRows()).length).toBe(1);
-
-    // Go offline in CLOUD_SYNC mode -> indicator automatically shows CLOUD_OFFLINE_READY
-    coordinator.setOnlineState(false);
     expect(coordinator.indicatorSnapshot.phase).toBe('CLOUD_OFFLINE_READY');
 
-    // Queue an offline mutation while disconnected (zero user input required)
+    // Queue an offline mutation while disconnected (updates both local DB and cloud mirror/outbox)
     const offlineMutationRow = {
       ...row,
       hlcPacked: '00001794870005000:0002:node-a',
       versionVector: { 'node-a': 2 }
     };
-    await sqlite.saveCloudMirrorRow(offlineMutationRow);
-    await sqlite.enqueueCloudMutationOutboxRow(offlineMutationRow);
+    await db.saveEncryptedRow(offlineMutationRow);
     const queued = await sqlite.listCloudMutationOutboxRows();
     expect(queued.length).toBe(1);
+    expect(await sqlite.countStandaloneLocalVaultRows()).toBe(1);
 
     // Reconnect online -> automatic reconciliation pushes outbox deltas and clears outbox
     coordinator.setOnlineState(true);
-    const syncSummary = await coordinator.syncBidirectionalIfEnabled(
+    const syncSummary = await db.reconcileCloudSessionAutomatically(
       'vault-exclusive-test',
-      await sqlite.loadAllCloudMirrorRowsIncludingTombstones(),
-      null
+      'FIREBASE:test-uid'
     );
     expect(syncSummary).not.toBeNull();
-    await sqlite.removeCloudMutationOutboxRows(queued.map((q) => q.id));
-    coordinator.updateRuntimeSyncTelemetry({
-      queuedMutationsCount: 0,
-      lastSyncedIso: new Date().toISOString()
-    });
-
     expect(syncSummary!.pushedCount).toBe(1);
     expect((await sqlite.listCloudMutationOutboxRows()).length).toBe(0);
     expect(coordinator.indicatorSnapshot.phase).toBe('CLOUD_SYNCED');
-    expect(await sqlite.countStandaloneLocalVaultRows()).toBe(0);
+    expect(await sqlite.countStandaloneLocalVaultRows()).toBe(1);
 
-    // Switch back to LOCAL_ONLY -> cloud mirror & outbox are completely wiped
-    await sqlite.purgeCloudSessionMirrorAndOutbox();
-    coordinator.setStorageMode('LOCAL_ONLY');
+    // Pause Cloud-Sync by toggling back to LOCAL_ONLY -> local DB & cloud mirror stay intact!
+    await db.switchExclusiveStorageMode(
+      'LOCAL_ONLY',
+      [offlineMutationRow],
+      'vault-exclusive-test',
+      'FIREBASE:test-uid'
+    );
     expect(coordinator.storageMode).toBe('LOCAL_ONLY');
+    expect(coordinator.indicatorSnapshot.phase).toBe('LOCAL_ENCRYPTED');
+    expect(await sqlite.countStandaloneLocalVaultRows()).toBe(1);
+    expect((await sqlite.loadActiveCloudMirrorRows()).length).toBe(1);
+
+    // Only explicit sign-out purges cloud mirror & outbox while keeping local DB intact
+    await sqlite.purgeCloudSessionMirrorAndOutbox();
     expect(
       (await sqlite.loadAllCloudMirrorRowsIncludingTombstones()).length
     ).toBe(0);
+    expect(await sqlite.countStandaloneLocalVaultRows()).toBe(1);
   });
 
   it('6. Extensive Error Handling & Privacy-Preserving Secret Scrubbing', () => {
@@ -303,9 +311,9 @@ describe('SafePocket v0.3.6 (Build 11) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.6 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.6');
-    expect(APP_BUILD_INFO.versionCode).toBe(11);
+  it('7. Cross-Platform v0.3.7 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.7');
+    expect(APP_BUILD_INFO.versionCode).toBe(12);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -380,7 +388,7 @@ describe('SafePocket v0.3.6 (Build 11) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.6 (Build 11)');
+    expect(macApp).toContain('SafePocket v0.3.7 (Build 12)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
@@ -906,4 +914,87 @@ describe('SafePocket v0.3.6 (Build 11) Feature Suite', () => {
     expect(pwaCss).toContain('padding: 14px 10px 6px 8px;');
     expect(pwaCss).toContain('justify-content: flex-start;');
   });
+
+  it('14. v0.3.7 Five-Point UX & Cross-Platform Parity (Centered Icons, +New Category Menu, 2-Column Storage Cards, Elevated Modal Footers & Top-Anchored Hover Context Menus)', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const smoothComponents = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/SmoothInteractiveComponents.kt'
+      ),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+    const androidRepo = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/data/AndroidVaultRepository.kt'
+      ),
+      'utf-8'
+    );
+    const pwaShell = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/ui/appShell.ts'),
+      'utf-8'
+    );
+    const pwaCss = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/styles/m3-expressive.css'),
+      'utf-8'
+    );
+    const macApp = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const deArb = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'i18n/de.arb.json'), 'utf-8')
+    ) as Record<string, string>;
+
+    // 1) Centered sidebar footer icons
+    expect(smoothComponents).toContain('CenteredThemeContrastIcon');
+    expect(smoothComponents).toContain('CenteredLockOutlineIcon');
+    expect(smoothComponents).toContain('withCenteredMetrics');
+    expect(pwaCss).toContain('width: 34px;');
+
+    // 2) + New category dropdown & category-free item dialog
+    expect(androidShell).toContain('NewItemCategoryDropdownButton');
+    expect(pwaShell).toContain('data-new-item-category');
+    expect(pwaShell).not.toContain('id="sp-edit-category"');
+    expect(macSplit).toContain('macNewItemCategoryMenu');
+    expect(macApp).toContain('openCreateEditor(category:');
+
+    // 3) Side-by-side 2-column Lokale DB vs Cloud-Sync cards & non-destructive toggle
+    expect(deArb.storage_mode_section_title).toBe('Datenbank & Synchronisierung');
+    expect(deArb.storage_mode_local_only_title).toBe('Lokale DB');
+    expect(deArb.storage_mode_cloud_only_title).toBe('Cloud-Sync');
+    expect(androidShell).toContain('StorageModeSelectionCard');
+    expect(smoothComponents).toContain('CloudOffCardIcon');
+    expect(smoothComponents).toContain('CloudDoneCardIcon');
+    expect(androidRepo).not.toContain('remove(KEY_FIREBASE_SESSION) // on mode toggle');
+    expect(pwaCss).toContain('.sp-storage-mode-grid');
+    expect(pwaCss).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
+    expect(macSplit).toContain('MacStorageModeSelectionCard');
+
+    // 4) Modal action buttons clear of window frame / bottom edge
+    expect(androidShell).toContain('usePlatformDefaultWidth = false');
+    expect(androidShell).toContain('vertical = 28.dp');
+    expect(pwaCss).toContain('.sp-modal-footer');
+    expect(macSplit).toContain('.padding(.bottom, 22)');
+
+    // 5) Right-click context menu on top of selected item + hover highlight
+    expect(smoothComponents).toContain('SmoothContextMenuItem');
+    expect(androidShell).toContain('(pos.y - size.height).toDp()');
+    expect(pwaShell).toContain('entryEl.getBoundingClientRect()');
+    expect(pwaCss).toContain('.sp-context-item:hover');
+    expect(pwaCss).toContain('.sp-context-item.is-danger:hover');
+  });
 });
+

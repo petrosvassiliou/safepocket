@@ -121,8 +121,8 @@ fun SmartStructuredFieldInput(
                             ProvideSeamFreeHoverIndication {
                                 Column {
                                     dropdownPresets.forEach { option ->
-                                        DropdownMenuItem(
-                                            text = { Text(option.displayLabel) },
+                                        SmoothContextMenuItem(
+                                            text = option.displayLabel,
                                             onClick = {
                                                 customMode = false
                                                 onValueChange(option.storedValue)
@@ -131,14 +131,9 @@ fun SmartStructuredFieldInput(
                                         )
                                     }
                                     HorizontalDivider()
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = "✎ ${i18n.t("option_custom_value")}",
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        },
+                                    SmoothContextMenuItem(
+                                        text = "✎ ${i18n.t("option_custom_value")}",
+                                        accentHighlight = true,
                                         onClick = {
                                             customMode = true
                                             menuExpanded = false
@@ -288,8 +283,8 @@ fun SmartStructuredFieldInput(
                             ProvideSeamFreeHoverIndication {
                                 Column {
                                     SmartFieldIntelligenceEngine.COUNTRY_DIAL_CODES.forEach { dial ->
-                                        DropdownMenuItem(
-                                            text = { Text("${dial.flagEmoji} ${dial.label}") },
+                                        SmoothContextMenuItem(
+                                            text = "${dial.flagEmoji} ${dial.label}",
                                             onClick = {
                                                 selectedDial = dial.dialCode
                                                 dialMenuOpen = false

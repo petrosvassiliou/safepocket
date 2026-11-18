@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
-  "latestVersion": "0.3.6",
-  "versionCode": 11,
+  "latestVersion": "0.3.7",
+  "versionCode": 12,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-17T19:00:00Z",
+  "publishedAt": "2026-11-18T23:00:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:607252af2abd28cb592678af6c89520efe2628463933b7fd21233400bff8567ee6bf844e3ff635dd5ecf924ac1e25b0847019aef48c1b16fc1643cc024b1ff07",
+  "manifestSignature": "ed25519:af4fb25de48ff14d30b8f8b9f1d50327bc7b27adc185f1c1389ec93bc803847333dd1bd34ca4d9fe5d587d33e6a954afb167c2786919fb895ab7a9038d3dd707",
   "releaseNotes": {
-    "en": "• SafePocket v0.3.6 moves all sidebar footer controls (Theme, Flag Language, Lock, and version) flush into the true bottom-left corner.\n• Fixes Cloud Sync HTTP 401 authentication failures via JSON refresh-token encoding, JWT expiry checks, and automatic 401 token renewal.\n• Full cross-platform parity across Android / Googlebook OS, ChromeOS / Web PWA, and macOS.",
-    "de": "• SafePocket v0.3.6 platziert alle Elemente der linken unteren Seitenleiste (Design, Sprache, Sperren und Version) bündig unten links.\n• Behebt Cloud-Sync-HTTP-401-Authentifizierungsfehler durch JSON-Refresh-Token-Kodierung, JWT-Ablaufprüfung und automatische Token-Erneuerung.\n• Volle Plattformparität für Android / Googlebook OS, ChromeOS / Web PWA und macOS.",
-    "it": "• SafePocket v0.3.6 posiziona tutti i controlli inferiori della barra laterale a filo nell'angolo inferiore sinistro.\n• Risolve gli errori HTTP 401 di Cloud Sync con codifica JSON del refresh token e rinnovo automatico.\n• Piena parità multipiattaforma su Android / Googlebook OS, ChromeOS / Web PWA e macOS.",
-    "fr": "• SafePocket v0.3.6 aligne tous les contrôles du bas de la barre latérale tout en bas à gauche.\n• Corrige les erreurs HTTP 401 de Cloud Sync grâce à l'encodage JSON du refresh token et au renouvellement automatique.\n• Parité complète sur Android / Googlebook OS, ChromeOS / Web PWA et macOS.",
-    "es": "• SafePocket v0.3.6 sitúa todos los controles inferiores de la barra lateral al ras de la esquina inferior izquierda.\n• Corrige los errores HTTP 401 de Cloud Sync mediante codificación JSON del refresh token y renovación automática.\n• Paridad total en Android / Googlebook OS, ChromeOS / Web PWA y macOS.",
-    "el": "• Το SafePocket v0.3.6 τοποθετεί όλα τα στοιχεία της πλαϊνής μπάρας ακριβώς στην κάτω αριστερή γωνία.\n• Επιλύει τα σφάλματα HTTP 401 του Cloud Sync μέσω JSON κωδικοποίησης του refresh token και αυτόματης ανανέωσης.\n• Πλήρης ισοτιμία σε Android / Googlebook OS, ChromeOS / Web PWA και macOS."
+    "en": "• SafePocket v0.3.7 adds a direct category dropdown to + New, removes redundant category pickers from item dialogs, and centers all sidebar footer icons.\n• Introduces side-by-side Local DB vs Cloud-Sync cards with seamless 1-click sync pause/resume that keeps both your local encrypted DB and Cloud session intact.\n• Anchors right-click context menus directly on top of selected items with crisp hover highlights, and elevates modal action buttons clear of window frames across Android / Googlebook OS, ChromeOS / Web PWA, and macOS.",
+    "de": "• SafePocket v0.3.7 ergänzt den Button + Neu um ein direktes Kategorie-Menü, entfernt die doppelte Kategorieauswahl im Dialog und zentriert alle Symbole unten links.\n• Neue nebeneinanderliegende Karten für Lokale DB & Cloud-Sync ermöglichen nahtloses Pausieren/Fortsetzen per Klick ohne Abmeldung oder Datenverlust.\n• Kontextmenüs erscheinen per Rechtsklick direkt über dem ausgewählten Eintrag mit Hover-Hervorhebung, und Dialog-Schaltflächen haben mehr Abstand zum Fensterrand.",
+    "it": "• SafePocket v0.3.7 aggiunge un menu categorie diretto a + Nuovo, centra le icone della barra laterale e solleva i pulsanti delle finestre modali.\n• Nuove schede affiancate DB locale e Cloud-Sync per mettere in pausa o riprendere la sincronizzazione con 1 clic mantenendo intatti DB locale e sessione cloud.\n• Menu contestuale ancorato direttamente sopra l'elemento selezionato con evidenziazione al passaggio del mouse.",
+    "fr": "• SafePocket v0.3.7 ajoute un menu déroulant de catégories au bouton + Nouveau, centre les icônes de la barre latérale et rehausse les boutons des fenêtres modales.\n• Nouvelles cartes côte à côte Base locale et Cloud-Sync permettant de suspendre/reprendre la synchronisation en 1 clic sans déconnexion.\n• Menu contextuel affiché directement au-dessus de l'élément sélectionné avec surbrillance au survol.",
+    "es": "• SafePocket v0.3.7 añade un menú desplegable de categorías en + Nuevo, centra los iconos de la barra lateral y eleva los botones de los diálogos modales.\n• Nuevas tarjetas lado a lado BD local y Cloud-Sync para pausar o reanudar la sincronización con 1 clic conservando la base local y la sesión en la nube.\n• Menú contextual anclado directamente sobre el elemento seleccionado con resaltado al pasar el cursor.",
+    "el": "• Το SafePocket v0.3.7 προσθέτει μενού κατηγοριών στο κουμπί + Νέο, κεντράρει τα εικονίδια της πλαϊνής μπάρας και ανυψώνει τα κουμπιά των παραθύρων διαλόγου.\n• Νέες κάρτες Τοπική ΒΔ και Cloud-Sync δίπλα-δίπλα για άμεση παύση/συνέχιση συγχρονισμού με 1 κλικ χωρίς αποσύνδεση.\n• Το μενού δεξιού κλικ εμφανίζεται ακριβώς πάνω από το επιλεγμένο στοιχείο με επισήμανση κατά την αιώρηση."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.6/SafePocket-v0.3.6-b11-universal-arm64-x86_64.apk",
-      "sha256": "cfcef7f52040a03b0a08f3753d3b78d144dc4ffb97caf81378bbdad5d94849e8",
-      "sizeBytes": 38220034,
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.7/SafePocket-v0.3.7-b12-universal-arm64-x86_64.apk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 18432960,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -34,17 +34,17 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.6/SafePocket-0.3.6-11-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.7/SafePocket-0.3.7-12-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "1705a7fc3b71165de562fb85203361d22364dd11f881e568fdcb4a7c9c87ac09",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 3225364,
+      "sizeBytes": 14208512,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "32e4517270e6f07824c37ff012aa9baab5fb272a526399cd62b97e35cb1cf144",
+      "sha256": "d1a3b5af45f36acdadda4bc22a7674df4bf8ef68e34e90eda9f8561f971fd76b",
       "sizeBytes": 2709
     }
   }

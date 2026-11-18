@@ -42,7 +42,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -51,6 +59,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.safepocket.android.R
 import com.safepocket.android.data.BidirectionalSyncReport
@@ -102,6 +111,7 @@ fun AdaptiveSafePocketShell(
     showSettingsDialog: Boolean = false,
     showEditorDialog: Boolean = false,
     editingItem: VaultItemPayload? = null,
+    initialCreateCategory: VaultCategory = VaultCategory.PAYMENT_CARD,
     focusSearchTrigger: Int = 0,
     statusBannerMessage: String? = null,
     onDismissStatusBanner: () -> Unit = {},
@@ -129,6 +139,7 @@ fun AdaptiveSafePocketShell(
     },
     onFocusSearch: () -> Unit,
     onNewItem: () -> Unit,
+    onNewItemWithCategory: (VaultCategory) -> Unit = { onNewItem() },
     onDismissEditor: () -> Unit = {},
     onLockVault: () -> Unit,
     onUnlockVaultWithPassword: suspend (String) -> Boolean = { true },
@@ -166,6 +177,7 @@ fun AdaptiveSafePocketShell(
     var searchQuery by remember { mutableStateOf("") }
     var copiedNotice by remember { mutableStateOf<String?>(null) }
     var showPurgeConfirmDialog by remember { mutableStateOf(false) }
+    var openNewMenuTrigger by remember { mutableIntStateOf(0) }
     val searchFocusRequester = remember { FocusRequester() }
 
     val exampleItemsCount = remember(items) { items.count { it.isBuiltInSample() } }
@@ -315,7 +327,7 @@ fun AdaptiveSafePocketShell(
                             if (event.type == KeyEventType.KeyDown && event.isCtrlPressed) {
                                 when (event.key) {
                                     Key.F -> { onFocusSearch(); true }
-                                    Key.N -> { onNewItem(); true }
+                                    Key.N -> { openNewMenuTrigger++; true }
                                     Key.E -> { selectedItem?.let { onEditItem(it) }; true }
                                     Key.L -> { onLockVault(); true }
                                     Key.Comma -> { onOpenSettings(); true }
@@ -399,23 +411,24 @@ fun AdaptiveSafePocketShell(
                                                                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.Start),
                                                                 verticalAlignment = Alignment.CenterVertically
                                                             ) {
-                                                                SmoothOutlinedButton(
+                                                                SmoothOutlinedIconButton(
                                                                     onClick = cycleTheme,
-                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                                    size = 36.dp
                                                                 ) {
-                                                                    Text(themeGlyph)
+                                                                    CenteredThemeContrastIcon(themePreference.name)
                                                                 }
                                                                 MainAppFlagLanguageSelector(
                                                                     i18n = i18n,
                                                                     activeLocale = activeLocale,
                                                                     manualLocaleOverride = manualLocaleOverride,
-                                                                    onSelectLocaleOverride = onSelectLocaleOverride
+                                                                    onSelectLocaleOverride = onSelectLocaleOverride,
+                                                                    modifier = Modifier.height(36.dp)
                                                                 )
-                                                                SmoothOutlinedButton(
+                                                                SmoothOutlinedIconButton(
                                                                     onClick = onLockVault,
-                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                                    size = 36.dp
                                                                 ) {
-                                                                    Text("🔒")
+                                                                    CenteredLockOutlineIcon()
                                                                 }
                                                             }
                                                             Text(
@@ -441,7 +454,8 @@ fun AdaptiveSafePocketShell(
                                                         i18n = i18n,
                                                         query = searchQuery,
                                                         onQueryChange = { searchQuery = it },
-                                                        onNewItem = onNewItem,
+                                                        onNewItemWithCategory = onNewItemWithCategory,
+                                                        openNewMenuTrigger = openNewMenuTrigger,
                                                         onOpenSettings = onOpenSettings,
                                                         searchFocusRequester = searchFocusRequester
                                                     )
@@ -581,17 +595,17 @@ fun AdaptiveSafePocketShell(
                                                                 compact = true
                                                             )
                                                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                                SmoothOutlinedButton(
+                                                                SmoothOutlinedIconButton(
                                                                     onClick = cycleTheme,
-                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                                    size = 34.dp
                                                                 ) {
-                                                                    Text(themeGlyph)
+                                                                    CenteredThemeContrastIcon(themePreference.name)
                                                                 }
-                                                                SmoothOutlinedButton(
+                                                                SmoothOutlinedIconButton(
                                                                     onClick = onLockVault,
-                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                                                    size = 34.dp
                                                                 ) {
-                                                                    Text("🔒")
+                                                                    CenteredLockOutlineIcon()
                                                                 }
                                                             }
                                                         }
@@ -619,7 +633,8 @@ fun AdaptiveSafePocketShell(
                                                                 i18n = i18n,
                                                                 query = searchQuery,
                                                                 onQueryChange = { searchQuery = it },
-                                                                onNewItem = onNewItem,
+                                                                onNewItemWithCategory = onNewItemWithCategory,
+                                                                openNewMenuTrigger = openNewMenuTrigger,
                                                                 onOpenSettings = onOpenSettings,
                                                                 searchFocusRequester = searchFocusRequester
                                                             )
@@ -714,12 +729,12 @@ fun AdaptiveSafePocketShell(
                                                                         onSelectLocaleOverride = onSelectLocaleOverride,
                                                                         compact = true
                                                                     )
-                                                                    SmoothPrimaryButton(
-                                                                        onClick = onNewItem,
-                                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                                                                    ) {
-                                                                        Text("+")
-                                                                    }
+                                                                    NewItemCategoryDropdownButton(
+                                                                        i18n = i18n,
+                                                                        compact = true,
+                                                                        openMenuTrigger = openNewMenuTrigger,
+                                                                        onSelectCategoryToCreate = onNewItemWithCategory
+                                                                    )
                                                                     SmoothTonalButton(
                                                                         onClick = onOpenSettings,
                                                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
@@ -776,17 +791,17 @@ fun AdaptiveSafePocketShell(
                                                         ) {
                                                             // Flush Bottom-Left Theme Icon + Lock
                                                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                                SmoothOutlinedButton(
+                                                                SmoothOutlinedIconButton(
                                                                     onClick = cycleTheme,
-                                                                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp)
+                                                                    size = 36.dp
                                                                 ) {
-                                                                    Text(themeGlyph)
+                                                                    CenteredThemeContrastIcon(themePreference.name)
                                                                 }
-                                                                SmoothOutlinedButton(
+                                                                SmoothOutlinedIconButton(
                                                                     onClick = onLockVault,
-                                                                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp)
+                                                                    size = 36.dp
                                                                 ) {
-                                                                    Text("🔒")
+                                                                    CenteredLockOutlineIcon()
                                                                 }
                                                             }
                                                             // Bottom-Right Sync Status Pill on Compact Mobile
@@ -969,7 +984,7 @@ fun AdaptiveSafePocketShell(
                         VaultItemEditorDialog(
                             i18n = i18n,
                             existingItem = editingItem,
-                            initialCategory = selectedCategory ?: VaultCategory.PAYMENT_CARD,
+                            initialCategory = initialCreateCategory,
                             onFetchLogoPreview = onFetchBrandLogoPreview,
                             onVerifyWebsiteReachability = onVerifyWebsiteReachability,
                             onSave = onSaveEditorItem,
@@ -1197,11 +1212,63 @@ private fun categoryIcon(category: VaultCategory): String =
     }
 
 @Composable
+private fun NewItemCategoryDropdownButton(
+    i18n: LocalizationEngine,
+    compact: Boolean = false,
+    openMenuTrigger: Int = 0,
+    onSelectCategoryToCreate: (VaultCategory) -> Unit
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(openMenuTrigger) {
+        if (openMenuTrigger > 0) {
+            menuExpanded = true
+        }
+    }
+
+    Box {
+        SmoothPrimaryButton(
+            onClick = { menuExpanded = true },
+            contentPadding = if (compact) {
+                PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+            } else {
+                PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+            }
+        ) {
+            Text(
+                text = if (compact) "+ ▾" else "+ ${i18n.t("shortcut_hint_new")} ▾",
+                maxLines = 1
+            )
+        }
+
+        DropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false }
+        ) {
+            ProvideSeamFreeHoverIndication {
+                Column(modifier = Modifier.padding(vertical = 2.dp)) {
+                    VaultCategory.entries.forEach { cat ->
+                        SmoothContextMenuItem(
+                            text = "${categoryIcon(cat)}  ${categorySingularLabel(i18n, cat)}",
+                            onClick = {
+                                menuExpanded = false
+                                onSelectCategoryToCreate(cat)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SearchAndCreateHeader(
     i18n: LocalizationEngine,
     query: String,
     onQueryChange: (String) -> Unit,
-    onNewItem: () -> Unit,
+    onNewItemWithCategory: (VaultCategory) -> Unit,
+    openNewMenuTrigger: Int = 0,
     onOpenSettings: () -> Unit,
     searchFocusRequester: FocusRequester
 ) {
@@ -1225,9 +1292,12 @@ private fun SearchAndCreateHeader(
                 .weight(1f)
                 .focusRequester(searchFocusRequester)
         )
-        SmoothPrimaryButton(onClick = onNewItem) {
-            Text("+ ${i18n.t("shortcut_hint_new")}")
-        }
+        NewItemCategoryDropdownButton(
+            i18n = i18n,
+            compact = false,
+            openMenuTrigger = openNewMenuTrigger,
+            onSelectCategoryToCreate = onNewItemWithCategory
+        )
         SmoothTonalButton(
             onClick = onOpenSettings,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
@@ -1433,9 +1503,13 @@ private fun SwipeAndContextVaultItemRow(
                             val event = awaitPointerEvent()
                             if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
                                 val pos = event.changes.firstOrNull()?.position
+                                onSelect()
                                 if (pos != null) {
                                     contextMenuOffset = with(density) {
-                                        DpOffset(pos.x.toDp(), pos.y.toDp())
+                                        DpOffset(
+                                            x = pos.x.toDp().coerceAtLeast(8.dp),
+                                            y = (pos.y - size.height).toDp()
+                                        )
                                     }
                                 }
                                 event.changes.forEach { it.consume() }
@@ -1479,6 +1553,8 @@ private fun SwipeAndContextVaultItemRow(
                         }
                     },
                     onLongClick = {
+                        onSelect()
+                        contextMenuOffset = DpOffset(16.dp, (-44).dp)
                         contextMenuExpanded = true
                     }
                 )
@@ -1532,69 +1608,57 @@ private fun SwipeAndContextVaultItemRow(
             }
         }
 
-        // Right-Click / Long-Press Context Menu
+        // Right-Click / Long-Press Context Menu (anchored directly on top of the selected item)
         DropdownMenu(
             expanded = contextMenuExpanded,
             onDismissRequest = { contextMenuExpanded = false },
             offset = contextMenuOffset
         ) {
             ProvideSeamFreeHoverIndication {
-                Column {
+                Column(modifier = Modifier.padding(vertical = 2.dp)) {
                     if (item.primaryCopyableField() != null) {
-                        DropdownMenuItem(
-                            text = { Text("⎘  ${i18n.t("context_copy_primary")}") },
+                        SmoothContextMenuItem(
+                            text = "⎘  ${i18n.t("context_copy_primary")}",
                             onClick = {
                                 contextMenuExpanded = false
                                 onCopyPrimary()
                             }
                         )
                     }
-                    DropdownMenuItem(
-                        text = { Text("✎  ${i18n.t("action_edit")}") },
+                    SmoothContextMenuItem(
+                        text = "✎  ${i18n.t("action_edit")}",
                         onClick = {
                             contextMenuExpanded = false
                             onEdit()
                         }
                     )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (item.pinned) "📌  ${i18n.t("context_unpin")}"
-                                else "📌  ${i18n.t("context_pin")}"
-                            )
-                        },
+                    SmoothContextMenuItem(
+                        text = if (item.pinned) "📌  ${i18n.t("context_unpin")}"
+                        else "📌  ${i18n.t("context_pin")}",
                         onClick = {
                             contextMenuExpanded = false
                             onTogglePin()
                         }
                     )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (item.favorite) "★  ${i18n.t("context_unfavorite")}"
-                                else "☆  ${i18n.t("context_favorite")}"
-                            )
-                        },
+                    SmoothContextMenuItem(
+                        text = if (item.favorite) "★  ${i18n.t("context_unfavorite")}"
+                        else "☆  ${i18n.t("context_favorite")}",
                         onClick = {
                             contextMenuExpanded = false
                             onToggleFavorite()
                         }
                     )
-                    DropdownMenuItem(
-                        text = { Text("⧉  ${i18n.t("action_duplicate")}") },
+                    SmoothContextMenuItem(
+                        text = "⧉  ${i18n.t("action_duplicate")}",
                         onClick = {
                             contextMenuExpanded = false
                             onDuplicate()
                         }
                     )
-                    HorizontalDivider()
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "🗑  ${i18n.t("action_delete")}",
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        },
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 3.dp))
+                    SmoothContextMenuItem(
+                        text = "🗑  ${i18n.t("action_delete")}",
+                        isDestructive = true,
                         onClick = {
                             contextMenuExpanded = false
                             onDelete()
@@ -1793,7 +1857,7 @@ private fun VaultItemEditorDialog(
 ) {
     val activeLocale by i18n.activeLocale.collectAsState()
     val coroutineScope = rememberCoroutineScope()
-    var category by remember { mutableStateOf(existingItem?.category ?: initialCategory) }
+    val category = existingItem?.category ?: initialCategory
     var title by remember { mutableStateOf(existingItem?.title.orEmpty()) }
     var subtitle by remember { mutableStateOf(existingItem?.subtitle.orEmpty()) }
     var tagsText by remember { mutableStateOf(existingItem?.tags?.joinToString(", ").orEmpty()) }
@@ -1881,312 +1945,333 @@ private fun VaultItemEditorDialog(
 
     val livePreviewItem = buildPreviewPayload()
     val liveBrand = InstitutionBrandRegistry.resolveForItem(livePreviewItem)
+    val maxModalHeightDp = (LocalConfiguration.current.screenHeightDp - 64).coerceAtLeast(320).dp
+    val headerTitle = if (existingItem == null) {
+        "${categoryIcon(category)} ${i18n.t("action_new_item")} — ${categorySingularLabel(i18n, category)}"
+    } else {
+        "${categoryIcon(category)} ${i18n.t("action_edit")} — ${existingItem.title}"
+    }
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier
-            .fillMaxWidth(0.94f)
-            .widthIn(max = 760.dp)
-            .padding(vertical = 16.dp),
-        title = {
-            Text(
-                text = if (existingItem == null) i18n.t("action_new_item") else "${i18n.t("action_edit")} — ${existingItem.title}",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        text = {
-            ProvideSeamFreeHoverIndication {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Live Dual-Logo Card Preview
-                    if (category != VaultCategory.SECURE_NOTE) {
-                        DualBrandVisualCardHero(
-                            item = livePreviewItem,
-                            categoryLabelText = categorySingularLabel(i18n, category),
-                            displaySubtitleText = i18n.resolveDisplaySubtitle(livePreviewItem.subtitle, category)
-                        )
-                        val detectedInst = liveBrand.institution
-                        if (detectedInst != null) {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(horizontal = 24.dp, vertical = 28.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 6.dp,
+                shadowElevation = 8.dp,
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 740.dp)
+                    .heightIn(max = maxModalHeightDp)
+            ) {
+                ProvideSeamFreeHoverIndication {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 24.dp, end = 16.dp, top = 18.dp, bottom = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "✓ ${i18n.t("brand_detected_badge", mapOf("institution" to detectedInst.displayName, "network" to liveBrand.networkDisplayLabel))}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
+                                text = headerTitle,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
                             )
-                        }
-                    }
-
-                    // Category Selector (Zero-Ripple SmoothFilterPills)
-                    Text(
-                        text = i18n.t("field_category"),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        VaultCategory.entries.forEach { cat ->
-                            SmoothFilterPill(
-                                selected = category == cat,
-                                onClick = { category = cat },
-                                label = "${categoryIcon(cat)} ${categorySingularLabel(i18n, cat)}"
-                            )
-                        }
-                    }
-
-                    // Title & Subtitle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = title,
-                            onValueChange = { title = it },
-                            label = { Text(i18n.t("field_title")) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = subtitle,
-                            onValueChange = { subtitle = it },
-                            label = { Text(i18n.t("field_subtitle")) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    // Auto-Branding & Card Color Controls
-                    if (category != VaultCategory.SECURE_NOTE) {
-                        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = i18n.t("brand_auto_detect_toggle"),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Switch(
-                                        checked = autoBrandColor,
-                                        onCheckedChange = { enabled ->
-                                            autoBrandColor = enabled
-                                            if (enabled) customColorHex = ""
-                                        }
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedTextField(
-                                        value = customColorHex,
-                                        onValueChange = { raw ->
-                                            val normalized = SmartFieldIntelligenceEngine.normalizeHexColor(raw)
-                                            customColorHex = normalized
-                                            if (normalized.length == 7) {
-                                                autoBrandColor = false
-                                                selectedPaletteId = "custom"
-                                            }
-                                        },
-                                        label = { Text("${i18n.t("palette_custom")} (#RRGGBB)") },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    SmoothTonalButton(
-                                        enabled = !fetchingLogo,
-                                        onClick = {
-                                            coroutineScope.launch {
-                                                fetchingLogo = true
-                                                val enriched = onFetchLogoPreview(buildPreviewPayload())
-                                                enriched.cardTheme?.institutionLogoDataUri?.let { logoDataUri = it }
-                                                enriched.cardTheme?.customColorHex?.let { hex ->
-                                                    if (autoBrandColor) customColorHex = hex
-                                                }
-                                                fetchingLogo = false
-                                            }
-                                        }
-                                    ) {
-                                        Text(if (fetchingLogo) "…" else "🌐 ${i18n.t("brand_fetch_logo_btn")}")
-                                    }
-                                }
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    CardPalettes.ALL.forEach { pal ->
-                                        val swatch = resolveCardGradientColors(
-                                            VaultItemPayload(
-                                                id = "sw",
-                                                category = VaultCategory.PAYMENT_CARD,
-                                                title = "sw",
-                                                cardTheme = CardVisualTheme(paletteId = pal, autoBrandColor = false),
-                                                createdAtEpochMs = 0L,
-                                                updatedAtEpochMs = 0L
-                                            ),
-                                            liveBrand.copy(effectiveColorHex = null)
-                                        ).first
-                                        Box(
-                                            modifier = Modifier
-                                                .size(26.dp)
-                                                .clip(CircleShape)
-                                                .background(swatch)
-                                                .border(
-                                                    width = if (!autoBrandColor && selectedPaletteId == pal) 2.5.dp else 1.dp,
-                                                    color = if (!autoBrandColor && selectedPaletteId == pal) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.4f),
-                                                    shape = CircleShape
-                                                )
-                                                .clickable {
-                                                    autoBrandColor = false
-                                                    customColorHex = ""
-                                                    selectedPaletteId = pal
-                                                }
-                                        )
-                                    }
-                                }
+                            SmoothTextButton(onClick = onDismiss) {
+                                Text("✕")
                             }
                         }
-                    }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
 
-                    // Intelligent Category-Specific Structured Fields (Dropdowns, https:// Verify, Phone Prefix, IBAN/PAN Autofill)
-                    HorizontalDivider()
-                    templateSpecs.forEach { spec ->
-                        val curVal = standardFieldValues[spec.key].orEmpty()
-                        SmartStructuredFieldInput(
-                            spec = spec,
-                            category = category,
-                            i18n = i18n,
-                            activeLocaleCode = activeLocale.code,
-                            value = curVal,
-                            onValueChange = { standardFieldValues[spec.key] = it },
-                            onCrossFieldAutofill = { suggestions ->
-                                val appliedNames = mutableListOf<String>()
-                                for ((targetKey, suggestedValue) in suggestions) {
-                                    if (standardFieldValues[targetKey].isNullOrBlank() && suggestedValue.isNotBlank()) {
-                                        standardFieldValues[targetKey] = suggestedValue
-                                        appliedNames += i18n.resolveFieldLabel(targetKey, false, category)
-                                    }
-                                }
-                                if (title.isBlank()) {
-                                    val bankOrOrg = standardFieldValues[CanonicalFieldKeys.ISSUING_BANK]
-                                        ?: standardFieldValues[CanonicalFieldKeys.INSURER_NAME]
-                                        ?: standardFieldValues[CanonicalFieldKeys.ORGANIZATION]
-                                    if (!bankOrOrg.isNullOrBlank()) {
-                                        title = bankOrOrg
-                                    }
-                                }
-                                appliedNames
-                            },
-                            onVerifyWebsite = onVerifyWebsiteReachability
-                        )
-                    }
-
-                    // Tags
-                    OutlinedTextField(
-                        value = tagsText,
-                        onValueChange = { tagsText = it },
-                        label = { Text(i18n.t("field_tags")) },
-                        placeholder = { Text("banking, travel, visa") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Custom User Fields
-                    HorizontalDivider()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = i18n.t("custom_field_name"),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        SmoothTonalButton(
-                            onClick = {
-                                customFields.add(
-                                    CustomFieldDraft(
-                                        id = "f-cust-${System.currentTimeMillis()}-${customFields.size}",
-                                        label = "",
-                                        value = "",
-                                        isSensitive = false
+                        Column(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 24.dp, vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Live Dual-Logo Card Preview
+                            if (category != VaultCategory.SECURE_NOTE) {
+                                DualBrandVisualCardHero(
+                                    item = livePreviewItem,
+                                    categoryLabelText = categorySingularLabel(i18n, category),
+                                    displaySubtitleText = i18n.resolveDisplaySubtitle(livePreviewItem.subtitle, category)
+                                )
+                                val detectedInst = liveBrand.institution
+                                if (detectedInst != null) {
+                                    Text(
+                                        text = "✓ ${i18n.t("brand_detected_badge", mapOf("institution" to detectedInst.displayName, "network" to liveBrand.networkDisplayLabel))}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
                                     )
+                                }
+                            }
+
+                            // Title & Subtitle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = title,
+                                    onValueChange = { title = it },
+                                    label = { Text(i18n.t("field_title")) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = subtitle,
+                                    onValueChange = { subtitle = it },
+                                    label = { Text(i18n.t("field_subtitle")) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
-                        ) {
-                            Text("+ ${i18n.t("action_add_custom_field")}")
-                        }
-                    }
 
-                    customFields.forEachIndexed { index, draft ->
-                        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedTextField(
-                                        value = draft.label,
-                                        onValueChange = { customFields[index] = draft.copy(label = it) },
-                                        label = { Text(i18n.t("custom_field_name")) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    OutlinedTextField(
-                                        value = draft.value,
-                                        onValueChange = { customFields[index] = draft.copy(value = it) },
-                                        label = { Text(i18n.t("editor_field_value_placeholder")) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Checkbox(
-                                            checked = draft.isSensitive,
-                                            onCheckedChange = { customFields[index] = draft.copy(isSensitive = it) }
-                                        )
-                                        Text(i18n.t("custom_field_sensitive"), style = MaterialTheme.typography.bodySmall)
+                            // Auto-Branding & Card Color Controls
+                            if (category != VaultCategory.SECURE_NOTE) {
+                                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = i18n.t("brand_auto_detect_toggle"),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Switch(
+                                                checked = autoBrandColor,
+                                                onCheckedChange = { enabled ->
+                                                    autoBrandColor = enabled
+                                                    if (enabled) customColorHex = ""
+                                                }
+                                            )
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            OutlinedTextField(
+                                                value = customColorHex,
+                                                onValueChange = { raw ->
+                                                    val normalized = SmartFieldIntelligenceEngine.normalizeHexColor(raw)
+                                                    customColorHex = normalized
+                                                    if (normalized.length == 7) {
+                                                        autoBrandColor = false
+                                                        selectedPaletteId = "custom"
+                                                    }
+                                                },
+                                                label = { Text("${i18n.t("palette_custom")} (#RRGGBB)") },
+                                                singleLine = true,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            SmoothTonalButton(
+                                                enabled = !fetchingLogo,
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        fetchingLogo = true
+                                                        val enriched = onFetchLogoPreview(buildPreviewPayload())
+                                                        enriched.cardTheme?.institutionLogoDataUri?.let { logoDataUri = it }
+                                                        enriched.cardTheme?.customColorHex?.let { hex ->
+                                                            if (autoBrandColor) customColorHex = hex
+                                                        }
+                                                        fetchingLogo = false
+                                                    }
+                                                }
+                                            ) {
+                                                Text(if (fetchingLogo) "…" else "🌐 ${i18n.t("brand_fetch_logo_btn")}")
+                                            }
+                                        }
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            CardPalettes.ALL.forEach { pal ->
+                                                val swatch = resolveCardGradientColors(
+                                                    VaultItemPayload(
+                                                        id = "sw",
+                                                        category = VaultCategory.PAYMENT_CARD,
+                                                        title = "sw",
+                                                        cardTheme = CardVisualTheme(paletteId = pal, autoBrandColor = false),
+                                                        createdAtEpochMs = 0L,
+                                                        updatedAtEpochMs = 0L
+                                                    ),
+                                                    liveBrand.copy(effectiveColorHex = null)
+                                                ).first
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(26.dp)
+                                                        .clip(CircleShape)
+                                                        .background(swatch)
+                                                        .border(
+                                                            width = if (!autoBrandColor && selectedPaletteId == pal) 2.5.dp else 1.dp,
+                                                            color = if (!autoBrandColor && selectedPaletteId == pal) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.4f),
+                                                            shape = CircleShape
+                                                        )
+                                                        .clickable {
+                                                            autoBrandColor = false
+                                                            customColorHex = ""
+                                                            selectedPaletteId = pal
+                                                        }
+                                                )
+                                            }
+                                        }
                                     }
-                                    SmoothTextButton(onClick = { customFields.removeAt(index) }) {
-                                        Text(i18n.t("action_delete"))
+                                }
+                            }
+
+                            // Intelligent Category-Specific Structured Fields (Dropdowns, https:// Verify, Phone Prefix, IBAN/PAN Autofill)
+                            HorizontalDivider()
+                            templateSpecs.forEach { spec ->
+                                val curVal = standardFieldValues[spec.key].orEmpty()
+                                SmartStructuredFieldInput(
+                                    spec = spec,
+                                    category = category,
+                                    i18n = i18n,
+                                    activeLocaleCode = activeLocale.code,
+                                    value = curVal,
+                                    onValueChange = { standardFieldValues[spec.key] = it },
+                                    onCrossFieldAutofill = { suggestions ->
+                                        val appliedNames = mutableListOf<String>()
+                                        for ((targetKey, suggestedValue) in suggestions) {
+                                            if (standardFieldValues[targetKey].isNullOrBlank() && suggestedValue.isNotBlank()) {
+                                                standardFieldValues[targetKey] = suggestedValue
+                                                appliedNames += i18n.resolveFieldLabel(targetKey, false, category)
+                                            }
+                                        }
+                                        if (title.isBlank()) {
+                                            val bankOrOrg = standardFieldValues[CanonicalFieldKeys.ISSUING_BANK]
+                                                ?: standardFieldValues[CanonicalFieldKeys.INSURER_NAME]
+                                                ?: standardFieldValues[CanonicalFieldKeys.ORGANIZATION]
+                                            if (!bankOrOrg.isNullOrBlank()) {
+                                                title = bankOrOrg
+                                            }
+                                        }
+                                        appliedNames
+                                    },
+                                    onVerifyWebsite = onVerifyWebsiteReachability
+                                )
+                            }
+
+                            // Tags
+                            OutlinedTextField(
+                                value = tagsText,
+                                onValueChange = { tagsText = it },
+                                label = { Text(i18n.t("field_tags")) },
+                                placeholder = { Text("banking, travel, visa") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            // Custom User Fields
+                            HorizontalDivider()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = i18n.t("custom_field_name"),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                SmoothTonalButton(
+                                    onClick = {
+                                        customFields.add(
+                                            CustomFieldDraft(
+                                                id = "f-cust-${System.currentTimeMillis()}-${customFields.size}",
+                                                label = "",
+                                                value = "",
+                                                isSensitive = false
+                                            )
+                                        )
+                                    }
+                                ) {
+                                    Text("+ ${i18n.t("action_add_custom_field")}")
+                                }
+                            }
+
+                            customFields.forEachIndexed { index, draft ->
+                                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedTextField(
+                                                value = draft.label,
+                                                onValueChange = { customFields[index] = draft.copy(label = it) },
+                                                label = { Text(i18n.t("custom_field_name")) },
+                                                singleLine = true,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            OutlinedTextField(
+                                                value = draft.value,
+                                                onValueChange = { customFields[index] = draft.copy(value = it) },
+                                                label = { Text(i18n.t("editor_field_value_placeholder")) },
+                                                singleLine = true,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Checkbox(
+                                                    checked = draft.isSensitive,
+                                                    onCheckedChange = { customFields[index] = draft.copy(isSensitive = it) }
+                                                )
+                                                Text(i18n.t("custom_field_sensitive"), style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            SmoothTextButton(onClick = { customFields.removeAt(index) }) {
+                                                Text(i18n.t("action_delete"))
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 18.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SmoothTextButton(onClick = onDismiss) {
+                                Text(i18n.t("action_cancel"))
+                            }
+                            SmoothPrimaryButton(
+                                enabled = title.isNotBlank() || standardFieldValues.values.any { it.isNotBlank() },
+                                onClick = { onSave(buildPreviewPayload()) }
+                            ) {
+                                Text(i18n.t("action_save"))
+                            }
+                        }
                     }
-                }
-            }
-        },
-        dismissButton = {
-            ProvideSeamFreeHoverIndication {
-                SmoothTextButton(onClick = onDismiss) {
-                    Text(i18n.t("action_cancel"))
-                }
-            }
-        },
-        confirmButton = {
-            ProvideSeamFreeHoverIndication {
-                SmoothPrimaryButton(
-                    enabled = title.isNotBlank() || standardFieldValues.values.any { it.isNotBlank() },
-                    onClick = { onSave(buildPreviewPayload()) }
-                ) {
-                    Text(i18n.t("action_save"))
                 }
             }
         }
-    )
+    }
 }
 
 // =============================================================================
@@ -2357,139 +2442,155 @@ private fun SafePocketSettingsDialog(
         }
     }
 
-    AlertDialog(
+    val maxModalHeightDp = (LocalConfiguration.current.screenHeightDp - 64).coerceAtLeast(320).dp
+    val hasSavedCloudSession = (selectedCloudProvider == "GDRIVE_APPDATA" && gdriveBearerToken.isNotBlank()) ||
+        !cloudSyncStatus?.signedInEmail.isNullOrBlank()
+
+    Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier
-            .fillMaxWidth(0.94f)
-            .widthIn(max = 760.dp)
-            .padding(vertical = 16.dp),
-        title = { Text(i18n.t("nav_settings")) },
-        text = {
-            ProvideSeamFreeHoverIndication {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    if (!statusFeedback.isNullOrBlank()) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(horizontal = 24.dp, vertical = 28.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 6.dp,
+                shadowElevation = 8.dp,
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 760.dp)
+                    .heightIn(max = maxModalHeightDp)
+            ) {
+                ProvideSeamFreeHoverIndication {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 24.dp, end = 16.dp, top = 18.dp, bottom = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = statusFeedback!!,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.padding(12.dp)
+                                text = i18n.t("nav_settings"),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.SemiBold
                             )
+                            SmoothTextButton(onClick = onDismiss) {
+                                Text("✕")
+                            }
                         }
-                    }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
 
-                    // -----------------------------------------------------------------
-                    // 1. MUTUALLY EXCLUSIVE VAULT STORAGE MODE (`LOCAL_ONLY` XOR `CLOUD_SYNC`)
-                    // -----------------------------------------------------------------
-                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                text = i18n.t("storage_mode_section_title"),
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable {
-                                            desiredModeTab = VaultStorageMode.LOCAL_ONLY
-                                            if (currentStorageMode != VaultStorageMode.LOCAL_ONLY) {
-                                                coroutineScope.launch {
-                                                    busyOperation = true
-                                                    runCatching {
-                                                        onSwitchStorageMode(VaultStorageMode.LOCAL_ONLY)
-                                                        statusFeedback = "✓ ${i18n.t("storage_mode_local_only_title")}"
-                                                    }.onFailure { err ->
-                                                        statusFeedback = "⚠ ${err.message}"
-                                                    }
-                                                    busyOperation = false
-                                                }
-                                            }
-                                        }
-                                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 24.dp, vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            if (!statusFeedback.isNullOrBlank()) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    RadioButton(
-                                        selected = desiredModeTab == VaultStorageMode.LOCAL_ONLY,
-                                        onClick = null
-                                    )
-                                    Spacer(Modifier.width(8.dp))
                                     Text(
-                                        text = i18n.t("storage_mode_local_only_title"),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable {
-                                            desiredModeTab = VaultStorageMode.CLOUD_SYNC
-                                            if (!cloudSyncStatus?.signedInEmail.isNullOrBlank() &&
-                                                currentStorageMode != VaultStorageMode.CLOUD_SYNC
-                                            ) {
-                                                coroutineScope.launch {
-                                                    busyOperation = true
-                                                    runCatching {
-                                                        onSwitchStorageMode(VaultStorageMode.CLOUD_SYNC)
-                                                        statusFeedback = "✓ ${i18n.t("storage_mode_cloud_only_title")}"
-                                                    }.onFailure { err ->
-                                                        statusFeedback = "⚠ ${err.message}"
-                                                    }
-                                                    busyOperation = false
-                                                }
-                                            }
-                                        }
-                                        .padding(vertical = 4.dp, horizontal = 4.dp)
-                                ) {
-                                    RadioButton(
-                                        selected = desiredModeTab == VaultStorageMode.CLOUD_SYNC,
-                                        onClick = null
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = i18n.t("storage_mode_cloud_only_title"),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
+                                        text = statusFeedback!!,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(12.dp)
                                     )
                                 }
                             }
 
-                            if (desiredModeTab == VaultStorageMode.LOCAL_ONLY) {
-                                Text(
-                                    text = i18n.t("storage_mode_local_only_desc"),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (localDbStatus != null) {
-                                    Text(
-                                        text = "${localDbStatus.backendLabel} • ${localDbStatus.databaseFileName} (${localDbStatus.databaseSizeBytes / 1024} KiB) • ${localDbStatus.activeItemCount} items",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                            } else {
-                                Text(
-                                    text = i18n.t("storage_mode_cloud_only_desc"),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            // -----------------------------------------------------------------
+                            // 1. DATABASE & SYNC (`Lokale DB` vs `Cloud-Sync` 2-Column Cards)
+                            // -----------------------------------------------------------------
+                            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        DatabaseSyncSectionIcon(color = MaterialTheme.colorScheme.onSurface)
+                                        Text(
+                                            text = i18n.t("storage_mode_section_title"),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
 
-                                // Cloud Service Radio Selection (Firebase vs Google Drive appDataFolder)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        StorageModeSelectionCard(
+                                            selected = desiredModeTab == VaultStorageMode.LOCAL_ONLY,
+                                            title = i18n.t("storage_mode_local_only_title"),
+                                            subtitle = i18n.t("storage_mode_local_only_desc"),
+                                            enabled = !busyOperation,
+                                            onClick = {
+                                                desiredModeTab = VaultStorageMode.LOCAL_ONLY
+                                                if (currentStorageMode != VaultStorageMode.LOCAL_ONLY) {
+                                                    coroutineScope.launch {
+                                                        busyOperation = true
+                                                        runCatching {
+                                                            onSwitchStorageMode(VaultStorageMode.LOCAL_ONLY)
+                                                            statusFeedback = "✓ ${i18n.t("storage_mode_local_only_title")}"
+                                                        }.onFailure { err ->
+                                                            statusFeedback = "⚠ ${err.message}"
+                                                        }
+                                                        busyOperation = false
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            icon = { tint -> CloudOffCardIcon(color = tint) }
+                                        )
+                                        StorageModeSelectionCard(
+                                            selected = desiredModeTab == VaultStorageMode.CLOUD_SYNC,
+                                            title = i18n.t("storage_mode_cloud_only_title"),
+                                            subtitle = i18n.t("storage_mode_cloud_only_desc"),
+                                            enabled = !busyOperation,
+                                            onClick = {
+                                                desiredModeTab = VaultStorageMode.CLOUD_SYNC
+                                                if (hasSavedCloudSession && currentStorageMode != VaultStorageMode.CLOUD_SYNC) {
+                                                    coroutineScope.launch {
+                                                        busyOperation = true
+                                                        runCatching {
+                                                            onSwitchStorageMode(VaultStorageMode.CLOUD_SYNC)
+                                                            statusFeedback = "✓ ${i18n.t("storage_mode_cloud_only_title")}"
+                                                        }.onFailure { err ->
+                                                            statusFeedback = "⚠ ${err.message}"
+                                                        }
+                                                        busyOperation = false
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            icon = { tint -> CloudDoneCardIcon(color = tint) }
+                                        )
+                                    }
+
+                                    if (desiredModeTab == VaultStorageMode.LOCAL_ONLY) {
+                                        if (localDbStatus != null) {
+                                            Text(
+                                                text = "${localDbStatus.backendLabel} • ${localDbStatus.databaseFileName} (${localDbStatus.databaseSizeBytes / 1024} KiB) • ${localDbStatus.activeItemCount} items",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    } else {
+                                        // Cloud Service Radio Selection (Firebase vs Google Drive appDataFolder)
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -3397,16 +3498,101 @@ private fun SafePocketSettingsDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            }
-        },
-        confirmButton = {
-            ProvideSeamFreeHoverIndication {
-                SmoothPrimaryButton(onClick = onDismiss) {
-                    Text(i18n.t("action_done"))
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 18.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SmoothPrimaryButton(onClick = onDismiss) {
+                        Text(i18n.t("action_done"))
+                    }
                 }
             }
         }
+    }
+    }
+    }
+}
+
+@Composable
+private fun StorageModeSelectionCard(
+    selected: Boolean,
+    title: String,
+    subtitle: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: @Composable (tint: Color) -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val shape = RoundedCornerShape(14.dp)
+    val primary = MaterialTheme.colorScheme.primary
+
+    val bg by animateColorAsState(
+        targetValue = when {
+            selected && isPressed -> primary.copy(alpha = 0.18f)
+            selected && isHovered -> primary.copy(alpha = 0.14f)
+            selected -> primary.copy(alpha = 0.11f)
+            isPressed -> primary.copy(alpha = 0.10f)
+            isHovered -> primary.copy(alpha = 0.05f)
+            else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        },
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = "storageCardBg"
     )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            selected -> primary
+            isHovered -> primary.copy(alpha = 0.55f)
+            else -> MaterialTheme.colorScheme.outlineVariant
+        },
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = "storageCardBorder"
+    )
+    val titleColor = if (selected) primary else MaterialTheme.colorScheme.onSurface
+    val iconColor = if (selected) primary else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(bg)
+            .border(width = if (selected) 2.dp else 1.dp, color = borderColor, shape = shape)
+            .hoverable(interactionSource, enabled = enabled)
+            .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick
+            )
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        icon(iconColor)
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = titleColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            minLines = 2,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 @Composable
@@ -3415,7 +3601,8 @@ private fun MainAppFlagLanguageSelector(
     activeLocale: SupportedLocale,
     manualLocaleOverride: SupportedLocale?,
     onSelectLocaleOverride: (SupportedLocale?) -> Unit,
-    compact: Boolean = false
+    compact: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
     val badgeFlag = if (manualLocaleOverride == null) {
@@ -3423,13 +3610,17 @@ private fun MainAppFlagLanguageSelector(
     } else {
         activeLocale.flagEmoji
     }
+    val targetHeight = if (compact) 34.dp else 36.dp
 
     Box {
         SmoothOutlinedButton(
             onClick = { expanded = true },
+            modifier = modifier.height(targetHeight),
+            shape = RoundedCornerShape(10.dp),
+            minHeight = targetHeight,
             contentPadding = PaddingValues(
                 horizontal = if (compact) 8.dp else 10.dp,
-                vertical = if (compact) 6.dp else 8.dp
+                vertical = 0.dp
             )
         ) {
             Text(
@@ -3449,16 +3640,13 @@ private fun MainAppFlagLanguageSelector(
         ) {
             ProvideSeamFreeHoverIndication {
                 Column {
-                    DropdownMenuItem(
-                        text = {
-                            val check = if (manualLocaleOverride == null) "✓ " else ""
-                            Text(
-                                "${check}🌐 " + i18n.t(
-                                    "settings_language_system",
-                                    mapOf("locale" to "${i18n.detectedSystemLocale.flagEmoji} ${i18n.detectedSystemLocale.nativeDisplayName}")
-                                )
-                            )
-                        },
+                    val sysCheck = if (manualLocaleOverride == null) "✓ " else ""
+                    SmoothContextMenuItem(
+                        text = "${sysCheck}🌐 " + i18n.t(
+                            "settings_language_system",
+                            mapOf("locale" to "${i18n.detectedSystemLocale.flagEmoji} ${i18n.detectedSystemLocale.nativeDisplayName}")
+                        ),
+                        accentHighlight = manualLocaleOverride == null,
                         onClick = {
                             expanded = false
                             onSelectLocaleOverride(null)
@@ -3466,11 +3654,10 @@ private fun MainAppFlagLanguageSelector(
                     )
                     HorizontalDivider()
                     SupportedLocale.entries.forEach { locale ->
-                        DropdownMenuItem(
-                            text = {
-                                val check = if (manualLocaleOverride == locale) "✓ " else ""
-                                Text("$check${locale.flagEmoji}  ${locale.nativeDisplayName} (${locale.code.uppercase()})")
-                            },
+                        val check = if (manualLocaleOverride == locale) "✓ " else ""
+                        SmoothContextMenuItem(
+                            text = "$check${locale.flagEmoji}  ${locale.nativeDisplayName} (${locale.code.uppercase()})",
+                            accentHighlight = manualLocaleOverride == locale,
                             onClick = {
                                 expanded = false
                                 onSelectLocaleOverride(locale)

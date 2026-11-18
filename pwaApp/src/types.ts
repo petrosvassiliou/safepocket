@@ -237,6 +237,6 @@ export const SENSITIVE_FIELD_KEYS = new Set<string>([
 
 export const APP_BUILD_INFO = {
   appName: 'SafePocket',
-  versionName: '0.3.6',
-  versionCode: 11
+  versionName: '0.3.7',
+  versionCode: 12
 } as const;

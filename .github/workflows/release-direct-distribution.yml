@@ -57,12 +57,14 @@ jobs:
               echo "version_code=10" >> "${GITHUB_OUTPUT}"
             elif [[ "${RAW_TAG}" == "0.3.6" ]]; then
               echo "version_code=11" >> "${GITHUB_OUTPUT}"
+            elif [[ "${RAW_TAG}" == "0.3.7" ]]; then
+              echo "version_code=12" >> "${GITHUB_OUTPUT}"
             else
-              echo "version_code=${GITHUB_RUN_NUMBER:-11}" >> "${GITHUB_OUTPUT}"
+              echo "version_code=${GITHUB_RUN_NUMBER:-12}" >> "${GITHUB_OUTPUT}"
             fi
           else
-            echo "version_name=${{ inputs.version_name || '0.3.6' }}" >> "${GITHUB_OUTPUT}"
-            echo "version_code=${{ inputs.version_code || '11' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_name=${{ inputs.version_name || '0.3.7' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_code=${{ inputs.version_code || '12' }}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Setup Node.js 24 LTS

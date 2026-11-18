@@ -142,9 +142,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3.6"
-    let currentVersionCode = 11
-    let currentVersionDisplay = "SafePocket v0.3.6 (Build 11)"
+    let currentVersionName = "0.3.7"
+    let currentVersionCode = 12
+    let currentVersionDisplay = "SafePocket v0.3.7 (Build 12)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -418,6 +418,7 @@ final class MacVaultViewModel: ObservableObject {
     @Published var isLocked: Bool = false
     @Published var presentSettingsSheet: Bool = false
     @Published var presentEditorSheet: Bool = false
+    @Published var pendingCreateCategory: String = "PAYMENT_CARD"
     @Published var editingEntry: MacVaultEntry?
     @Published var focusSearchField: Bool = false
     @Published var selectedCategory: String = "all"
@@ -754,28 +755,30 @@ final class MacVaultViewModel: ObservableObject {
             return
         }
 
-        switch storageMode {
-        case .localOnly:
-            try? blob.write(to: localVaultFileURL, options: .atomic)
-            try? FileManager.default.removeItem(at: cloudMirrorFileURL)
-        case .cloudSync:
+        // Always keep the local encrypted vault up-to-date across both Lokale DB and Cloud-Sync modes
+        try? blob.write(to: localVaultFileURL, options: .atomic)
+        if storageMode == .cloudSync {
             try? blob.write(to: cloudMirrorFileURL, options: .atomic)
-            try? FileManager.default.removeItem(at: localVaultFileURL)
         }
     }
 
     private func loadPersistedEntriesOrSeedSamples() {
-        let activeFile = (storageMode == .cloudSync) ? cloudMirrorFileURL : localVaultFileURL
         let key = MacZeroKnowledgeCrypto.deriveVaultSymmetricKey(
             masterPassword: activeMasterPassword,
             secretKey: secretKeyFormatted
         )
-        if let blob = try? Data(contentsOf: activeFile),
-           let container = try? JSONDecoder().decode(MacEncryptedBackupContainer.self, from: blob),
-           let plain = try? MacZeroKnowledgeCrypto.decryptData(ivHex: container.ivHex, ciphertextHex: container.ciphertextHex, key: key, aad: Data("safepocket-mac-store".utf8)),
-           let decoded = try? JSONDecoder().decode([MacVaultEntry].self, from: plain) {
-            self.entries = decoded
-            return
+        let candidateFiles = [localVaultFileURL, cloudMirrorFileURL]
+        for fileURL in candidateFiles {
+            if let blob = try? Data(contentsOf: fileURL),
+               let container = try? JSONDecoder().decode(MacEncryptedBackupContainer.self, from: blob),
+               let plain = try? MacZeroKnowledgeCrypto.decryptData(ivHex: container.ivHex, ciphertextHex: container.ciphertextHex, key: key, aad: Data("safepocket-mac-store".utf8)),
+               let decoded = try? JSONDecoder().decode([MacVaultEntry].self, from: plain) {
+                self.entries = decoded
+                if fileURL != localVaultFileURL {
+                    persistActiveStorageSnapshot()
+                }
+                return
+            }
         }
 
         if !UserDefaults.standard.bool(forKey: samplePurgedKey) {
@@ -806,27 +809,22 @@ final class MacVaultViewModel: ObservableObject {
 
         switch nextMode {
         case .cloudSync:
-            try? FileManager.default.removeItem(at: localVaultFileURL)
-            standaloneLocalRowCount = 0
-            cloudSessionMirrorCount = entries.count
             pendingOfflineOutboxIds = Set(entries.map(\.id))
+            recalculateStorageIsolationCounts()
             persistActiveStorageSnapshot()
             recordDiagnostic(
-                operation: "storage.switchToCloudOnly",
-                detail: "Purged standalone local DB; armed automatic offline mirror (\(cloudSessionMirrorCount) items)"
+                operation: "storage.switchToCloudSync",
+                detail: "Enabled Cloud-Sync with preserved Lokale DB (\(standaloneLocalRowCount) items)"
             )
             if isNetworkOnline && isCloudAuthenticated {
                 await reconcileCloudSessionAutomatically()
             }
         case .localOnly:
-            try? FileManager.default.removeItem(at: cloudMirrorFileURL)
-            pendingOfflineOutboxIds.removeAll()
-            cloudSessionMirrorCount = 0
-            standaloneLocalRowCount = entries.count
+            recalculateStorageIsolationCounts()
             persistActiveStorageSnapshot()
             recordDiagnostic(
                 operation: "storage.switchToLocalOnly",
-                detail: "Wiped cloud session mirror & outbox; standalone local storage active (\(standaloneLocalRowCount) items)"
+                detail: "Paused Cloud-Sync; Lokale DB active (\(standaloneLocalRowCount) items, Cloud session retained)"
             )
         }
     }
@@ -871,6 +869,8 @@ final class MacVaultViewModel: ObservableObject {
     func signOutCloudAccount() async {
         cloudSession = nil
         MacKeychainStore.delete(account: "cloud_session")
+        try? FileManager.default.removeItem(at: cloudMirrorFileURL)
+        pendingOfflineOutboxIds.removeAll()
         endpointConfig.googleDriveBearerToken = ""
         await switchExclusiveStorageMode(.localOnly)
         statusNotice = "✓ Signed out & switched to \(t("storage_mode_local_only_title"))"
@@ -1025,19 +1025,30 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     private func recalculateStorageIsolationCounts() {
-        if storageMode == .localOnly {
-            standaloneLocalRowCount = entries.count
-            cloudSessionMirrorCount = 0
-        } else {
-            standaloneLocalRowCount = 0
-            cloudSessionMirrorCount = entries.count
-        }
+        standaloneLocalRowCount = entries.count
+        cloudSessionMirrorCount = (storageMode == .cloudSync) ? entries.count : 0
     }
 
     // MARK: - Vault CRUD & Sample Data Purge
 
-    func openCreateEditor() {
+    func openCreateEditor(category: String? = nil) {
         restartInactivityAutoLockTimer()
+        let validCategories = [
+            "PAYMENT_CARD",
+            "BANK_ACCOUNT",
+            "INSURANCE_CARD",
+            "MEMBERSHIP_CARD",
+            "IDENTITY",
+            "OFFICIAL_DOCUMENT",
+            "SECURE_NOTE"
+        ]
+        if let explicit = category, validCategories.contains(explicit) {
+            pendingCreateCategory = explicit
+        } else if validCategories.contains(selectedCategory) {
+            pendingCreateCategory = selectedCategory
+        } else {
+            pendingCreateCategory = "PAYMENT_CARD"
+        }
         editingEntry = nil
         presentEditorSheet = true
     }

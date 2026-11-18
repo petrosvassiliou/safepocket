@@ -731,11 +731,11 @@ export class GoogleDriveAppDataAdapter implements CloudSyncProviderAdapter {
 /**
  * Encrypted Vault Store backed by SQLite WASM + OPFS (`SqliteWasmVaultDb`).
  *
- * Enforces SafePocket v0.3 Mutually Exclusive Storage Mode (`LOCAL_ONLY` XOR `CLOUD_SYNC`):
- * - In `LOCAL_ONLY`: persists AES-256-GCM rows strictly to `vault_item`; `cloud_offline_mirror` & `cloud_mutation_outbox` are empty.
- * - In `CLOUD_SYNC`: `vault_item` (standalone local DB) is purged; writes go to the session-scoped
- *   `cloud_offline_mirror` + `cloud_mutation_outbox` and sync immediately when online or automatically
- *   upon network reconnection with zero user input.
+ * SafePocket v0.3.7 Local-First + Seamless Cloud Sync Architecture:
+ * - `LOCAL_ONLY` (Lokale DB): 100% offline on-device encrypted SQLite (`vault_item`); zero cloud traffic.
+ * - `CLOUD_SYNC` (Cloud-Sync): Local encrypted SQLite (`vault_item`) + real-time zero-knowledge cloud backup
+ *   across devices via `cloud_offline_mirror` + `cloud_mutation_outbox`. Toggling between `LOCAL_ONLY` and
+ *   `CLOUD_SYNC` preserves both the local SQLite database and the signed-in Cloud session.
  */
 export class EncryptedLocalVaultDb {
   readonly sqliteEngine: SqliteWasmVaultDb;
@@ -758,6 +758,7 @@ export class EncryptedLocalVaultDb {
   }
 
   async saveEncryptedRow(row: EncryptedVaultRow): Promise<void> {
+    await this.sqliteEngine.saveEncryptedRow(row);
     if (this.activeStorageMode === 'CLOUD_SYNC') {
       await this.sqliteEngine.saveCloudMirrorRow(row);
       await this.sqliteEngine.enqueueCloudMutationOutboxRow(row);
@@ -765,42 +766,51 @@ export class EncryptedLocalVaultDb {
       this.boundCoordinator?.updateRuntimeSyncTelemetry({
         queuedMutationsCount: pending.length
       });
-      return;
     }
-    await this.sqliteEngine.saveEncryptedRow(row);
   }
 
   async saveMergedCloudRowToMirrorOnly(row: EncryptedVaultRow): Promise<void> {
+    await this.sqliteEngine.saveEncryptedRow(row);
     await this.sqliteEngine.saveCloudMirrorRow(row);
   }
 
   async loadAllRowsIncludingTombstones(): Promise<EncryptedVaultRow[]> {
+    const localRows = await this.sqliteEngine.loadAllRowsIncludingTombstones();
     if (this.activeStorageMode === 'CLOUD_SYNC') {
-      return this.sqliteEngine.loadAllCloudMirrorRowsIncludingTombstones();
+      const mirrorRows =
+        await this.sqliteEngine.loadAllCloudMirrorRowsIncludingTombstones();
+      if (mirrorRows.length === 0) {
+        return localRows;
+      }
+      const merged = new Map<string, EncryptedVaultRow>();
+      for (const l of localRows) merged.set(l.id, l);
+      for (const m of mirrorRows) {
+        const existing = merged.get(m.id);
+        merged.set(m.id, existing ? reconcileEncryptedRows(existing, m) : m);
+      }
+      return Array.from(merged.values());
     }
-    return this.sqliteEngine.loadAllRowsIncludingTombstones();
+    return localRows;
   }
 
   async loadAllEncryptedRows(): Promise<EncryptedVaultRow[]> {
-    if (this.activeStorageMode === 'CLOUD_SYNC') {
-      return this.sqliteEngine.loadActiveCloudMirrorRows();
-    }
-    return this.sqliteEngine.loadAllEncryptedRows();
+    const all = await this.loadAllRowsIncludingTombstones();
+    return all.filter((r) => !r.isTombstone);
   }
 
   async clearAll(): Promise<void> {
+    await this.sqliteEngine.clearAll();
     if (this.activeStorageMode === 'CLOUD_SYNC') {
       await this.sqliteEngine.purgeCloudSessionMirrorAndOutbox();
       this.boundCoordinator?.updateRuntimeSyncTelemetry({
         queuedMutationsCount: 0
       });
-      return;
     }
-    await this.sqliteEngine.clearAll();
   }
 
   /**
-   * Transitions exclusively between `LOCAL_ONLY` and `CLOUD_SYNC` (never both simultaneously).
+   * Seamlessly switches between `LOCAL_ONLY` (100% offline local DB) and `CLOUD_SYNC`
+   * (Local DB + real-time Cloud Sync) while keeping local SQLite rows intact.
    */
   async switchExclusiveStorageMode(
     targetMode: VaultStorageMode,
@@ -814,18 +824,17 @@ export class EncryptedLocalVaultDb {
     }
 
     if (targetMode === 'CLOUD_SYNC') {
-      // 1. Seed session-scoped cloud mirror & outbox from current unlocked snapshot
+      // 1. Ensure local SQLite DB (`vault_item`) and cloud mirror/outbox both hold current snapshot
       for (const row of activeSnapshotRows) {
+        await this.sqliteEngine.saveEncryptedRow(row);
         await this.sqliteEngine.saveCloudMirrorRow(row);
         await this.sqliteEngine.enqueueCloudMutationOutboxRow(row);
       }
-      // 2. Purge standalone local vault (`vault_item`) so Local DB is strictly zeroed out
-      await this.sqliteEngine.purgeStandaloneLocalVault();
       coord.setStorageMode('CLOUD_SYNC');
       const outbox = await this.sqliteEngine.listCloudMutationOutboxRows();
       coord.updateRuntimeSyncTelemetry({ queuedMutationsCount: outbox.length });
 
-      // 3. Immediately reconcile if online; if offline, automatic outbox holds items seamlessly
+      // 2. Immediately reconcile if online; if offline, automatic outbox holds items seamlessly
       if (coord.indicatorSnapshot.isOnline) {
         return this.reconcileCloudSessionAutomatically(vaultId, providerKey);
       }
@@ -833,13 +842,10 @@ export class EncryptedLocalVaultDb {
     }
 
     // Switching `CLOUD_SYNC` -> `LOCAL_ONLY`:
-    // 1. Persist active snapshot to standalone `vault_item`
-    await this.sqliteEngine.purgeStandaloneLocalVault();
+    // Preserve local encrypted SQLite (`vault_item`) and pause Cloud Sync without destroying local or cloud state
     for (const row of activeSnapshotRows) {
       await this.sqliteEngine.saveEncryptedRow(row);
     }
-    // 2. Immediately wipe session-scoped cloud offline mirror, outbox & cursors
-    await this.sqliteEngine.purgeCloudSessionMirrorAndOutbox();
     coord.setStorageMode('LOCAL_ONLY');
     return null;
   }
@@ -867,12 +873,20 @@ export class EncryptedLocalVaultDb {
 
     coord.updateRuntimeSyncTelemetry({ syncing: true, lastError: null });
     try {
+      const localRows = await this.sqliteEngine.loadAllRowsIncludingTombstones();
       const outbox = await this.sqliteEngine.listCloudMutationOutboxRows();
       const mirror =
         await this.sqliteEngine.loadAllCloudMirrorRowsIncludingTombstones();
       const byId = new Map<string, EncryptedVaultRow>();
-      for (const m of mirror) byId.set(m.id, m);
-      for (const o of outbox) byId.set(o.id, o);
+      for (const l of localRows) byId.set(l.id, l);
+      for (const m of mirror) {
+        const existing = byId.get(m.id);
+        byId.set(m.id, existing ? reconcileEncryptedRows(existing, m) : m);
+      }
+      for (const o of outbox) {
+        const existing = byId.get(o.id);
+        byId.set(o.id, existing ? reconcileEncryptedRows(existing, o) : o);
+      }
 
       const sinceCursor = await this.sqliteEngine.getSyncCursor(providerKey);
       const pendingBlobs =
@@ -893,6 +907,7 @@ export class EncryptedLocalVaultDb {
         await this.sqliteEngine.markLocalBlobSynced(uploadedId);
       }
       for (const merged of res.mergedRows) {
+        await this.sqliteEngine.saveEncryptedRow(merged);
         await this.sqliteEngine.saveCloudMirrorRow(merged);
       }
       if (outbox.length > 0) {

@@ -150,6 +150,7 @@ class MainActivity : ComponentActivity() {
             var showSettingsDialog by remember { mutableStateOf(false) }
             var showEditorDialog by remember { mutableStateOf(false) }
             var editingItem by remember { mutableStateOf<VaultItemPayload?>(null) }
+            var pendingCreateCategory by remember { mutableStateOf(VaultCategory.PAYMENT_CARD) }
             var isVaultLocked by remember { mutableStateOf(false) }
             var focusSearchTrigger by remember { mutableIntStateOf(0) }
             var statusTick by remember { mutableIntStateOf(0) }
@@ -240,6 +241,7 @@ class MainActivity : ComponentActivity() {
                 showSettingsDialog = showSettingsDialog,
                 showEditorDialog = showEditorDialog,
                 editingItem = editingItem,
+                initialCreateCategory = pendingCreateCategory,
                 focusSearchTrigger = focusSearchTrigger,
                 statusBannerMessage = statusBannerMessage,
                 onDismissStatusBanner = { statusBannerMessage = null },
@@ -335,6 +337,12 @@ class MainActivity : ComponentActivity() {
                 },
                 onFocusSearch = { focusSearchTrigger++ },
                 onNewItem = {
+                    pendingCreateCategory = selectedCategory ?: VaultCategory.PAYMENT_CARD
+                    editingItem = null
+                    showEditorDialog = true
+                },
+                onNewItemWithCategory = { chosenCategory ->
+                    pendingCreateCategory = chosenCategory
                     editingItem = null
                     showEditorDialog = true
                 },

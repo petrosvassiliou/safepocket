@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.6 (Build 11) with 100% Cross-Platform Parity.
+/// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.7 (Build 12) with 100% Cross-Platform Parity.
 struct MacVaultSplitView: View {
     @ObservedObject var vaultState: MacVaultViewModel
     @ObservedObject var updater: MacSparkleUpdateController
@@ -16,6 +16,49 @@ struct MacVaultSplitView: View {
         case "light": themeMode = "dark"
         case "dark": themeMode = "system"
         default: themeMode = "light"
+        }
+    }
+
+    @ViewBuilder
+    private var macNewItemCategoryMenu: some View {
+        Menu {
+            Button {
+                vaultState.openCreateEditor(category: "PAYMENT_CARD")
+            } label: {
+                Label(vaultState.t("category_payment_card"), systemImage: "creditcard")
+            }
+            Button {
+                vaultState.openCreateEditor(category: "BANK_ACCOUNT")
+            } label: {
+                Label(vaultState.t("category_bank_account"), systemImage: "building.columns")
+            }
+            Button {
+                vaultState.openCreateEditor(category: "INSURANCE_CARD")
+            } label: {
+                Label(vaultState.t("category_insurance_card"), systemImage: "cross.case")
+            }
+            Button {
+                vaultState.openCreateEditor(category: "MEMBERSHIP_CARD")
+            } label: {
+                Label(vaultState.t("category_membership_card"), systemImage: "person.crop.rectangle.stack")
+            }
+            Button {
+                vaultState.openCreateEditor(category: "IDENTITY")
+            } label: {
+                Label(vaultState.t("category_identity"), systemImage: "person.text.rectangle")
+            }
+            Button {
+                vaultState.openCreateEditor(category: "OFFICIAL_DOCUMENT")
+            } label: {
+                Label(vaultState.t("category_official_document"), systemImage: "doc.badge.gearshape")
+            }
+            Button {
+                vaultState.openCreateEditor(category: "SECURE_NOTE")
+            } label: {
+                Label(vaultState.t("category_secure_note"), systemImage: "lock.doc")
+            }
+        } label: {
+            Label(vaultState.t("action_new_item"), systemImage: "plus")
         }
     }
 
@@ -36,11 +79,7 @@ struct MacVaultSplitView: View {
                     ToolbarItemGroup(placement: .primaryAction) {
                         MacFlagLanguageMenu(vaultState: vaultState)
 
-                        Button {
-                            vaultState.openCreateEditor()
-                        } label: {
-                            Label(vaultState.t("action_new_item"), systemImage: "plus")
-                        }
+                        macNewItemCategoryMenu
 
                         Button {
                             vaultState.presentSettingsSheet = true
@@ -172,12 +211,13 @@ struct MacVaultSplitView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 Divider()
-                HStack(spacing: 6) {
+                HStack(alignment: .center, spacing: 6) {
                     Button {
                         cycleTheme()
                     } label: {
                         Image(systemName: themeMode == "dark" ? "moon.stars.fill" : (themeMode == "system" ? "circle.lefthalf.filled" : "sun.max.fill"))
-                            .frame(width: 16)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .frame(width: 20, height: 18, alignment: .center)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -189,8 +229,13 @@ struct MacVaultSplitView: View {
                     Button {
                         vaultState.lockVault()
                     } label: {
-                        Label(vaultState.t("action_lock_vault"), systemImage: "lock.fill")
-                            .lineLimit(1)
+                        HStack(alignment: .center, spacing: 5) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 11.5, weight: .semibold))
+                            Text(vaultState.t("action_lock_vault"))
+                                .lineLimit(1)
+                        }
+                        .frame(minHeight: 18, alignment: .center)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -199,7 +244,7 @@ struct MacVaultSplitView: View {
                 }
                 .padding(.leading, 8)
                 .padding(.trailing, 10)
-                .padding(.top, 4)
+                .padding(.top, 5)
 
                 HStack(spacing: 5) {
                     Image(systemName: "checkmark.shield.fill")
@@ -291,26 +336,31 @@ struct MacVaultSplitView: View {
                 }
                 .contextMenu {
                     Button {
+                        vaultState.selectedEntryId = entry.id
                         vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
                     } label: {
                         Label(vaultState.t("context_copy_primary"), systemImage: "doc.on.doc")
                     }
                     Button {
+                        vaultState.selectedEntryId = entry.id
                         vaultState.openEditEditor(entry)
                     } label: {
                         Label(vaultState.t("action_edit"), systemImage: "pencil")
                     }
                     Button {
+                        vaultState.selectedEntryId = entry.id
                         vaultState.togglePin(entry.id)
                     } label: {
                         Label(entry.pinned ? vaultState.t("context_unpin") : vaultState.t("context_pin"), systemImage: "pin")
                     }
                     Button {
+                        vaultState.selectedEntryId = entry.id
                         vaultState.toggleFavorite(entry.id)
                     } label: {
                         Label(vaultState.t("nav_favorites"), systemImage: "star")
                     }
                     Button {
+                        vaultState.selectedEntryId = entry.id
                         vaultState.duplicateEntry(entry.id)
                     } label: {
                         Label(vaultState.t("context_duplicate"), systemImage: "plus.square.on.square")
@@ -536,10 +586,8 @@ struct MacVaultSplitView: View {
                 VStack(spacing: 12) {
                     Text(vaultState.t("app_name"))
                         .font(.title3.weight(.semibold))
-                    Button(vaultState.t("action_new_item")) {
-                        vaultState.openCreateEditor()
-                    }
-                    .buttonStyle(.borderedProminent)
+                    macNewItemCategoryMenu
+                        .controlSize(.large)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -672,12 +720,6 @@ struct MacSettingsModalWindow: View {
                     .font(.title3.weight(.bold))
                 Spacer()
                 MacFlagLanguageMenu(vaultState: vaultState)
-                Button(vaultState.t("action_done")) {
-                    vaultState.presentSettingsSheet = false
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
@@ -686,6 +728,23 @@ struct MacSettingsModalWindow: View {
             Divider()
 
             MacSettingsAndAboutView(vaultState: vaultState, updater: updater)
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button(vaultState.t("action_done")) {
+                    vaultState.presentSettingsSheet = false
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 12)
+            .padding(.bottom, 18)
+            .background(.regularMaterial)
         }
         .frame(minWidth: 760, idealWidth: 780, minHeight: 680, idealHeight: 720)
     }
@@ -695,13 +754,21 @@ struct MacSettingsModalWindow: View {
 
 struct MacSectionCard<Content: View>: View {
     let title: String
+    var systemImage: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 13.5, weight: .bold))
-                .foregroundStyle(.primary)
+            HStack(spacing: 7) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                Text(title)
+                    .font(.system(size: 13.5, weight: .bold))
+                    .foregroundStyle(.primary)
+            }
 
             VStack(alignment: .leading, spacing: 12) {
                 content()
@@ -770,14 +837,14 @@ struct MacLabeledSecureField: View {
     }
 }
 
-// MARK: - Full Multi-Field Smart Item Editor Sheet (All 7 Categories + Custom Fields — Explicit Bordered Inputs)
+// MARK: - Full Multi-Field Smart Item Editor Sheet (All 7 Categories + Custom Fields — Category-Free Dialog)
 
 struct MacSmartItemEditorSheet: View {
     @ObservedObject var vaultState: MacVaultViewModel
     let existing: MacVaultEntry?
     @Environment(\.dismiss) private var dismiss
 
-    @State private var category: String = "BANK_ACCOUNT"
+    @State private var category: String = "PAYMENT_CARD"
     @State private var title: String = ""
     @State private var subtitle: String = ""
     @State private var customColorHex: String = ""
@@ -791,29 +858,21 @@ struct MacSmartItemEditorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(existing == nil ? vaultState.t("action_new_item") : vaultState.t("action_edit"))
-                .font(.title3.weight(.bold))
+            HStack(alignment: .center, spacing: 10) {
+                Text(existing == nil ? vaultState.t("action_new_item") : vaultState.t("action_edit"))
+                    .font(.title3.weight(.bold))
+                Spacer()
+                Text(vaultState.categorySingularName(category))
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(vaultState.materialAccent.swiftUIColor.opacity(0.14), in: Capsule())
+                    .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     MacSectionCard(title: vaultState.t("app_name")) {
-                        HStack {
-                            Text(vaultState.t("editor_category_label"))
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            Picker("", selection: $category) {
-                                Text(vaultState.t("category_payment_card")).tag("PAYMENT_CARD")
-                                Text(vaultState.t("category_bank_account")).tag("BANK_ACCOUNT")
-                                Text(vaultState.t("category_insurance_card")).tag("INSURANCE_CARD")
-                                Text(vaultState.t("category_membership_card")).tag("MEMBERSHIP_CARD")
-                                Text(vaultState.t("category_identity")).tag("IDENTITY")
-                                Text(vaultState.t("category_official_document")).tag("OFFICIAL_DOCUMENT")
-                                Text(vaultState.t("category_secure_note")).tag("SECURE_NOTE")
-                            }
-                            .labelsHidden()
-                            .frame(maxWidth: 320)
-                        }
-
                         VStack(alignment: .leading, spacing: 4) {
                             Text(vaultState.t("editor_title_label"))
                                 .font(.system(size: 12, weight: .semibold))
@@ -894,17 +953,24 @@ struct MacSmartItemEditorSheet: View {
                     .foregroundStyle(vaultState.materialAccent.swiftUIColor)
             }
 
-            HStack {
+            Divider()
+
+            HStack(spacing: 10) {
                 Spacer()
                 Button(vaultState.t("action_cancel")) { dismiss() }
                     .buttonStyle(.bordered)
+                    .controlSize(.large)
                 Button(vaultState.t("action_save")) {
                     saveConstructedEntry()
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
+            .padding(.top, 4)
         }
-        .padding(20)
+        .padding(.horizontal, 22)
+        .padding(.top, 20)
+        .padding(.bottom, 22)
         .frame(width: 680, height: 660)
         .onAppear {
             NSApplication.shared.activate(ignoringOtherApps: true)
@@ -920,6 +986,11 @@ struct MacSmartItemEditorSheet: View {
                     } else {
                         fieldDrafts[f.labelKey] = f.value
                     }
+                }
+            } else {
+                category = vaultState.pendingCreateCategory
+                if category == "BANK_ACCOUNT" {
+                    fieldDrafts["field_currency"] = "EUR"
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
@@ -1266,36 +1337,45 @@ struct MacSettingsAndAboutView: View {
                     }
                 }
 
-                // 2. VAULT STORAGE MODE (CLEAN RADIO BUTTONS) + FULL CLOUD SYNC ACCOUNT & ENDPOINT CONFIGURATION
-                MacSectionCard(title: vaultState.t("storage_mode_section_title")) {
-                    Picker("", selection: Binding(
-                        get: { vaultState.storageMode },
-                        set: { next in
+                // 2. VAULT STORAGE MODE (2-COLUMN LOKALE DB VS CLOUD-SYNC CARDS) + CLOUD SYNC CONFIGURATION
+                MacSectionCard(title: vaultState.t("storage_mode_section_title"), systemImage: "cylinder.split.1x2") {
+                    HStack(spacing: 12) {
+                        MacStorageModeSelectionCard(
+                            systemImage: "icloud.slash",
+                            title: vaultState.t("storage_mode_local_only_title"),
+                            subtitle: vaultState.t("storage_mode_local_only_desc"),
+                            selected: vaultState.storageMode == .localOnly
+                        ) {
                             Task {
-                                await vaultState.switchExclusiveStorageMode(next)
-                                if next == .cloudSync && !vaultState.isCloudAuthenticated {
+                                await vaultState.switchExclusiveStorageMode(.localOnly)
+                            }
+                        }
+
+                        MacStorageModeSelectionCard(
+                            systemImage: "checkmark.icloud",
+                            title: vaultState.t("storage_mode_cloud_only_title"),
+                            subtitle: vaultState.t("storage_mode_cloud_only_desc"),
+                            selected: vaultState.storageMode == .cloudSync
+                        ) {
+                            Task {
+                                await vaultState.switchExclusiveStorageMode(.cloudSync)
+                                if !vaultState.isCloudAuthenticated {
                                     focusedInput = .cloudEmail
                                 }
                             }
                         }
-                    )) {
-                        Text(vaultState.t("storage_mode_local_only_title")).tag(MacExclusiveStorageMode.localOnly)
-                        Text(vaultState.t("storage_mode_cloud_only_title")).tag(MacExclusiveStorageMode.cloudSync)
                     }
-                    .pickerStyle(.radioGroup)
-                    .labelsHidden()
 
                     if vaultState.storageMode == .localOnly {
-                        Text(vaultState.t("storage_mode_local_only_desc"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("✓ Encrypted Local Vault (\(vaultState.standaloneLocalRowCount) items) • Cloud Mirror: 0 rows")
+                        Text("✓ Encrypted Local Vault (\(vaultState.standaloneLocalRowCount) items)" + (vaultState.isCloudAuthenticated ? " • Cloud-Sync paused (session saved)" : ""))
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
                     } else {
-                        Text(vaultState.t("storage_mode_cloud_only_desc"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if !vaultState.isCloudAuthenticated {
+                            Text(vaultState.t("storage_mode_cloud_auth_required"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
 
                         Divider()
 
@@ -1800,3 +1880,60 @@ struct MacSettingsAndAboutView: View {
         }
     }
 }
+
+private struct MacStorageModeSelectionCard: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    let selected: Bool
+    let action: () -> Void
+
+    @State private var isHovered: Bool = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+
+                Text(title)
+                    .font(.system(size: 13.5, weight: .bold))
+                    .foregroundStyle(.primary)
+
+                Text(subtitle)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 102, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(
+                        selected
+                            ? Color.accentColor.opacity(0.12)
+                            : (isHovered ? Color.primary.opacity(0.05) : Color(nsColor: .windowBackgroundColor).opacity(0.6))
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(
+                        selected
+                            ? Color.accentColor
+                            : (isHovered ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.14)),
+                        lineWidth: selected ? 2.0 : 1.0
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.14)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
