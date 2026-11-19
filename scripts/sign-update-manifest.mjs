@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.7').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.8').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '12');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '13');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-18T23:00:00Z',
+    publishedAt: '2026-11-19T08:05:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} adds a direct category dropdown to + New, removes redundant category pickers from item dialogs, and centers all sidebar footer icons.\n• Introduces side-by-side Local DB vs Cloud-Sync cards with seamless 1-click sync pause/resume that keeps both your local encrypted DB and Cloud session intact.\n• Anchors right-click context menus directly on top of selected items with crisp hover highlights, and elevates modal action buttons clear of window frames across Android / Googlebook OS, ChromeOS / Web PWA, and macOS.`,
-      de: `• SafePocket v${latestVersion} ergänzt den Button + Neu um ein direktes Kategorie-Menü, entfernt die doppelte Kategorieauswahl im Dialog und zentriert alle Symbole unten links.\n• Neue nebeneinanderliegende Karten für Lokale DB & Cloud-Sync ermöglichen nahtloses Pausieren/Fortsetzen per Klick ohne Abmeldung oder Datenverlust.\n• Kontextmenüs erscheinen per Rechtsklick direkt über dem ausgewählten Eintrag mit Hover-Hervorhebung, und Dialog-Schaltflächen haben mehr Abstand zum Fensterrand.`,
-      it: `• SafePocket v${latestVersion} aggiunge un menu categorie diretto a + Nuovo, centra le icone della barra laterale e solleva i pulsanti delle finestre modali.\n• Nuove schede affiancate DB locale e Cloud-Sync per mettere in pausa o riprendere la sincronizzazione con 1 clic mantenendo intatti DB locale e sessione cloud.\n• Menu contestuale ancorato direttamente sopra l'elemento selezionato con evidenziazione al passaggio del mouse.`,
-      fr: `• SafePocket v${latestVersion} ajoute un menu déroulant de catégories au bouton + Nouveau, centre les icônes de la barre latérale et rehausse les boutons des fenêtres modales.\n• Nouvelles cartes côte à côte Base locale et Cloud-Sync permettant de suspendre/reprendre la synchronisation en 1 clic sans déconnexion.\n• Menu contextuel affiché directement au-dessus de l'élément sélectionné avec surbrillance au survol.`,
-      es: `• SafePocket v${latestVersion} añade un menú desplegable de categorías en + Nuevo, centra los iconos de la barra lateral y eleva los botones de los diálogos modales.\n• Nuevas tarjetas lado a lado BD local y Cloud-Sync para pausar o reanudar la sincronización con 1 clic conservando la base local y la sesión en la nube.\n• Menú contextual anclado directamente sobre el elemento seleccionado con resaltado al pasar el cursor.`,
-      el: `• Το SafePocket v${latestVersion} προσθέτει μενού κατηγοριών στο κουμπί + Νέο, κεντράρει τα εικονίδια της πλαϊνής μπάρας και ανυψώνει τα κουμπιά των παραθύρων διαλόγου.\n• Νέες κάρτες Τοπική ΒΔ και Cloud-Sync δίπλα-δίπλα για άμεση παύση/συνέχιση συγχρονισμού με 1 κλικ χωρίς αποσύνδεση.\n• Το μενού δεξιού κλικ εμφανίζεται ακριβώς πάνω από το επιλεγμένο στοιχείο με επισήμανση κατά την αιώρηση.`
+      en: `• SafePocket v${latestVersion} anchors the + New category menu button directly inside the middle list pane's top bar on macOS (matching Android / Googlebook OS and ChromeOS / Web PWA).\n• Includes all v0.3.7 upgrades: centered sidebar footer icons, category-free item dialogs, side-by-side Local DB vs Cloud-Sync cards with 1-click sync pause/resume, elevated modal footers, and top-anchored hover context menus.`,
+      de: `• SafePocket v${latestVersion} platziert den + Neu Kategorie-Button auf macOS direkt oben in der mittleren Listen-Spalte (analog zu Android / Googlebook OS und ChromeOS / Web PWA).\n• Enthält alle v0.3.7-Verbesserungen: zentrierte Symbole unten links, nebeneinanderliegende Karten für Lokale DB & Cloud-Sync mit 1-Klick-Pause/Fortsetzen, erhöhte Dialog-Schaltflächen und Kontextmenüs direkt über dem Eintrag.`,
+      it: `• SafePocket v${latestVersion} posiziona il pulsante + Nuovo direttamente nella barra superiore del pannello centrale su macOS.\n• Include tutti i miglioramenti v0.3.7: icone centrate, schede affiancate DB locale e Cloud-Sync, pulsanti modali rialzati e menu contestuali sopra l'elemento.`,
+      fr: `• SafePocket v${latestVersion} place le bouton + Nouveau directement dans la barre supérieure du volet central sur macOS.\n• Inclut toutes les améliorations v0.3.7 : icônes centrées, cartes Base locale et Cloud-Sync côte à côte, boutons modaux rehaussés et menus contextuels au-dessus de l'élément.`,
+      es: `• SafePocket v${latestVersion} sitúa el botón + Nuevo directamente en la barra superior del panel central en macOS.\n• Incluye todas las mejoras de v0.3.7: iconos centrados, tarjetas BD local y Cloud-Sync lado a lado, botones modales elevados y menús contextuales sobre el elemento.`,
+      el: `• Το SafePocket v${latestVersion} τοποθετεί το κουμπί + Νέο απευθείας στην επάνω μπάρα της μεσαίας στήλης στο macOS.\n• Περιλαμβάνει όλες τις βελτιώσεις v0.3.7: κεντραρισμένα εικονίδια, κάρτες Τοπική ΒΔ & Cloud-Sync δίπλα-δίπλα, ανυψωμένα κουμπιά διαλόγων και μενού δεξιού κλικ πάνω από το στοιχείο.`
     },
     artifacts: {
       'android-universal': {

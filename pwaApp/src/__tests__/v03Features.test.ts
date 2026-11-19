@@ -40,7 +40,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.3.7 (Build 12) Feature Suite', () => {
+describe('SafePocket v0.3.8 (Build 13) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -311,9 +311,9 @@ describe('SafePocket v0.3.7 (Build 12) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.7 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.7');
-    expect(APP_BUILD_INFO.versionCode).toBe(12);
+  it('7. Cross-Platform v0.3.8 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.8');
+    expect(APP_BUILD_INFO.versionCode).toBe(13);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -388,7 +388,7 @@ describe('SafePocket v0.3.7 (Build 12) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.7 (Build 12)');
+    expect(macApp).toContain('SafePocket v0.3.8 (Build 13)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
@@ -964,11 +964,17 @@ describe('SafePocket v0.3.7 (Build 12) Feature Suite', () => {
     expect(smoothComponents).toContain('withCenteredMetrics');
     expect(pwaCss).toContain('width: 34px;');
 
-    // 2) + New category dropdown & category-free item dialog
+    // 2) + New category dropdown in middle pane top bar & category-free item dialog
     expect(androidShell).toContain('NewItemCategoryDropdownButton');
     expect(pwaShell).toContain('data-new-item-category');
     expect(pwaShell).not.toContain('id="sp-edit-category"');
     expect(macSplit).toContain('macNewItemCategoryMenu');
+    expect(macSplit).toContain(
+      '.navigationTitle(vaultState.selectedCategoryTitle)\n        .toolbar {\n            ToolbarItem(placement: .automatic) {\n                macNewItemCategoryMenu'
+    );
+    expect(macSplit).not.toContain(
+      'ToolbarItemGroup(placement: .primaryAction) {\n                macNewItemCategoryMenu'
+    );
     expect(macApp).toContain('openCreateEditor(category:');
 
     // 3) Side-by-side 2-column Lokale DB vs Cloud-Sync cards & non-destructive toggle

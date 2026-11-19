@@ -75,25 +75,7 @@ struct MacVaultSplitView: View {
                     detailContent
                 }
                 .navigationSplitViewStyle(.balanced)
-                .toolbar {
-                    ToolbarItemGroup(placement: .primaryAction) {
-                        MacFlagLanguageMenu(vaultState: vaultState)
-
-                        macNewItemCategoryMenu
-
-                        Button {
-                            vaultState.presentSettingsSheet = true
-                        } label: {
-                            Label(vaultState.t("nav_settings"), systemImage: "gearshape")
-                        }
-
-                        Button {
-                            vaultState.lockVault()
-                        } label: {
-                            Label(vaultState.t("action_lock_vault"), systemImage: "lock")
-                        }
-                    }
-                }
+                .searchable(text: $vaultState.searchQuery, placement: .toolbar, prompt: vaultState.t("search_placeholder"))
             }
         }
         .sheet(isPresented: $vaultState.presentSettingsSheet) {
@@ -376,7 +358,12 @@ struct MacVaultSplitView: View {
         }
         .listStyle(.inset)
         .navigationTitle(vaultState.selectedCategoryTitle)
-        .searchable(text: $vaultState.searchQuery, placement: .toolbar, prompt: vaultState.t("search_placeholder"))
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                macNewItemCategoryMenu
+                    .help(vaultState.t("action_new_item"))
+            }
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if hasListTopBanners {
                 VStack(spacing: 0) {
@@ -594,6 +581,23 @@ struct MacVaultSplitView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             macBottomStatusFooter
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                MacFlagLanguageMenu(vaultState: vaultState)
+
+                Button {
+                    vaultState.presentSettingsSheet = true
+                } label: {
+                    Label(vaultState.t("nav_settings"), systemImage: "gearshape")
+                }
+
+                Button {
+                    vaultState.lockVault()
+                } label: {
+                    Label(vaultState.t("action_lock_vault"), systemImage: "lock")
+                }
+            }
         }
     }
 

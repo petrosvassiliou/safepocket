@@ -1,6 +1,6 @@
 {
   "name": "@safepocket/chromeos-pwa",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "private": true,
   "type": "module",
   "description": "SafePocket Standalone Offline-Capable ChromeOS & Web Material Design 3 Vault",
