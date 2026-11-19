@@ -60,6 +60,7 @@ import {
   FirebaseZeroKnowledgeAdapter,
   GoogleDriveAppDataAdapter,
   HybridClock,
+  normalizeHlcPacked,
   VaultSyncCoordinator
 } from '../sync/syncAdapters';
 import {
@@ -202,7 +203,8 @@ export class SafePocketAppShell {
   );
   private readonly opfsStore = new OpfsEncryptedAttachmentStore();
   private readonly vaultHeaderStore = new VaultHeaderStore();
-  private readonly hlc = new HybridClock('chromeos-pwa-node');
+  private readonly pwaNodeId = SafePocketAppShell.loadOrCreatePwaNodeId();
+  private readonly hlc = new HybridClock(this.pwaNodeId);
   private readonly updater = new PwaUpdateController('/version.json');
   private readonly diagnostics = new SafePocketDiagnosticsCenter();
   private readonly clipboard: ClipboardHygieneController;
@@ -220,7 +222,7 @@ export class SafePocketAppShell {
   private items: VaultItem[] = [];
   private selectedNav: NavSelection = 'ALL';
   private settingsModalOpen = false;
-  private selectedItemId: string | null = null;
+  private selectedItemId: string | null;
   private searchQuery = '';
   private revealedFieldIds = new Set<string>();
   private lastSyncedCount = 0;
@@ -287,6 +289,9 @@ export class SafePocketAppShell {
   private phoneDialCodes: Record<string, string> = {};
   private lastAutofillNotice = '';
   private autoReconcileInFlight = false;
+  private silentBackgroundSyncActive = false;
+  private lastVectorSeq = 0;
+  private liveSyncTimerId: ReturnType<typeof setInterval> | null = null;
 
   private newItemDropdownOpen = false;
 
@@ -300,7 +305,35 @@ export class SafePocketAppShell {
     isSensitive: boolean;
   } | null = null;
 
+  private static loadOrCreatePwaNodeId(): string {
+    const key = 'safepocket.pwa_node_id';
+    if (typeof localStorage !== 'undefined') {
+      const existing = localStorage.getItem(key);
+      if (existing && existing.length >= 6) return existing;
+    }
+    const rnd = new Uint8Array(4);
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      crypto.getRandomValues(rnd);
+    }
+    const suffix = Array.from(rnd)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    const created = `pwa-${suffix || 'node'}`;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, created);
+    }
+    return created;
+  }
+
+  private nextLocalVersionVector(epochHintMs = Date.now()): Record<string, number> {
+    const candidate = Math.round(epochHintMs);
+    this.lastVectorSeq =
+      candidate > this.lastVectorSeq ? candidate : this.lastVectorSeq + 1;
+    return { [this.pwaNodeId]: this.lastVectorSeq };
+  }
+
   constructor(private readonly root: HTMLElement) {
+    this.selectedItemId = null;
     this.themeMode = this.loadSavedThemeMode();
     this.materialAccent = this.loadSavedMaterialAccent();
     this.expiryWindowDays = this.loadSavedExpiryWindowDays();
@@ -308,6 +341,98 @@ export class SafePocketAppShell {
     this.autoDownloadLogos = this.loadSavedAutoDownloadLogos();
     this.applyThemeToDocument();
     this.localDb.bindSyncCoordinator(this.syncCoordinator);
+    this.localDb.bindCloudCipherBridge({
+      isActive: () =>
+        this.syncCoordinator.cloudService === 'FIREBASE' &&
+        Boolean(
+          this.firebaseService.currentUser ||
+            this.firebaseService.isLiveProjectLinked
+        ),
+      toCloudRow: async (localRow) => {
+        const cloudKeyHex =
+          this.liveCloudConfig.cloudKeyHex ||
+          this.firebaseService.currentUser?.cloudKeyHex;
+        if (!cloudKeyHex || cloudKeyHex.length !== 64) {
+          throw new Error(
+            'Cloud Sync upgraded to Cross-Platform Zero-Knowledge v2 — please sign in once with your Cloud Sync password in Settings.'
+          );
+        }
+        const normHlc = normalizeHlcPacked(localRow.hlcPacked);
+        if (localRow.isTombstone) {
+          return this.crypto.createTombstoneRowWithKeyHex(
+            localRow.id,
+            localRow.category,
+            cloudKeyHex,
+            normHlc,
+            localRow.versionVector
+          );
+        }
+        const item = await this.crypto.decryptVaultRow(localRow);
+        if (isBuiltInSampleItem(item)) {
+          return null;
+        }
+        return this.crypto.encryptVaultItemWithKeyHex(
+          item,
+          cloudKeyHex,
+          normHlc,
+          localRow.versionVector
+        );
+      },
+      fromCloudRow: async (cloudRow) => {
+        const cloudKeyHex =
+          this.liveCloudConfig.cloudKeyHex ||
+          this.firebaseService.currentUser?.cloudKeyHex;
+        if (!cloudKeyHex || cloudKeyHex.length !== 64) {
+          throw new Error(
+            'Cloud Sync upgraded to Cross-Platform Zero-Knowledge v2 — please sign in once with your Cloud Sync password in Settings.'
+          );
+        }
+        const normHlc = normalizeHlcPacked(cloudRow.hlcPacked);
+        if (cloudRow.isTombstone) {
+          return {
+            localRow: await this.crypto.createTombstoneRow(
+              cloudRow.id,
+              cloudRow.category,
+              normHlc,
+              cloudRow.versionVector
+            )
+          };
+        }
+        try {
+          const item = await this.crypto.decryptVaultRowWithKeyHex(
+            cloudRow,
+            cloudKeyHex
+          );
+          return {
+            localRow: await this.crypto.encryptVaultItem(
+              item,
+              normHlc,
+              cloudRow.versionVector
+            )
+          };
+        } catch {
+          try {
+            const legacyItem = await this.crypto.decryptVaultRow(cloudRow);
+            const localRow = await this.crypto.encryptVaultItem(
+              legacyItem,
+              normHlc,
+              cloudRow.versionVector
+            );
+            const reencryptForCloud = isBuiltInSampleItem(legacyItem)
+              ? undefined
+              : await this.crypto.encryptVaultItemWithKeyHex(
+                  legacyItem,
+                  cloudKeyHex,
+                  normHlc,
+                  cloudRow.versionVector
+                );
+            return { localRow, reencryptForCloud };
+          } catch {
+            return null;
+          }
+        }
+      }
+    });
     this.firebaseAdapter.setRefreshTokenCallback(async () => {
       const refreshed = await this.firebaseService.ensureValidSession(true);
       this.liveCloudConfig = this.firebaseService.toEndpointConfig();
@@ -550,7 +675,10 @@ export class SafePocketAppShell {
     );
   }
 
-  async runAutomaticCloudReconcile(showSuccessToast = false): Promise<void> {
+  async runAutomaticCloudReconcile(
+    showSuccessToast = false,
+    silentBackground = false
+  ): Promise<void> {
     if (
       !this.crypto.isUnlocked ||
       this.syncCoordinator.storageMode !== 'CLOUD_SYNC' ||
@@ -558,7 +686,9 @@ export class SafePocketAppShell {
     ) {
       return;
     }
+    const prevSnap = this.syncCoordinator.indicatorSnapshot;
     this.autoReconcileInFlight = true;
+    this.silentBackgroundSyncActive = silentBackground;
     try {
       if (this.syncCoordinator.cloudService === 'FIREBASE') {
         await this.firebaseService.ensureValidSession(false);
@@ -583,8 +713,20 @@ export class SafePocketAppShell {
         }
       }
 
+      if (
+        activeHydrated.some((item) => !isBuiltInSampleItem(item)) &&
+        !this.isSampleDataPurged() &&
+        typeof localStorage !== 'undefined'
+      ) {
+        localStorage.setItem(SAMPLE_PURGED_STORAGE_KEY, 'true');
+      }
+
+      const filteredHydrated = this.isSampleDataPurged()
+        ? activeHydrated.filter((item) => !isBuiltInSampleItem(item))
+        : activeHydrated;
+
       let downloadedBlobs = 0;
-      for (const item of activeHydrated) {
+      for (const item of filteredHydrated) {
         let itemMetaUpdated = false;
         for (const att of item.attachments) {
           if (res.uploadedBlobPaths[att.id]) {
@@ -620,44 +762,71 @@ export class SafePocketAppShell {
         }
         if (itemMetaUpdated) {
           const hlcPacked = this.hlc.nowPacked();
-          const encRow = await this.crypto.encryptVaultItem(item, hlcPacked, {
-            'chromeos-pwa-node': 1
-          });
+          const encRow = await this.crypto.encryptVaultItem(
+            item,
+            hlcPacked,
+            this.nextLocalVersionVector(item.updatedAtEpochMs)
+          );
           await this.localDb.saveMergedCloudRowToMirrorOnly(encRow);
         }
       }
 
+      let itemsChanged = false;
       if (
-        activeHydrated.length > 0 ||
-        res.mergedRows.some((r) => r.isTombstone)
+        filteredHydrated.length > 0 ||
+        res.mergedRows.some((r) => r.isTombstone) ||
+        (this.isSampleDataPurged() &&
+          this.items.some((item) => isBuiltInSampleItem(item)))
       ) {
-        this.items = activeHydrated;
-        this.selectedItemId = this.selectedItemId ?? this.items[0]?.id ?? null;
+        if (JSON.stringify(filteredHydrated) !== JSON.stringify(this.items)) {
+          itemsChanged = true;
+          this.items = filteredHydrated;
+          if (!this.items.some((i) => i.id === this.selectedItemId)) {
+            this.selectedItemId = this.items[0]?.id ?? null;
+          }
+        }
       }
 
       this.lastSyncedCount = res.pushedCount;
       this.lastPulledCount = res.pulledCount;
-      this.diagnostics.recordInfo(
-        'cloudAutoReconcile',
-        `Synced (${res.service}): pushed ${res.pushedCount}, pulled ${res.pulledCount}, blobs ↓${downloadedBlobs}`
-      );
-      this.render();
+      if (!silentBackground || res.pushedCount > 0 || itemsChanged || downloadedBlobs > 0) {
+        this.diagnostics.recordInfo(
+          'cloudAutoReconcile',
+          `Synced (${res.service}): pushed ${res.pushedCount}, pulled ${res.pulledCount}, blobs ↓${downloadedBlobs}`
+        );
+      }
+
+      this.silentBackgroundSyncActive = false;
+      const shouldRender =
+        !silentBackground ||
+        showSuccessToast ||
+        itemsChanged ||
+        downloadedBlobs > 0 ||
+        prevSnap.phase === 'SYNC_ATTENTION' ||
+        Boolean(prevSnap.lastError);
+      if (shouldRender) {
+        this.render();
+      }
       if (showSuccessToast) {
         this.showToast(
           `Cloud Sync (${res.service}): ↑${res.pushedCount} items • ↓${res.pulledCount} items`
         );
       }
     } catch (err) {
+      this.silentBackgroundSyncActive = false;
       this.diagnostics.recordError(
         err,
         'cloudAutoReconcile',
         'CLOUD_SYNC_NETWORK'
       );
-      this.render();
+      if (!silentBackground || prevSnap.phase !== 'SYNC_ATTENTION') {
+        this.render();
+      }
       if (showSuccessToast) {
         this.reportAppError(err, 'Cloud Sync');
       }
     } finally {
+      this.silentBackgroundSyncActive = false;
       this.autoReconcileInFlight = false;
     }
   }
@@ -677,9 +846,11 @@ export class SafePocketAppShell {
       for (const item of this.items) {
         const hlcPacked = this.hlc.nowPacked();
         snapshotRows.push(
-          await this.crypto.encryptVaultItem(item, hlcPacked, {
-            'chromeos-pwa-node': 1
-          })
+          await this.crypto.encryptVaultItem(
+            item,
+            hlcPacked,
+            this.nextLocalVersionVector(item.updatedAtEpochMs)
+          )
         );
       }
       this.liveCloudConfig = this.resolveEndpointConfig();
@@ -729,7 +900,7 @@ export class SafePocketAppShell {
             sample.id,
             sample.category,
             this.hlc.nowPacked(),
-            { 'chromeos-pwa-node': 2 }
+            this.nextLocalVersionVector()
           );
           await this.localDb.saveEncryptedRow(tombstone);
         }
@@ -757,6 +928,27 @@ export class SafePocketAppShell {
     }
   }
 
+  private canRunBackgroundLiveSync(): boolean {
+    if (
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'hidden'
+    ) {
+      return false;
+    }
+    return (
+      this.crypto.isUnlocked &&
+      this.syncCoordinator.storageMode === 'CLOUD_SYNC' &&
+      this.syncCoordinator.indicatorSnapshot.isOnline &&
+      !this.editorDraft &&
+      !this.settingsModalOpen &&
+      !this.restoreModalState &&
+      !this.plainExportModalState &&
+      !this.cameraModalState &&
+      !this.newItemDropdownOpen &&
+      !this.contextMenu
+    );
+  }
+
   async bootstrap(): Promise<void> {
     this.applyThemeToDocument();
     this.diagnostics.installGlobalErrorBoundaries((appErr) => {
@@ -782,6 +974,29 @@ export class SafePocketAppShell {
       window.addEventListener('offline', () => {
         this.syncCoordinator.setOnlineState(false);
       });
+      window.addEventListener('focus', () => {
+        if (this.canRunBackgroundLiveSync()) {
+          void this.runAutomaticCloudReconcile(false, true);
+        }
+      });
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (
+            document.visibilityState === 'visible' &&
+            this.canRunBackgroundLiveSync()
+          ) {
+            void this.runAutomaticCloudReconcile(false, true);
+          }
+        });
+      }
+      if (this.liveSyncTimerId !== null) {
+        clearInterval(this.liveSyncTimerId);
+      }
+      this.liveSyncTimerId = setInterval(() => {
+        if (this.canRunBackgroundLiveSync()) {
+          void this.runAutomaticCloudReconcile(false, true);
+        }
+      }, 5000);
     }
 
     this.demoSecretKey =
@@ -791,7 +1006,11 @@ export class SafePocketAppShell {
 
     this.i18n.subscribe(() => this.render());
     this.updater.subscribe(() => this.render());
-    this.syncCoordinator.subscribeIndicator(() => this.render());
+    this.syncCoordinator.subscribeIndicator(() => {
+      if (!this.silentBackgroundSyncActive) {
+        this.render();
+      }
+    });
     this.bindGlobalShortcuts();
 
     const savedHeader = this.vaultHeaderStore.loadHeader();
@@ -1196,9 +1415,11 @@ export class SafePocketAppShell {
   private async persistSingleItemEncrypted(item: VaultItem): Promise<void> {
     try {
       const hlcPacked = this.hlc.nowPacked();
-      const encRow = await this.crypto.encryptVaultItem(item, hlcPacked, {
-        'chromeos-pwa-node': 1
-      });
+      const encRow = await this.crypto.encryptVaultItem(
+        item,
+        hlcPacked,
+        this.nextLocalVersionVector(item.updatedAtEpochMs)
+      );
       await this.localDb.saveEncryptedRow(encRow);
       if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
         void this.runAutomaticCloudReconcile(false);
@@ -1211,9 +1432,11 @@ export class SafePocketAppShell {
   private async persistAllItemsEncrypted(): Promise<void> {
     for (const item of this.items) {
       const hlcPacked = this.hlc.nowPacked();
-      const encRow = await this.crypto.encryptVaultItem(item, hlcPacked, {
-        'chromeos-pwa-node': 1
-      });
+      const encRow = await this.crypto.encryptVaultItem(
+        item,
+        hlcPacked,
+        this.nextLocalVersionVector(item.updatedAtEpochMs)
+      );
       await this.localDb.saveEncryptedRow(encRow);
     }
     if (this.syncCoordinator.storageMode === 'CLOUD_SYNC') {
@@ -1571,7 +1794,7 @@ export class SafePocketAppShell {
         target.id,
         target.category,
         hlcPacked,
-        { 'chromeos-pwa-node': 2 }
+        this.nextLocalVersionVector()
       );
       await this.localDb.saveEncryptedRow(tombstone);
       for (const att of target.attachments) {

@@ -25,7 +25,8 @@ data class CloudSyncUserSession(
     val uid: String,
     val email: String,
     val idToken: String,
-    val refreshToken: String? = null
+    val refreshToken: String? = null,
+    val cloudKeyHex: String? = null
 )
 
 @Serializable
@@ -134,7 +135,8 @@ class FirebaseZeroKnowledgeAuthService(
             uid = session.uid.trim(),
             email = session.email.trim(),
             idToken = session.idToken.trim(),
-            refreshToken = session.refreshToken?.trim()
+            refreshToken = session.refreshToken?.trim(),
+            cloudKeyHex = session.cloudKeyHex?.trim()?.lowercase()?.takeIf { it.length == 64 }
         )
     }
 
@@ -192,7 +194,8 @@ class FirebaseZeroKnowledgeAuthService(
                     val updated = cur.copy(
                         uid = nextUid,
                         idToken = nextIdToken,
-                        refreshToken = nextRefresh
+                        refreshToken = nextRefresh,
+                        cloudKeyHex = cur.cloudKeyHex
                     )
                     activeSession = updated
                     onSessionRefreshed?.invoke(updated)
@@ -205,7 +208,7 @@ class FirebaseZeroKnowledgeAuthService(
         val memCreds = inMemoryZkVerifier
         if (memCreds != null && memCreds.first.equals(cur.email.trim(), ignoreCase = true)) {
             val reauthed = runCatching {
-                authenticateWithDerivedPassword("signInWithPassword", memCreds.first, memCreds.second)
+                authenticateWithDerivedPassword("signInWithPassword", memCreds.first, memCreds.second, cur.cloudKeyHex)
             }.getOrNull()
             if (reauthed != null) {
                 onSessionRefreshed?.invoke(reauthed)
@@ -233,16 +236,22 @@ class FirebaseZeroKnowledgeAuthService(
     ): CloudSyncUserSession {
         val cleanEmail = email.trim().lowercase()
         val zkPassword = deriveZeroKnowledgeAuthPassword(cleanEmail, syncPassword)
-        val session = authenticateWithDerivedPassword(action, cleanEmail, zkPassword)
+        val authed = authenticateWithDerivedPassword(action, cleanEmail, zkPassword, null)
+        val cloudKeyBytes = HkdfSha256Pure.deriveCloudSyncKey(cleanEmail, syncPassword, authed.uid)
+        val cloudKeyHex = ZeroKnowledgeEncryptionService.bytesToHex(cloudKeyBytes).lowercase()
+        cloudKeyBytes.fill(0)
+        val sessionWithKey = authed.copy(cloudKeyHex = cloudKeyHex)
+        activeSession = sessionWithKey
         inMemoryZkVerifier = cleanEmail to zkPassword
-        onSessionRefreshed?.invoke(session)
-        return session
+        onSessionRefreshed?.invoke(sessionWithKey)
+        return sessionWithKey
     }
 
     private suspend fun authenticateWithDerivedPassword(
         action: String,
         cleanEmail: String,
-        zkPassword: String
+        zkPassword: String,
+        existingCloudKeyHex: String?
     ): CloudSyncUserSession {
         val apiKey = currentApiKey().encodeURLParameter()
         val httpResp = httpClient.post(
@@ -272,7 +281,8 @@ class FirebaseZeroKnowledgeAuthService(
             uid = parsed.localId.trim(),
             email = parsed.email.trim(),
             idToken = parsed.idToken.trim(),
-            refreshToken = parsed.refreshToken?.trim()
+            refreshToken = parsed.refreshToken?.trim(),
+            cloudKeyHex = existingCloudKeyHex
         ).also { activeSession = it }
     }
 

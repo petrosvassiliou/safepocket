@@ -176,9 +176,34 @@ class MainActivity : ComponentActivity() {
             // Collect zero-user-input automatic Cloud Sync offline->online reconciliations
             LaunchedEffect(Unit) {
                 vaultRepository.autoReconciledItems.collect { reconciled ->
-                    vaultItems = reconciled
-                    selectedItem = reconciled.firstOrNull { it.id == selectedItem?.id } ?: reconciled.firstOrNull()
-                    statusTick++
+                    if (reconciled != vaultItems) {
+                        vaultItems = reconciled
+                        selectedItem = reconciled.firstOrNull { it.id == selectedItem?.id } ?: reconciled.firstOrNull()
+                        statusTick++
+                    }
+                }
+            }
+
+            // Instant foreground & 5-second live Cloud Sync reconciliation while unlocked and active
+            LaunchedEffect(isVaultLocked, syncIndicator.storageMode, syncIndicator.signedInEmail) {
+                if (isVaultLocked || syncIndicator.storageMode != VaultStorageMode.CLOUD_SYNC || syncIndicator.signedInEmail.isNullOrBlank()) {
+                    return@LaunchedEffect
+                }
+                this@MainActivity.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                    while (true) {
+                        if (!showEditorDialog) {
+                            runCatching {
+                                val rep = vaultRepository.syncNow(vaultItems, surfaceErrorBanner = false)
+                                if (rep.updatedItems != vaultItems) {
+                                    vaultItems = rep.updatedItems
+                                    selectedItem = rep.updatedItems.firstOrNull { it.id == selectedItem?.id }
+                                        ?: rep.updatedItems.firstOrNull()
+                                    statusTick++
+                                }
+                            }
+                        }
+                        kotlinx.coroutines.delay(5_000L)
+                    }
                 }
             }
 
@@ -405,13 +430,8 @@ class MainActivity : ComponentActivity() {
                     updateService.checkForUpdates(i18nEngine.activeLocale.value)
                 },
                 onInstallVerifiedUpdate = { manifest, artifact ->
-                    if (!playProtectInstaller.canInstallPackages()) {
-                        startActivity(playProtectInstaller.createManageUnknownAppSourcesIntent())
-                        i18nEngine.t("update_permission_prompt")
-                    } else {
-                        updateService.performVerifiedUpdate(manifest, artifact)
-                        null
-                    }
+                    updateService.performVerifiedUpdate(manifest, artifact)
+                    null
                 },
                 onExportEncryptedBackup = { backupPw ->
                     vaultRepository.exportEncryptedContainer(vaultItems, backupPw).encodeToByteArray()

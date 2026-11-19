@@ -28,15 +28,36 @@ data class HybridLogicalClock(
     }
 
     fun pack(): String =
-        "${wallTimeEpochMs.toString().padStart(15, '0')}-${logicalCounter.toString().padStart(4, '0')}-$nodeId"
+        "${wallTimeEpochMs.toString().padStart(15, '0')}:${logicalCounter.toString().padStart(4, '0')}:$nodeId"
 
     companion object {
+        fun normalizePacked(packed: String): String {
+            val trimmed = packed.trim()
+            if (trimmed.length >= 21 && trimmed[15] == '-' && trimmed[20] == '-') {
+                val wall = trimmed.substring(0, 15)
+                val cnt = trimmed.substring(16, 20)
+                if (wall.all { it.isDigit() } && cnt.all { it.isDigit() }) {
+                    return "$wall:$cnt:${trimmed.substring(21)}"
+                }
+            }
+            return trimmed
+        }
+
         fun unpack(packed: String): HybridLogicalClock {
-            val parts = packed.split('-', limit = 3)
+            val normalized = normalizePacked(packed)
+            val colonParts = normalized.split(':', limit = 3)
+            if (colonParts.size == 3) {
+                val wall = colonParts[0].toLongOrNull()
+                val cnt = colonParts[1].toIntOrNull()
+                if (wall != null && cnt != null) {
+                    return HybridLogicalClock(wall, cnt, colonParts[2])
+                }
+            }
+            val dashParts = normalized.split('-', limit = 3)
             return HybridLogicalClock(
-                wallTimeEpochMs = parts[0].toLong(),
-                logicalCounter = parts[1].toInt(),
-                nodeId = parts[2]
+                wallTimeEpochMs = dashParts.getOrNull(0)?.toLongOrNull() ?: 0L,
+                logicalCounter = dashParts.getOrNull(1)?.toIntOrNull() ?: 0,
+                nodeId = dashParts.getOrNull(2) ?: "unknown-node"
             )
         }
     }
@@ -174,14 +195,17 @@ object CrdtReconciler {
             maxOf(local.versionVector[node] ?: 0L, remote.versionVector[node] ?: 0L)
         }
         val winner = when (compareVectors(local.versionVector, remote.versionVector)) {
-            CausalRelation.LOCAL_DOMINATES, CausalRelation.EQUAL -> local
+            CausalRelation.LOCAL_DOMINATES -> local
             CausalRelation.REMOTE_DOMINATES -> remote
-            CausalRelation.CONCURRENT -> {
+            CausalRelation.EQUAL, CausalRelation.CONCURRENT -> {
                 val localHlc = HybridLogicalClock.unpack(local.hlcPacked)
                 val remoteHlc = HybridLogicalClock.unpack(remote.hlcPacked)
                 if (remoteHlc > localHlc) remote else local
             }
         }
-        return winner.copy(versionVector = mergedVector)
+        return winner.copy(
+            hlcPacked = HybridLogicalClock.normalizePacked(winner.hlcPacked),
+            versionVector = mergedVector
+        )
     }
 }

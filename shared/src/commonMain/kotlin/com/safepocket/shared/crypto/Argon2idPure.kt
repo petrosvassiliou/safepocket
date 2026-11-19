@@ -570,6 +570,139 @@ object HkdfSha256Pure {
         }
     }
 
+    private val SHA256_IV = intArrayOf(
+        0x6a09e667, -0x4498517b, 0x3c6ef372, -0x5ab00ac6,
+        0x510e527f, -0x64fa9774, 0x1f83d9ab, 0x5be0cd19
+    )
+
+    private fun compressSingleSha256Block(state: IntArray, w: IntArray, outState: IntArray) {
+        for (i in 16 until 64) {
+            val x = w[i - 15]
+            val y = w[i - 2]
+            val s0 = x.rotateRight(7) xor x.rotateRight(18) xor (x ushr 3)
+            val s1 = y.rotateRight(17) xor y.rotateRight(19) xor (y ushr 10)
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1
+        }
+        var a = state[0]; var b = state[1]; var c = state[2]; var d = state[3]
+        var e = state[4]; var f = state[5]; var g = state[6]; var h = state[7]
+        for (i in 0 until 64) {
+            val s1 = e.rotateRight(6) xor e.rotateRight(11) xor e.rotateRight(25)
+            val ch = (e and f) xor (e.inv() and g)
+            val t1 = h + s1 + ch + K[i] + w[i]
+            val s0 = a.rotateRight(2) xor a.rotateRight(13) xor a.rotateRight(22)
+            val maj = (a and b) xor (a and c) xor (b and c)
+            val t2 = s0 + maj
+            h = g; g = f; f = e; e = d + t1
+            d = c; c = b; b = a; a = t1 + t2
+        }
+        outState[0] = state[0] + a; outState[1] = state[1] + b
+        outState[2] = state[2] + c; outState[3] = state[3] + d
+        outState[4] = state[4] + e; outState[5] = state[5] + f
+        outState[6] = state[6] + g; outState[7] = state[7] + h
+    }
+
+    /**
+     * Zero-allocation RFC 8018 PBKDF2-HMAC-SHA256 (32-byte output) using precomputed HMAC midstates.
+     * Matches WebCrypto `crypto.subtle.deriveBits('PBKDF2')` and Apple `CommonCrypto` byte-for-byte.
+     */
+    fun pbkdf2HmacSha256(
+        password: ByteArray,
+        salt: ByteArray,
+        iterations: Int = 100_000
+    ): ByteArray {
+        require(iterations >= 1) { "iterations must be >= 1" }
+        val blockKey = if (password.size > 64) sha256(password) else password
+        val kPad = ByteArray(64)
+        blockKey.copyInto(kPad, 0)
+        val iPad = ByteArray(64) { (kPad[it].toInt() xor 0x36).toByte() }
+        val oPad = ByteArray(64) { (kPad[it].toInt() xor 0x5c).toByte() }
+
+        val w = IntArray(64)
+        val iState = IntArray(8)
+        val oState = IntArray(8)
+        for (i in 0 until 16) {
+            val j = i * 4
+            w[i] = ((iPad[j].toInt() and 0xFF) shl 24) or
+                ((iPad[j + 1].toInt() and 0xFF) shl 16) or
+                ((iPad[j + 2].toInt() and 0xFF) shl 8) or
+                (iPad[j + 3].toInt() and 0xFF)
+        }
+        compressSingleSha256Block(SHA256_IV, w, iState)
+
+        for (i in 0 until 16) {
+            val j = i * 4
+            w[i] = ((oPad[j].toInt() and 0xFF) shl 24) or
+                ((oPad[j + 1].toInt() and 0xFF) shl 16) or
+                ((oPad[j + 2].toInt() and 0xFF) shl 8) or
+                (oPad[j + 3].toInt() and 0xFF)
+        }
+        compressSingleSha256Block(SHA256_IV, w, oState)
+
+        val saltWithBlockIndex = ByteArray(salt.size + 4)
+        salt.copyInto(saltWithBlockIndex, 0)
+        saltWithBlockIndex[salt.size + 3] = 1
+        val u1 = hmacSha256(password, saltWithBlockIndex)
+
+        val u = IntArray(8)
+        val acc = IntArray(8)
+        val tmp = IntArray(8)
+        for (i in 0 until 8) {
+            val j = i * 4
+            val word = ((u1[j].toInt() and 0xFF) shl 24) or
+                ((u1[j + 1].toInt() and 0xFF) shl 16) or
+                ((u1[j + 2].toInt() and 0xFF) shl 8) or
+                (u1[j + 3].toInt() and 0xFF)
+            u[i] = word
+            acc[i] = word
+        }
+
+        for (iter in 2..iterations) {
+            for (i in 0 until 8) w[i] = u[i]
+            w[8] = -0x80000000
+            for (i in 9 until 15) w[i] = 0
+            w[15] = 768
+            compressSingleSha256Block(iState, w, tmp)
+
+            for (i in 0 until 8) w[i] = tmp[i]
+            w[8] = -0x80000000
+            for (i in 9 until 15) w[i] = 0
+            w[15] = 768
+            compressSingleSha256Block(oState, w, u)
+
+            for (i in 0 until 8) acc[i] = acc[i] xor u[i]
+        }
+
+        kPad.fill(0)
+        iPad.fill(0)
+        oPad.fill(0)
+
+        val out = ByteArray(32)
+        for (i in 0 until 8) {
+            out[i * 4] = (acc[i] ushr 24).toByte()
+            out[i * 4 + 1] = (acc[i] ushr 16).toByte()
+            out[i * 4 + 2] = (acc[i] ushr 8).toByte()
+            out[i * 4 + 3] = acc[i].toByte()
+        }
+        return out
+    }
+
+    /**
+     * Derives the 256-bit Zero-Knowledge Cloud Sync AES-GCM key from `(email, syncPassword, uid)`.
+     * Domain-separated from Firebase Auth (`safepocket-firebase-auth-verifier-v1`) so Firebase
+     * servers never receive or learn `syncPassword` or the Cloud Sync encryption key.
+     */
+    fun deriveCloudSyncKey(email: String, syncPassword: String, uid: String): ByteArray {
+        val cleanEmail = email.trim().lowercase()
+        val cleanUid = uid.trim()
+        val pwdBytes = "safepocket-zk-cloud-sync-kek-v2:$cleanEmail:$syncPassword".encodeToByteArray()
+        val saltBytes = "safepocket-zk-cloud-salt-v2:$cleanUid:$cleanEmail".encodeToByteArray()
+        return try {
+            pbkdf2HmacSha256(pwdBytes, saltBytes, iterations = 100_000)
+        } finally {
+            pwdBytes.fill(0)
+        }
+    }
+
     private inline fun Int.rotateRight(bits: Int): Int =
         (this ushr bits) or (this shl (32 - bits))
 }

@@ -41,6 +41,18 @@ const SYNC_ENABLED_STORAGE_KEY = 'safepocket.cloud_sync_enabled';
 const STORAGE_MODE_KEY = 'safepocket.storage_mode_v03';
 const SYNC_SERVICE_STORAGE_KEY = 'safepocket.cloud_sync_service';
 
+export function normalizeHlcPacked(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length >= 21 && trimmed[15] === '-' && trimmed[20] === '-') {
+    const wall = trimmed.slice(0, 15);
+    const cnt = trimmed.slice(16, 20);
+    if (/^\d{15}$/.test(wall) && /^\d{4}$/.test(cnt)) {
+      return `${wall}:${cnt}:${trimmed.slice(21)}`;
+    }
+  }
+  return trimmed;
+}
+
 export class HybridClock {
   private lastWallMs = 0;
   private counter = 0;
@@ -54,9 +66,9 @@ export class HybridClock {
     } else {
       this.counter += 1;
     }
-    return `${String(this.lastWallMs).padStart(15, '0')}-${String(
+    return `${String(this.lastWallMs).padStart(15, '0')}:${String(
       this.counter
-    ).padStart(4, '0')}-${this.nodeId}`;
+    ).padStart(4, '0')}:${this.nodeId}`;
   }
 }
 
@@ -80,20 +92,22 @@ export function reconcileEncryptedRows(
     mergedVector[node] = Math.max(l, r);
   }
 
+  const normLocalHlc = normalizeHlcPacked(local.hlcPacked);
+  const normRemoteHlc = normalizeHlcPacked(remote.hlcPacked);
+
   let winner: EncryptedVaultRow;
   if (localGreater && !remoteGreater) {
     winner = local;
   } else if (remoteGreater && !localGreater) {
     winner = remote;
-  } else if (!localGreater && !remoteGreater) {
-    winner = local;
   } else {
-    // Concurrent offline mutation -> deterministic HLC Last-Write-Wins
-    winner = remote.hlcPacked > local.hlcPacked ? remote : local;
+    // Equal or concurrent offline mutation -> deterministic HLC Last-Write-Wins
+    winner = normRemoteHlc > normLocalHlc ? remote : local;
   }
 
   return {
     ...winner,
+    hlcPacked: normalizeHlcPacked(winner.hlcPacked),
     versionVector: mergedVector
   };
 }
@@ -335,7 +349,7 @@ export class VaultSyncCoordinator {
   }
 
   /**
-   * Full Two-Way Offline-First CRDT Sync (`Upload Pending .enc Blobs` -> `Push` local deltas -> `Pull` remote deltas -> `Reconcile`).
+   * Full Two-Way Offline-First CRDT Sync (`Upload Pending .enc Blobs` -> `Pull` remote deltas -> `Reconcile` -> `Push` only winning local deltas).
    * Strictly no-op (`null`) when Cloud Sync is disabled (Local Storage Default).
    */
   async syncBidirectionalIfEnabled(
@@ -354,25 +368,86 @@ export class VaultSyncCoordinator {
       uploadedBlobPaths[blob.attachmentId] = uploaded.storageObjectPath;
     }
 
-    const pushRes = await adapter.pushEncryptedDeltas(vaultId, localRows);
+    // 1. PULL FIRST so remote edits are never overwritten by stale local snapshots
     const remoteDeltas = await adapter.pullEncryptedDeltas(
       vaultId,
       sinceCursorHlc
     );
 
-    const byId = new Map<string, EncryptedVaultRow>();
-    for (const l of localRows) {
-      byId.set(l.id, structuredClone(l));
-    }
-    for (const r of remoteDeltas) {
-      const existing = byId.get(r.id);
-      byId.set(r.id, existing ? reconcileEncryptedRows(existing, r) : r);
+    const localById = new Map<string, EncryptedVaultRow>();
+    for (const rawLocal of localRows) {
+      const l: EncryptedVaultRow = {
+        ...structuredClone(rawLocal),
+        hlcPacked: normalizeHlcPacked(rawLocal.hlcPacked)
+      };
+      const prev = localById.get(l.id);
+      localById.set(l.id, prev ? reconcileEncryptedRows(prev, l) : l);
     }
 
-    const mergedRows = Array.from(byId.values());
+    const remoteById = new Map<string, EncryptedVaultRow>();
+    for (const rawRemote of remoteDeltas) {
+      const r: EncryptedVaultRow = {
+        ...structuredClone(rawRemote),
+        hlcPacked: normalizeHlcPacked(rawRemote.hlcPacked)
+      };
+      const prev = remoteById.get(r.id);
+      remoteById.set(r.id, prev ? reconcileEncryptedRows(prev, r) : r);
+    }
+
+    // 2. CRDT Reconcile & collect ONLY local rows that are absent on remote or strictly beat remote
+    const mergedById = new Map<string, EncryptedVaultRow>();
+    const rowsToPush: EncryptedVaultRow[] = [];
+    const allIds = new Set([...localById.keys(), ...remoteById.keys()]);
+
+    for (const id of allIds) {
+      const l = localById.get(id);
+      const r = remoteById.get(id);
+      if (l && !r) {
+        mergedById.set(id, l);
+        rowsToPush.push(l);
+      } else if (!l && r) {
+        mergedById.set(id, r);
+      } else if (l && r) {
+        const winner = reconcileEncryptedRows(l, r);
+        mergedById.set(id, winner);
+
+        const nodes = new Set([
+          ...Object.keys(l.versionVector),
+          ...Object.keys(r.versionVector)
+        ]);
+        let localGreater = false;
+        let remoteGreater = false;
+        for (const node of nodes) {
+          const lv = l.versionVector[node] ?? 0;
+          const rv = r.versionVector[node] ?? 0;
+          if (lv > rv) localGreater = true;
+          if (rv > lv) remoteGreater = true;
+        }
+        const localDominates = localGreater && !remoteGreater;
+        const remoteDominates = remoteGreater && !localGreater;
+        const normL = normalizeHlcPacked(l.hlcPacked);
+        const normR = normalizeHlcPacked(r.hlcPacked);
+        const localWon =
+          localDominates ||
+          (!remoteDominates &&
+            (normL > normR ||
+              (normL === normR && l.isTombstone && !r.isTombstone)));
+        if (localWon) {
+          rowsToPush.push(winner);
+        }
+      }
+    }
+
+    // 3. PUSH ONLY WINNING LOCAL DELTAS (0 writes when already in sync!)
+    const pushRes =
+      rowsToPush.length > 0
+        ? await adapter.pushEncryptedDeltas(vaultId, rowsToPush)
+        : { pushedCount: 0, cursorHlc: null };
+
+    const mergedRows = Array.from(mergedById.values());
     const maxCursor = mergedRows.reduce<string | null>(
       (acc, row) => (!acc || row.hlcPacked > acc ? row.hlcPacked : acc),
-      pushRes.cursorHlc
+      pushRes.cursorHlc ? normalizeHlcPacked(pushRes.cursorHlc) : null
     );
 
     return {
@@ -441,6 +516,16 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
     vaultId: string,
     rows: EncryptedVaultRow[]
   ): Promise<{ pushedCount: number; cursorHlc: string | null }> {
+    if (
+      this.liveConfig.firebaseProjectId &&
+      this.liveConfig.firebaseProjectId !== 'safepocket-local-zk' &&
+      !this.liveConfig.bearerToken
+    ) {
+      throw new Error(
+        'Cloud Sync authentication required — please sign in in Settings.'
+      );
+    }
+
     let maxHlc: string | null = null;
     const uid = this.liveConfig.firebaseUserId || 'local-default-uid';
 
@@ -448,11 +533,15 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
       if (!row.ciphertextHex || !row.ivHex) {
         throw new Error('Zero-knowledge violation: unencrypted sync payload rejected');
       }
-      const existing = this.simulatedCloudStore.get(`${uid}:${row.id}`);
+      const normalizedRow: EncryptedVaultRow = {
+        ...structuredClone(row),
+        hlcPacked: normalizeHlcPacked(row.hlcPacked)
+      };
+      const existing = this.simulatedCloudStore.get(`${uid}:${normalizedRow.id}`);
       const reconciled = existing
-        ? reconcileEncryptedRows(existing, row)
-        : structuredClone(row);
-      this.simulatedCloudStore.set(`${uid}:${row.id}`, reconciled);
+        ? reconcileEncryptedRows(existing, normalizedRow)
+        : normalizedRow;
+      this.simulatedCloudStore.set(`${uid}:${normalizedRow.id}`, reconciled);
 
       if (this.sqliteReplica) {
         await this.sqliteReplica.upsertLocalFirestoreDelta(
@@ -461,7 +550,9 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
           reconciled
         );
       }
-      if (!maxHlc || row.hlcPacked > maxHlc) maxHlc = row.hlcPacked;
+      if (!maxHlc || normalizedRow.hlcPacked > maxHlc) {
+        maxHlc = normalizedRow.hlcPacked;
+      }
     }
 
     if (this.liveConfig.firebaseProjectId && this.liveConfig.bearerToken) {
@@ -486,6 +577,16 @@ export class FirebaseZeroKnowledgeAdapter implements CloudSyncProviderAdapter {
     vaultId: string,
     sinceCursorHlc: string | null
   ): Promise<EncryptedVaultRow[]> {
+    if (
+      this.liveConfig.firebaseProjectId &&
+      this.liveConfig.firebaseProjectId !== 'safepocket-local-zk' &&
+      !this.liveConfig.bearerToken
+    ) {
+      throw new Error(
+        'Cloud Sync authentication required — please sign in in Settings.'
+      );
+    }
+
     if (this.liveConfig.firebaseProjectId && this.liveConfig.bearerToken) {
       const projectId = this.liveConfig.firebaseProjectId;
       return this.executeWith401Retry((bearerToken) =>
@@ -728,18 +829,27 @@ export class GoogleDriveAppDataAdapter implements CloudSyncProviderAdapter {
   }
 }
 
+export interface CloudCipherBridge {
+  isActive(): boolean;
+  toCloudRow(localRow: EncryptedVaultRow): Promise<EncryptedVaultRow | null>;
+  fromCloudRow(cloudRow: EncryptedVaultRow): Promise<{
+    localRow: EncryptedVaultRow;
+    reencryptForCloud?: EncryptedVaultRow;
+  } | null>;
+}
+
 /**
  * Encrypted Vault Store backed by SQLite WASM + OPFS (`SqliteWasmVaultDb`).
  *
- * SafePocket v0.3.7 Local-First + Seamless Cloud Sync Architecture:
+ * SafePocket v0.4.0 Local-First + Cross-Platform Zero-Knowledge Cloud Sync v2 Architecture:
  * - `LOCAL_ONLY` (Lokale DB): 100% offline on-device encrypted SQLite (`vault_item`); zero cloud traffic.
- * - `CLOUD_SYNC` (Cloud-Sync): Local encrypted SQLite (`vault_item`) + real-time zero-knowledge cloud backup
- *   across devices via `cloud_offline_mirror` + `cloud_mutation_outbox`. Toggling between `LOCAL_ONLY` and
- *   `CLOUD_SYNC` preserves both the local SQLite database and the signed-in Cloud session.
+ * - `CLOUD_SYNC` (Cloud-Sync): Local encrypted SQLite (`vault_item`) + real-time zero-knowledge cloud sync
+ *   across Android, macOS, and ChromeOS/Web PWA via `cloud_offline_mirror` + `cloud_mutation_outbox` + `CloudCipherBridge`.
  */
 export class EncryptedLocalVaultDb {
   readonly sqliteEngine: SqliteWasmVaultDb;
   private boundCoordinator: VaultSyncCoordinator | null = null;
+  private cloudCipherBridge: CloudCipherBridge | null = null;
 
   constructor(
     sqliteEngine?: SqliteWasmVaultDb,
@@ -753,15 +863,23 @@ export class EncryptedLocalVaultDb {
     this.boundCoordinator = coordinator;
   }
 
+  bindCloudCipherBridge(bridge: CloudCipherBridge | null): void {
+    this.cloudCipherBridge = bridge;
+  }
+
   get activeStorageMode(): VaultStorageMode {
     return this.boundCoordinator?.storageMode ?? 'LOCAL_ONLY';
   }
 
   async saveEncryptedRow(row: EncryptedVaultRow): Promise<void> {
-    await this.sqliteEngine.saveEncryptedRow(row);
+    const normalized: EncryptedVaultRow = {
+      ...row,
+      hlcPacked: normalizeHlcPacked(row.hlcPacked)
+    };
+    await this.sqliteEngine.saveEncryptedRow(normalized);
     if (this.activeStorageMode === 'CLOUD_SYNC') {
-      await this.sqliteEngine.saveCloudMirrorRow(row);
-      await this.sqliteEngine.enqueueCloudMutationOutboxRow(row);
+      await this.sqliteEngine.saveCloudMirrorRow(normalized);
+      await this.sqliteEngine.enqueueCloudMutationOutboxRow(normalized);
       const pending = await this.sqliteEngine.listCloudMutationOutboxRows();
       this.boundCoordinator?.updateRuntimeSyncTelemetry({
         queuedMutationsCount: pending.length
@@ -770,8 +888,12 @@ export class EncryptedLocalVaultDb {
   }
 
   async saveMergedCloudRowToMirrorOnly(row: EncryptedVaultRow): Promise<void> {
-    await this.sqliteEngine.saveEncryptedRow(row);
-    await this.sqliteEngine.saveCloudMirrorRow(row);
+    const normalized: EncryptedVaultRow = {
+      ...row,
+      hlcPacked: normalizeHlcPacked(row.hlcPacked)
+    };
+    await this.sqliteEngine.saveEncryptedRow(normalized);
+    await this.sqliteEngine.saveCloudMirrorRow(normalized);
   }
 
   async loadAllRowsIncludingTombstones(): Promise<EncryptedVaultRow[]> {
@@ -825,7 +947,11 @@ export class EncryptedLocalVaultDb {
 
     if (targetMode === 'CLOUD_SYNC') {
       // 1. Ensure local SQLite DB (`vault_item`) and cloud mirror/outbox both hold current snapshot
-      for (const row of activeSnapshotRows) {
+      for (const rawRow of activeSnapshotRows) {
+        const row: EncryptedVaultRow = {
+          ...rawRow,
+          hlcPacked: normalizeHlcPacked(rawRow.hlcPacked)
+        };
         await this.sqliteEngine.saveEncryptedRow(row);
         await this.sqliteEngine.saveCloudMirrorRow(row);
         await this.sqliteEngine.enqueueCloudMutationOutboxRow(row);
@@ -843,8 +969,11 @@ export class EncryptedLocalVaultDb {
 
     // Switching `CLOUD_SYNC` -> `LOCAL_ONLY`:
     // Preserve local encrypted SQLite (`vault_item`) and pause Cloud Sync without destroying local or cloud state
-    for (const row of activeSnapshotRows) {
-      await this.sqliteEngine.saveEncryptedRow(row);
+    for (const rawRow of activeSnapshotRows) {
+      await this.sqliteEngine.saveEncryptedRow({
+        ...rawRow,
+        hlcPacked: normalizeHlcPacked(rawRow.hlcPacked)
+      });
     }
     coord.setStorageMode('LOCAL_ONLY');
     return null;
@@ -888,14 +1017,32 @@ export class EncryptedLocalVaultDb {
         byId.set(o.id, existing ? reconcileEncryptedRows(existing, o) : o);
       }
 
-      const sinceCursor = await this.sqliteEngine.getSyncCursor(providerKey);
       const pendingBlobs =
         await this.sqliteEngine.listPendingUnsyncedBlobs(vaultId);
 
+      const bridge =
+        this.cloudCipherBridge && this.cloudCipherBridge.isActive()
+          ? this.cloudCipherBridge
+          : null;
+
+      let candidateRowsForCloud: EncryptedVaultRow[];
+      if (bridge) {
+        candidateRowsForCloud = [];
+        for (const localRow of byId.values()) {
+          const translated = await bridge.toCloudRow(localRow);
+          if (translated) {
+            candidateRowsForCloud.push(translated);
+          }
+        }
+      } else {
+        candidateRowsForCloud = Array.from(byId.values());
+      }
+
+      // Full delta pull (`sinceCursorHlc = null`) so device clock skew or out-of-order offline flushes never hide remote edits
       const res = await coord.syncBidirectionalIfEnabled(
         vaultId,
-        Array.from(byId.values()),
-        sinceCursor,
+        candidateRowsForCloud,
+        null,
         pendingBlobs
       );
       if (!res) {
@@ -906,7 +1053,28 @@ export class EncryptedLocalVaultDb {
       for (const uploadedId of Object.keys(res.uploadedBlobPaths)) {
         await this.sqliteEngine.markLocalBlobSynced(uploadedId);
       }
-      for (const merged of res.mergedRows) {
+
+      let finalLocalMergedRows: EncryptedVaultRow[];
+      if (bridge) {
+        finalLocalMergedRows = [];
+        const migrationCloudRows: EncryptedVaultRow[] = [];
+        for (const cloudRow of res.mergedRows) {
+          const converted = await bridge.fromCloudRow(cloudRow);
+          if (converted) {
+            finalLocalMergedRows.push(converted.localRow);
+            if (converted.reencryptForCloud) {
+              migrationCloudRows.push(converted.reencryptForCloud);
+            }
+          }
+        }
+        if (migrationCloudRows.length > 0) {
+          await coord.syncEncryptedRowsIfEnabled(vaultId, migrationCloudRows);
+        }
+      } else {
+        finalLocalMergedRows = res.mergedRows;
+      }
+
+      for (const merged of finalLocalMergedRows) {
         await this.sqliteEngine.saveEncryptedRow(merged);
         await this.sqliteEngine.saveCloudMirrorRow(merged);
       }
@@ -924,7 +1092,10 @@ export class EncryptedLocalVaultDb {
         lastSyncedIso: new Date().toISOString(),
         lastError: null
       });
-      return res;
+      return {
+        ...res,
+        mergedRows: finalLocalMergedRows
+      };
     } catch (err) {
       const remaining = await this.sqliteEngine.listCloudMutationOutboxRows();
       coord.updateRuntimeSyncTelemetry({

@@ -146,9 +146,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3.9"
-    let currentVersionCode = 14
-    let currentVersionDisplay = "SafePocket v0.3.9 (Build 14)"
+    let currentVersionName = "0.4.0"
+    let currentVersionCode = 15
+    let currentVersionDisplay = "SafePocket v0.4.0 (Build 15)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -462,11 +462,17 @@ final class MacVaultViewModel: ObservableObject {
 
     private var clipboardClearTask: Task<Void, Never>?
     private var inactivityTimerTask: Task<Void, Never>?
+    private var liveSyncLoopTask: Task<Void, Never>?
     private var standbyObserverTokens: [NSObjectProtocol] = []
+    private var hlcLogicalCounter: Int = 0
+    private var pendingTombstones: [String: MacPendingTombstone] = [:]
+    private var knownRemoteTombstones: [String: String] = [:]
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.safepocket.mac.netmonitor")
     private let samplePurgedKey = "safepocket.sample_data_purged_v03"
     private let storageModeKey = "safepocket.exclusive_storage_mode_v03"
+    private let pendingTombstonesKey = "safepocket.pending_tombstones_v04"
+    private let knownTombstonesKey = "safepocket.known_tombstones_v04"
     private let nodeId: String
 
     init() {
@@ -531,6 +537,17 @@ final class MacVaultViewModel: ObservableObject {
             self.endpointConfig = cfg
         }
 
+        if let tombData = UserDefaults.standard.data(forKey: pendingTombstonesKey),
+           let decodedTombs = try? JSONDecoder().decode([String: MacPendingTombstone].self, from: tombData) {
+            self.pendingTombstones = decodedTombs
+            decodedTombs.keys.forEach { self.pendingOfflineOutboxIds.insert($0) }
+        }
+
+        if let knownData = UserDefaults.standard.data(forKey: knownTombstonesKey),
+           let decodedKnown = try? JSONDecoder().decode([String: String].self, from: knownData) {
+            self.knownRemoteTombstones = decodedKnown
+        }
+
         self.cloudProvider = MacCloudProvider(rawValue: UserDefaults.standard.string(forKey: "safepocket.cloud_provider") ?? "FIREBASE") ?? .firebase
 
         let savedMode = UserDefaults.standard.string(forKey: storageModeKey) ?? "LOCAL_ONLY"
@@ -541,6 +558,7 @@ final class MacVaultViewModel: ObservableObject {
         recalculateStorageIsolationCounts()
         startAutomaticConnectivityMonitor()
         registerStandbyAndSleepObservers()
+        startLiveCloudSyncLoop()
         restartInactivityAutoLockTimer()
     }
 
@@ -808,6 +826,55 @@ final class MacVaultViewModel: ObservableObject {
         pathMonitor.start(queue: monitorQueue)
     }
 
+    private func startLiveCloudSyncLoop() {
+        standbyObserverTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, !self.isLocked, !self.presentEditorSheet,
+                          self.storageMode == .cloudSync, self.isCloudAuthenticated, self.isNetworkOnline else { return }
+                    await self.reconcileCloudSessionAutomatically()
+                }
+            }
+        )
+
+        liveSyncLoopTask?.cancel()
+        liveSyncLoopTask = Task { @MainActor [weak self] in
+            // Immediate startup sync if already in Cloud-Sync mode
+            if let self, !self.isLocked, self.storageMode == .cloudSync, self.isCloudAuthenticated, self.isNetworkOnline {
+                await self.reconcileCloudSessionAutomatically()
+            }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled, let self else { break }
+                if !self.isLocked && !self.presentEditorSheet && self.storageMode == .cloudSync && self.isCloudAuthenticated && self.isNetworkOnline {
+                    await self.reconcileCloudSessionAutomatically()
+                }
+            }
+        }
+    }
+
+    private func persistTombstoneMaps() {
+        if let tombData = try? JSONEncoder().encode(pendingTombstones) {
+            UserDefaults.standard.set(tombData, forKey: pendingTombstonesKey)
+        }
+        if let knownData = try? JSONEncoder().encode(knownRemoteTombstones) {
+            UserDefaults.standard.set(knownData, forKey: knownTombstonesKey)
+        }
+    }
+
+    private static func normalizeHlc(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chars = Array(trimmed)
+        if chars.count >= 21 && chars[15] == "-" && chars[20] == "-" {
+            return String(chars[0..<15]) + ":" + String(chars[16..<20]) + ":" + String(chars[21...])
+        }
+        return trimmed
+    }
+
     func switchExclusiveStorageMode(_ nextMode: MacExclusiveStorageMode) async {
         guard nextMode != storageMode else { return }
         storageMode = nextMode
@@ -815,7 +882,8 @@ final class MacVaultViewModel: ObservableObject {
 
         switch nextMode {
         case .cloudSync:
-            pendingOfflineOutboxIds = Set(entries.map(\.id))
+            let nonSampleIds = entries.filter { !$0.isBuiltInSampleEntry }.map(\.id)
+            pendingOfflineOutboxIds = Set(nonSampleIds).union(pendingTombstones.keys)
             recalculateStorageIsolationCounts()
             persistActiveStorageSnapshot()
             recordDiagnostic(
@@ -861,7 +929,8 @@ final class MacVaultViewModel: ObservableObject {
             if storageMode != .cloudSync {
                 await switchExclusiveStorageMode(.cloudSync)
             } else {
-                pendingOfflineOutboxIds = Set(entries.map(\.id))
+                let nonSampleIds = entries.filter { !$0.isBuiltInSampleEntry }.map(\.id)
+                pendingOfflineOutboxIds = Set(nonSampleIds).union(pendingTombstones.keys)
                 await reconcileCloudSessionAutomatically()
             }
             statusNotice = "✓ \(t("cloud_auth_signed_in_as", ["email": session.email, "uid": String(session.uid.prefix(10))]))"
@@ -877,6 +946,8 @@ final class MacVaultViewModel: ObservableObject {
         MacKeychainStore.delete(account: "cloud_session")
         try? FileManager.default.removeItem(at: cloudMirrorFileURL)
         pendingOfflineOutboxIds.removeAll()
+        pendingTombstones.removeAll()
+        persistTombstoneMaps()
         endpointConfig.googleDriveBearerToken = ""
         await switchExclusiveStorageMode(.localOnly)
         statusNotice = "✓ Signed out & switched to \(t("storage_mode_local_only_title"))"
@@ -893,12 +964,21 @@ final class MacVaultViewModel: ObservableObject {
         defer { isReconcilingCloud = false }
 
         do {
-            let key = MacZeroKnowledgeCrypto.deriveVaultSymmetricKey(
+            let localVaultKey = MacZeroKnowledgeCrypto.deriveVaultSymmetricKey(
                 masterPassword: activeMasterPassword,
                 secretKey: secretKeyFormatted
             )
 
             if cloudProvider == .firebase, var activeSession = cloudSession {
+                guard let cloudKeyHex = activeSession.cloudKeyHex,
+                      let cloudKey = MacZeroKnowledgeCrypto.symmetricKeyFromHex(cloudKeyHex) else {
+                    throw NSError(
+                        domain: "SafePocketCloudAuth",
+                        code: 401,
+                        userInfo: [NSLocalizedDescriptionKey: "Cloud Sync upgraded to Cross-Platform Zero-Knowledge v2 — please sign in once with your Cloud Sync password."]
+                    )
+                }
+
                 activeSession = try await MacCloudSyncClient.refreshFirebaseTokenIfPossible(
                     session: activeSession,
                     apiKey: endpointConfig.firebaseWebApiKey,
@@ -910,42 +990,15 @@ final class MacVaultViewModel: ObservableObject {
                     MacKeychainStore.saveData(encoded, account: "cloud_session")
                 }
 
-                // 1. Encrypt pending local mutations (zero-knowledge AES-256-GCM)
-                let idsToPush = pendingOfflineOutboxIds
-                var outboundDeltas: [MacEncryptedSyncDelta] = []
-                for item in entries where idsToPush.contains(item.id) {
-                    let hlc = item.hlcPacked.isEmpty ? nextHlcPacked(for: item.updatedAt) : item.hlcPacked
-                    let aadStr = "safepocket:v1:\(item.category):\(item.id)"
-                    let plain = try JSONEncoder().encode(item)
-                    let enc = try MacZeroKnowledgeCrypto.encryptData(plain, key: key, aad: Data(aadStr.utf8))
-                    outboundDeltas.append(
-                        MacEncryptedSyncDelta(
-                            entityId: item.id,
-                            entityType: "ITEM",
-                            hlcPacked: hlc,
-                            versionVectorJson: "{\"\(nodeId)\":\(Int(item.updatedAt.timeIntervalSince1970 * 1000))}",
-                            ivHex: enc.ivHex,
-                            ciphertextHex: enc.ciphertextHex,
-                            aadContext: aadStr,
-                            isTombstone: false
-                        )
-                    )
-                }
-
-                var pushed = 0
+                // 1. PULL FIRST (full delta map, sinceHlc = nil -> 100% immune to clock skew & out-of-order offline flushes)
                 var pulledDeltas: [MacEncryptedSyncDelta] = []
                 do {
-                    pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
-                        deltas: outboundDeltas,
-                        session: activeSession,
-                        config: endpointConfig
-                    )
                     pulledDeltas = try await MacCloudSyncClient.pullDeltasFromFirestore(
                         sinceHlc: nil,
                         session: activeSession,
                         config: endpointConfig
                     )
-                } catch let syncErr as NSError where syncErr.code == 401 {
+                } catch let pullErr as NSError where pullErr.code == 401 {
                     activeSession = try await MacCloudSyncClient.refreshFirebaseTokenIfPossible(
                         session: activeSession,
                         apiKey: endpointConfig.firebaseWebApiKey,
@@ -956,11 +1009,6 @@ final class MacVaultViewModel: ObservableObject {
                     if let encoded = try? JSONEncoder().encode(activeSession) {
                         MacKeychainStore.saveData(encoded, account: "cloud_session")
                     }
-                    pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
-                        deltas: outboundDeltas,
-                        session: activeSession,
-                        config: endpointConfig
-                    )
                     pulledDeltas = try await MacCloudSyncClient.pullDeltasFromFirestore(
                         sinceHlc: nil,
                         session: activeSession,
@@ -968,45 +1016,172 @@ final class MacVaultViewModel: ObservableObject {
                     )
                 }
 
-                var mergedById = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
-                var pulledApplied = 0
-                for remote in pulledDeltas {
-                    if remote.isTombstone {
-                        mergedById.removeValue(forKey: remote.entityId)
-                        continue
+                var remoteById: [String: MacEncryptedSyncDelta] = [:]
+                for var r in pulledDeltas {
+                    r.hlcPacked = Self.normalizeHlc(r.hlcPacked)
+                    if let prev = remoteById[r.entityId] {
+                        if r.hlcPacked > prev.hlcPacked { remoteById[r.entityId] = r }
+                    } else {
+                        remoteById[r.entityId] = r
                     }
-                    let aadData = Data(remote.aadContext.utf8)
-                    if let plain = try? MacZeroKnowledgeCrypto.decryptData(
-                        ivHex: remote.ivHex,
-                        ciphertextHex: remote.ciphertextHex,
-                        key: key,
-                        aad: aadData
-                    ), let remoteEntry = try? JSONDecoder().decode(MacVaultEntry.self, from: plain) {
-                        if let existing = mergedById[remoteEntry.id] {
-                            if remote.hlcPacked > existing.hlcPacked {
-                                mergedById[remoteEntry.id] = remoteEntry
+                }
+
+                // Ensure all local non-sample entries have normalized HLCs
+                var normalizedEntries = entries
+                for idx in normalizedEntries.indices {
+                    if normalizedEntries[idx].hlcPacked.isEmpty {
+                        normalizedEntries[idx].hlcPacked = nextHlcPacked(for: normalizedEntries[idx].updatedAt)
+                    } else {
+                        normalizedEntries[idx].hlcPacked = Self.normalizeHlc(normalizedEntries[idx].hlcPacked)
+                    }
+                }
+                var localEntryById = Dictionary(uniqueKeysWithValues: normalizedEntries.map { ($0.id, $0) })
+
+                // 2. CRDT Reconcile: build winning outbound deltas AND apply winning remote deltas locally
+                var outboundDeltas: [MacEncryptedSyncDelta] = []
+                var pulledApplied = 0
+
+                let allIds = Set(localEntryById.keys)
+                    .union(pendingTombstones.keys)
+                    .union(remoteById.keys)
+
+                for entityId in allIds {
+                    let localItem = localEntryById[entityId]
+                    let pendingTomb = pendingTombstones[entityId]
+                    let remote = remoteById[entityId]
+
+                    // Case A: Local pending tombstone
+                    if let tomb = pendingTomb {
+                        let tombHlc = Self.normalizeHlc(tomb.hlcPacked)
+                        if let rem = remote, rem.hlcPacked > tombHlc {
+                            // Remote mutation is newer than our local deletion!
+                            pendingTombstones.removeValue(forKey: entityId)
+                            if rem.isTombstone {
+                                knownRemoteTombstones[entityId] = rem.hlcPacked
+                                localEntryById.removeValue(forKey: entityId)
+                            } else if let decoded = decryptRemoteDelta(rem, cloudKey: cloudKey, localFallbackKey: localVaultKey, migrationOutbox: &outboundDeltas) {
+                                localEntryById[entityId] = decoded
                                 pulledApplied += 1
                             }
                         } else {
-                            mergedById[remoteEntry.id] = remoteEntry
+                            // Push tombstone if remote doesn't already have this tombstone at >= HLC
+                            if remote == nil || !(remote!.isTombstone && remote!.hlcPacked >= tombHlc) {
+                                let aadStr = "safepocket:v1:\(tomb.category):\(tomb.id)"
+                                let enc = try MacZeroKnowledgeCrypto.encryptData(
+                                    Data("{\"deleted\":true}".utf8),
+                                    key: cloudKey,
+                                    aad: Data(aadStr.utf8)
+                                )
+                                outboundDeltas.append(
+                                    MacEncryptedSyncDelta(
+                                        entityId: tomb.id,
+                                        entityType: "ITEM",
+                                        hlcPacked: tombHlc,
+                                        versionVectorJson: "{\"\(nodeId)\":\(tomb.deletedAtMs)}",
+                                        ivHex: enc.ivHex,
+                                        ciphertextHex: enc.ciphertextHex,
+                                        aadContext: aadStr,
+                                        isTombstone: true
+                                    )
+                                )
+                            }
+                            knownRemoteTombstones[entityId] = tombHlc
+                            localEntryById.removeValue(forKey: entityId)
+                        }
+                        continue
+                    }
+
+                    // Case B: Local active entry vs Remote
+                    if let item = localItem {
+                        let itemHlc = Self.normalizeHlc(item.hlcPacked)
+                        if let rem = remote {
+                            if rem.isTombstone {
+                                if rem.hlcPacked >= itemHlc || item.isBuiltInSampleEntry {
+                                    knownRemoteTombstones[entityId] = rem.hlcPacked
+                                    localEntryById.removeValue(forKey: entityId)
+                                    pulledApplied += 1
+                                } else if !item.isBuiltInSampleEntry {
+                                    outboundDeltas.append(try buildOutboundItemDelta(item, cloudKey: cloudKey))
+                                }
+                            } else if rem.hlcPacked > itemHlc {
+                                if let decoded = decryptRemoteDelta(rem, cloudKey: cloudKey, localFallbackKey: localVaultKey, migrationOutbox: &outboundDeltas) {
+                                    localEntryById[entityId] = decoded
+                                    pulledApplied += 1
+                                }
+                            } else if itemHlc > rem.hlcPacked && !item.isBuiltInSampleEntry {
+                                outboundDeltas.append(try buildOutboundItemDelta(item, cloudKey: cloudKey))
+                            }
+                        } else {
+                            // Not on remote yet: push ONLY if non-sample AND not superseded by a known tombstone
+                            if !item.isBuiltInSampleEntry {
+                                if let knownTombHlc = knownRemoteTombstones[entityId], knownTombHlc >= itemHlc {
+                                    localEntryById.removeValue(forKey: entityId)
+                                } else {
+                                    outboundDeltas.append(try buildOutboundItemDelta(item, cloudKey: cloudKey))
+                                }
+                            }
+                        }
+                        continue
+                    }
+
+                    // Case C: Remote-only record (not present locally)
+                    if let rem = remote {
+                        if rem.isTombstone {
+                            knownRemoteTombstones[entityId] = rem.hlcPacked
+                        } else if let decoded = decryptRemoteDelta(rem, cloudKey: cloudKey, localFallbackKey: localVaultKey, migrationOutbox: &outboundDeltas) {
+                            localEntryById[entityId] = decoded
                             pulledApplied += 1
                         }
                     }
                 }
 
-                entries = Array(mergedById.values).sorted { $0.updatedAt > $1.updatedAt }
+                // 3. PUSH ONLY WINNING OUTBOUND DELTAS
+                var pushed = 0
+                if !outboundDeltas.isEmpty {
+                    pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
+                        deltas: outboundDeltas,
+                        session: activeSession,
+                        config: endpointConfig
+                    )
+                }
+
+                // Clear flushed tombstones & outbox
+                pendingTombstones.removeAll()
                 pendingOfflineOutboxIds.removeAll()
+                persistTombstoneMaps()
+
+                // Hide untouched built-in sample noise automatically once real cloud items exist
+                let hasRealCloudItems = pulledDeltas.contains { !$0.isTombstone && !MacVaultEntry.knownBuiltInSampleIds.contains($0.entityId) }
+                if hasRealCloudItems && !UserDefaults.standard.bool(forKey: samplePurgedKey) {
+                    UserDefaults.standard.set(true, forKey: samplePurgedKey)
+                    localEntryById = localEntryById.filter { !$0.value.isBuiltInSampleEntry }
+                } else if UserDefaults.standard.bool(forKey: samplePurgedKey) {
+                    localEntryById = localEntryById.filter { !$0.value.isBuiltInSampleEntry }
+                }
+
+                let sortedMerged = Array(localEntryById.values).sorted { $0.updatedAt > $1.updatedAt }
+                if sortedMerged != entries {
+                    entries = sortedMerged
+                    if let sel = selectedEntryId, !entries.contains(where: { $0.id == sel }) {
+                        selectedEntryId = entries.first?.id
+                    } else if selectedEntryId == nil {
+                        selectedEntryId = entries.first?.id
+                    }
+                    recalculateStorageIsolationCounts()
+                    persistActiveStorageSnapshot()
+                }
+
                 lastSyncPushed = pushed
                 lastSyncPulled = pulledApplied
                 lastSyncedIso = ISO8601DateFormatter().string(from: Date())
-                recalculateStorageIsolationCounts()
-                persistActiveStorageSnapshot()
-                recordDiagnostic(
-                    operation: "cloud.firebaseSync",
-                    detail: "Synced zero-knowledge deltas (↑\(pushed) pushed • ↓\(pulledApplied) pulled)"
-                )
+                lastErrorBanner = nil
+                if pushed > 0 || pulledApplied > 0 {
+                    recordDiagnostic(
+                        operation: "cloud.firebaseSync",
+                        detail: "Synced zero-knowledge deltas (↑\(pushed) pushed • ↓\(pulledApplied) pulled)"
+                    )
+                }
             } else if cloudProvider == .googleDrive {
-                // Google Drive appDataFolder encrypted delta flush
                 try? await Task.sleep(nanoseconds: 180_000_000)
                 let flushed = pendingOfflineOutboxIds.count
                 pendingOfflineOutboxIds.removeAll()
@@ -1025,9 +1200,59 @@ final class MacVaultViewModel: ObservableObject {
         }
     }
 
+    private func buildOutboundItemDelta(_ item: MacVaultEntry, cloudKey: SymmetricKey) throws -> MacEncryptedSyncDelta {
+        let hlc = item.hlcPacked.isEmpty ? nextHlcPacked(for: item.updatedAt) : Self.normalizeHlc(item.hlcPacked)
+        let aadStr = "safepocket:v1:\(item.category):\(item.id)"
+        let plain = try item.toCanonicalWireData()
+        let enc = try MacZeroKnowledgeCrypto.encryptData(plain, key: cloudKey, aad: Data(aadStr.utf8))
+        let epochMs = Int64((item.updatedAt.timeIntervalSince1970 * 1000.0).rounded())
+        return MacEncryptedSyncDelta(
+            entityId: item.id,
+            entityType: "ITEM",
+            hlcPacked: hlc,
+            versionVectorJson: "{\"\(nodeId)\":\(epochMs)}",
+            ivHex: enc.ivHex,
+            ciphertextHex: enc.ciphertextHex,
+            aadContext: aadStr,
+            isTombstone: false
+        )
+    }
+
+    private func decryptRemoteDelta(
+        _ remote: MacEncryptedSyncDelta,
+        cloudKey: SymmetricKey,
+        localFallbackKey: SymmetricKey,
+        migrationOutbox: inout [MacEncryptedSyncDelta]
+    ) -> MacVaultEntry? {
+        let aadData = Data(remote.aadContext.utf8)
+        let normHlc = Self.normalizeHlc(remote.hlcPacked)
+        if let plain = try? MacZeroKnowledgeCrypto.decryptData(
+            ivHex: remote.ivHex,
+            ciphertextHex: remote.ciphertextHex,
+            key: cloudKey,
+            aad: aadData
+        ), let decoded = MacVaultEntry.fromCanonicalOrLegacyData(plain, hlcPacked: normHlc) {
+            return decoded
+        }
+        // Self-migration fallback for v0.3.x envelopes pushed by this Mac under localVaultKey
+        if let legacyPlain = try? MacZeroKnowledgeCrypto.decryptData(
+            ivHex: remote.ivHex,
+            ciphertextHex: remote.ciphertextHex,
+            key: localFallbackKey,
+            aad: aadData
+        ), let decoded = MacVaultEntry.fromCanonicalOrLegacyData(legacyPlain, hlcPacked: normHlc) {
+            if let upgraded = try? buildOutboundItemDelta(decoded, cloudKey: cloudKey) {
+                migrationOutbox.append(upgraded)
+            }
+            return decoded
+        }
+        return nil
+    }
+
     private func nextHlcPacked(for date: Date = Date()) -> String {
-        let ms = Int64(date.timeIntervalSince1970 * 1000)
-        return String(format: "%015lld:0001:%@", ms, nodeId)
+        hlcLogicalCounter = (hlcLogicalCounter + 1) % 10_000
+        let ms = Int64((date.timeIntervalSince1970 * 1000.0).rounded())
+        return String(format: "%015lld:%04d:%@", ms, hlcLogicalCounter, nodeId)
     }
 
     private func recalculateStorageIsolationCounts() {
@@ -1071,6 +1296,9 @@ final class MacVaultViewModel: ObservableObject {
         normalized.isSampleItem = false
         normalized.updatedAt = Date()
         normalized.hlcPacked = nextHlcPacked(for: normalized.updatedAt)
+        pendingTombstones.removeValue(forKey: normalized.id)
+        knownRemoteTombstones.removeValue(forKey: normalized.id)
+        persistTombstoneMaps()
         for idx in normalized.fields.indices {
             if normalized.fields[idx].valueType == .url && !normalized.fields[idx].value.isEmpty {
                 normalized.fields[idx].value = Self.normalizeHttpsUrl(normalized.fields[idx].value)
@@ -1090,6 +1318,7 @@ final class MacVaultViewModel: ObservableObject {
 
     func togglePin(_ id: String) {
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[idx].isSampleItem = false
         entries[idx].pinned.toggle()
         entries[idx].updatedAt = Date()
         entries[idx].hlcPacked = nextHlcPacked()
@@ -1098,6 +1327,7 @@ final class MacVaultViewModel: ObservableObject {
 
     func toggleFavorite(_ id: String) {
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[idx].isSampleItem = false
         entries[idx].favorite.toggle()
         entries[idx].updatedAt = Date()
         entries[idx].hlcPacked = nextHlcPacked()
@@ -1118,6 +1348,14 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     func deleteEntry(_ id: String) {
+        let deletedCategory = entries.first(where: { $0.id == id })?.category ?? "SECURE_NOTE"
+        let now = Date()
+        let hlc = nextHlcPacked(for: now)
+        let nowMs = Int64((now.timeIntervalSince1970 * 1000.0).rounded())
+        pendingTombstones[id] = MacPendingTombstone(id: id, category: deletedCategory, hlcPacked: hlc, deletedAtMs: nowMs)
+        knownRemoteTombstones[id] = hlc
+        persistTombstoneMaps()
+
         entries.removeAll { $0.id == id }
         if selectedEntryId == id {
             selectedEntryId = entries.first?.id
@@ -1126,7 +1364,22 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     func deleteAllExampleData() {
-        let removed = entries.filter { $0.isSampleItem }.map(\.id)
+        let removedEntries = entries.filter { $0.isSampleItem }
+        let now = Date()
+        let nowMs = Int64((now.timeIntervalSince1970 * 1000.0).rounded())
+        for sample in removedEntries {
+            let hlc = nextHlcPacked(for: now)
+            pendingTombstones[sample.id] = MacPendingTombstone(
+                id: sample.id,
+                category: sample.category,
+                hlcPacked: hlc,
+                deletedAtMs: nowMs
+            )
+            knownRemoteTombstones[sample.id] = hlc
+            pendingOfflineOutboxIds.insert(sample.id)
+        }
+        persistTombstoneMaps()
+
         entries.removeAll { $0.isSampleItem }
         UserDefaults.standard.set(true, forKey: samplePurgedKey)
         if let sel = selectedEntryId, !entries.contains(where: { $0.id == sel }) {
@@ -1134,12 +1387,11 @@ final class MacVaultViewModel: ObservableObject {
         }
         recalculateStorageIsolationCounts()
         persistActiveStorageSnapshot()
-        if storageMode == .cloudSync {
-            removed.forEach { pendingOfflineOutboxIds.insert($0) }
+        if storageMode == .cloudSync && isNetworkOnline && isCloudAuthenticated {
             Task { await reconcileCloudSessionAutomatically() }
         }
-        statusNotice = "✓ \(t("delete_example_data_done", ["count": String(removed.count)]))"
-        recordDiagnostic(operation: "vault.deleteExampleData", detail: "Deleted \(removed.count) built-in sample item(s) permanently")
+        statusNotice = "✓ \(t("delete_example_data_done", ["count": String(removedEntries.count)]))"
+        recordDiagnostic(operation: "vault.deleteExampleData", detail: "Deleted \(removedEntries.count) built-in sample item(s) permanently")
     }
 
     private func markMutated(id: String) {

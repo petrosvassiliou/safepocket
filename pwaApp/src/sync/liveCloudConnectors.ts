@@ -12,6 +12,7 @@ export interface LiveCloudEndpointConfig {
   firebaseAppId?: string;
   firebaseUserId?: string;
   bearerToken?: string;
+  cloudKeyHex?: string;
 }
 
 export interface FirebaseAuthResult {
@@ -19,6 +20,7 @@ export interface FirebaseAuthResult {
   email: string;
   idToken: string;
   refreshToken?: string;
+  cloudKeyHex?: string;
   mode: 'live-firebase' | 'embedded-firebase-db';
 }
 
@@ -69,6 +71,46 @@ export async function deriveZeroKnowledgeCloudAuthPassword(
 }
 
 /**
+ * Derives the 256-bit Zero-Knowledge Cloud Sync AES-GCM key via RFC 8018 PBKDF2-HMAC-SHA256
+ * (100,000 iterations), matching `HkdfSha256Pure.deriveCloudSyncKey` (Android) and
+ * `MacZeroKnowledgeCrypto.deriveCloudSyncKeyHex` (macOS) byte-for-byte.
+ * Never transmitted to Firebase Auth or Firestore.
+ */
+export async function deriveZeroKnowledgeCloudSyncKeyHex(
+  email: string,
+  syncPassword: string,
+  uid: string
+): Promise<string> {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanUid = uid.trim();
+  const pwdBytes = new TextEncoder().encode(
+    `safepocket-zk-cloud-sync-kek-v2:${cleanEmail}:${syncPassword}`
+  );
+  const saltBytes = new TextEncoder().encode(
+    `safepocket-zk-cloud-salt-v2:${cleanUid}:${cleanEmail}`
+  );
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    pwdBytes,
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  pwdBytes.fill(0);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: saltBytes,
+      iterations: 100_000
+    },
+    baseKey,
+    256
+  );
+  return bytesToHex(new Uint8Array(bits)).toLowerCase();
+}
+
+/**
  * Firebase Identity Toolkit REST User Creation (`accounts:signUp`).
  */
 export async function firebaseAuthSignUpRest(
@@ -101,11 +143,18 @@ export async function firebaseAuthSignUpRest(
       data?.error?.message || `Firebase Auth signUp failed (HTTP ${res.status})`
     );
   }
+  const uid = String(data.localId);
+  const cloudKeyHex = await deriveZeroKnowledgeCloudSyncKeyHex(
+    email,
+    syncPassword,
+    uid
+  );
   return {
-    uid: String(data.localId),
+    uid,
     email: String(data.email),
     idToken: String(data.idToken),
     refreshToken: data.refreshToken ? String(data.refreshToken) : undefined,
+    cloudKeyHex,
     mode: 'live-firebase'
   };
 }
@@ -143,11 +192,18 @@ export async function firebaseAuthSignInRest(
       data?.error?.message || `Firebase Auth signIn failed (HTTP ${res.status})`
     );
   }
+  const uid = String(data.localId);
+  const cloudKeyHex = await deriveZeroKnowledgeCloudSyncKeyHex(
+    email,
+    syncPassword,
+    uid
+  );
   return {
-    uid: String(data.localId),
+    uid,
     email: String(data.email),
     idToken: String(data.idToken),
     refreshToken: data.refreshToken ? String(data.refreshToken) : undefined,
+    cloudKeyHex,
     mode: 'live-firebase'
   };
 }

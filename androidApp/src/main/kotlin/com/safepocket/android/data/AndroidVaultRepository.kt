@@ -646,9 +646,12 @@ class AndroidVaultRepository(
                 msg.contains("(401)") ||
                 msg.contains("(403)") ||
                 msg.contains("authentication", ignoreCase = true)
+            val userOnly = currentItems.filterNot { it.isBuiltInSample() }
             if (isAuthOrPermissionError) {
-                val queued = currentItems.map { encryptItemToSyncRecord(it) }
-                savePendingCloudOutbox(queued)
+                runCatching {
+                    val queued = userOnly.map { encryptItemToSyncRecord(it) }
+                    savePendingCloudOutbox(queued)
+                }
                 SafePocketErrorHandler.record(
                     operation = "cloudSync",
                     throwable = t,
@@ -658,12 +661,16 @@ class AndroidVaultRepository(
                 throw t
             }
             if (t is IOException || !_isNetworkOnline.value) {
-                val queued = currentItems.map { encryptItemToSyncRecord(it) }
-                savePendingCloudOutbox(queued)
+                runCatching {
+                    val queued = userOnly.map { encryptItemToSyncRecord(it) }
+                    savePendingCloudOutbox(queued)
+                }
                 currentItems
             } else {
-                val queued = currentItems.map { encryptItemToSyncRecord(it) }
-                savePendingCloudOutbox(queued)
+                runCatching {
+                    val queued = userOnly.map { encryptItemToSyncRecord(it) }
+                    savePendingCloudOutbox(queued)
+                }
                 throw t
             }
         }
@@ -697,25 +704,39 @@ class AndroidVaultRepository(
     suspend fun upsertItem(item: VaultItemPayload, allItemsAfterUpsert: List<VaultItemPayload>) =
         withContext(Dispatchers.IO) {
             try {
-                latestKnownItems = allItemsAfterUpsert
+                val normalizedItem = item.copy(isSampleItem = false)
+                latestKnownItems = allItemsAfterUpsert.map { if (it.id == normalizedItem.id) normalizedItem else it }
                 ensureActiveDatabaseOpened()
+                val savedHlc = nextHlcPacked(normalizedItem.updatedAtEpochMs)
+                val savedVv = mapOf(nodeId to normalizedItem.updatedAtEpochMs)
                 database?.let { db ->
-                    upsertSingleItemInternal(db, item)
+                    upsertSingleItemInternal(db, normalizedItem, hlcOverride = savedHlc, vvOverride = savedVv)
                 }
                 if (storageMode == VaultStorageMode.LOCAL_ONLY) {
-                    prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(allItemsAfterUpsert)).apply()
+                    prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(latestKnownItems)).apply()
                 } else if (hasActiveCloudAuth()) {
-                    val rec = encryptItemToSyncRecord(item)
-                    if (_isNetworkOnline.value) {
-                        runCatching {
-                            activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
-                            prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
-                            refreshSyncIndicator()
-                        }.onFailure {
+                    runCatching {
+                        val cloudKey = resolveCloudSyncKey32()
+                        val rec = encryptItemWithKey(normalizedItem, cloudKey, hlcOverride = savedHlc, vvOverride = savedVv)
+                        if (_isNetworkOnline.value) {
+                            runCatching {
+                                activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
+                                prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
+                                refreshSyncIndicator()
+                            }.onFailure {
+                                enqueueCloudOutboxRecord(rec)
+                            }
+                            backgroundScope.launch {
+                                runCatching {
+                                    val rep = syncNow(latestKnownItems, surfaceErrorBanner = false)
+                                    _autoReconciledItems.tryEmit(rep.updatedItems)
+                                }
+                            }
+                        } else {
                             enqueueCloudOutboxRecord(rec)
                         }
-                    } else {
-                        enqueueCloudOutboxRecord(rec)
+                    }.onFailure { err ->
+                        SafePocketErrorHandler.record("upsertItem.cloudSync", err, System.currentTimeMillis(), surfaceBanner = false)
                     }
                 }
             } catch (t: Throwable) {
@@ -749,24 +770,34 @@ class AndroidVaultRepository(
             try {
                 latestKnownItems = remainingItems
                 ensureActiveDatabaseOpened()
-                var tombstoneRecord: EncryptedSyncRecord? = null
+                var localTombstone: EncryptedSyncRecord? = null
                 database?.let { db ->
-                    tombstoneRecord = markTombstoneInternal(db, target.id, target.category.name)
+                    localTombstone = markTombstoneInternal(db, target.id, target.category.name)
                 }
                 if (storageMode == VaultStorageMode.LOCAL_ONLY) {
                     prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(remainingItems)).apply()
-                } else if (hasActiveCloudAuth() && tombstoneRecord != null) {
-                    val rec = tombstoneRecord!!
-                    if (_isNetworkOnline.value) {
-                        runCatching {
-                            activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
-                            prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
-                            refreshSyncIndicator()
-                        }.onFailure {
+                } else if (hasActiveCloudAuth() && localTombstone != null) {
+                    runCatching {
+                        val base = localTombstone!!
+                        val cloudKey = resolveCloudSyncKey32()
+                        val rec = encryptTombstoneWithKey(base.entityId, target.category.name, cloudKey, base.hlcPacked, base.versionVector)
+                        if (_isNetworkOnline.value) {
+                            runCatching {
+                                activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, listOf(rec))
+                                prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
+                                refreshSyncIndicator()
+                            }.onFailure {
+                                enqueueCloudOutboxRecord(rec)
+                            }
+                            backgroundScope.launch {
+                                runCatching {
+                                    val rep = syncNow(latestKnownItems, surfaceErrorBanner = false)
+                                    _autoReconciledItems.tryEmit(rep.updatedItems)
+                                }
+                            }
+                        } else {
                             enqueueCloudOutboxRecord(rec)
                         }
-                    } else {
-                        enqueueCloudOutboxRecord(rec)
                     }
                 }
             } catch (t: Throwable) {
@@ -789,26 +820,32 @@ class AndroidVaultRepository(
 
         latestKnownItems = userCreated
         ensureActiveDatabaseOpened()
-        val tombstones = mutableListOf<EncryptedSyncRecord>()
+        val localTombstones = mutableListOf<Pair<String, EncryptedSyncRecord>>()
         database?.let { db ->
             for (sample in samples) {
-                tombstones += markTombstoneInternal(db, sample.id, sample.category.name)
+                localTombstones += sample.category.name to markTombstoneInternal(db, sample.id, sample.category.name)
             }
         }
 
         if (storageMode == VaultStorageMode.LOCAL_ONLY) {
             prefs.edit().putString(LEGACY_KEY_VAULT_ITEMS, AndroidSampleVault.encodeItems(userCreated)).apply()
-        } else if (hasActiveCloudAuth() && tombstones.isNotEmpty()) {
-            if (_isNetworkOnline.value) {
-                runCatching {
-                    activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, tombstones)
-                    prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
-                    refreshSyncIndicator()
-                }.onFailure {
-                    tombstones.forEach(::enqueueCloudOutboxRecord)
+        } else if (hasActiveCloudAuth() && localTombstones.isNotEmpty()) {
+            runCatching {
+                val cloudKey = resolveCloudSyncKey32()
+                val cloudTombstones = localTombstones.map { (catName, t) ->
+                    encryptTombstoneWithKey(t.entityId, catName, cloudKey, t.hlcPacked, t.versionVector)
                 }
-            } else {
-                tombstones.forEach(::enqueueCloudOutboxRecord)
+                if (_isNetworkOnline.value) {
+                    runCatching {
+                        activeSyncAdapter().pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, cloudTombstones)
+                        prefs.edit().putString(KEY_LAST_SYNC_ISO, Instant.now().toString()).apply()
+                        refreshSyncIndicator()
+                    }.onFailure {
+                        cloudTombstones.forEach(::enqueueCloudOutboxRecord)
+                    }
+                } else {
+                    cloudTombstones.forEach(::enqueueCloudOutboxRecord)
+                }
             }
         }
         samples.size to userCreated
@@ -1013,51 +1050,101 @@ class AndroidVaultRepository(
                     saveFirebaseSession(session)
                     session.uid
                 }
+                val cloudKey = resolveCloudSyncKey32()
                 val adapter = activeSyncAdapter()
 
                 ensureActiveDatabaseOpened()
                 val db = database
-                val dbRecords: List<EncryptedSyncRecord> = if (db != null) {
-                    db.safePocketVaultQueries
-                        .selectItemsIncludingTombstonesSinceHlc(null)
-                        .executeAsList()
-                        .map { rowToSyncRecord(it) }
+
+                // 1. Build local candidate map (excluding untouched built-in sample items so sample noise never pollutes Cloud)
+                val localSyncMap = mutableMapOf<String, EncryptedSyncRecord>()
+                if (db != null) {
+                    val rows = db.safePocketVaultQueries.selectItemsIncludingTombstonesSinceHlc(null).executeAsList()
+                    for (row in rows) {
+                        val normHlc = normalizeHlc(row.hlc_timestamp)
+                        val vv = parseRowVersionVector(row)
+                        if (row.is_tombstone != 0L) {
+                            localSyncMap[row.id] = encryptTombstoneWithKey(row.id, row.category, cloudKey, normHlc, vv)
+                        } else {
+                            val item = decryptDbRowOrNull(row)
+                            if (item != null && !item.isBuiltInSample()) {
+                                localSyncMap[item.id] = encryptItemWithKey(item, cloudKey, hlcOverride = normHlc, vvOverride = vv)
+                            }
+                        }
+                    }
                 } else {
-                    currentItems.map { encryptItemToSyncRecord(it) }
-                }
-
-                // Merge any pending offline outbox mutations with DB records via CRDT LWW
-                val outboxRecords = loadPendingCloudOutbox()
-                val mergedPushMap = dbRecords.associateBy { it.entityId }.toMutableMap()
-                for (queued in outboxRecords) {
-                    val prev = mergedPushMap[queued.entityId]
-                    mergedPushMap[queued.entityId] = if (prev == null) queued else CrdtReconciler.resolve(prev, queued)
-                }
-                val recordsToPush = mergedPushMap.values.toList()
-
-                val pushRes = adapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, recordsToPush)
-                // Outbox successfully flushed to Cloud!
-                savePendingCloudOutbox(emptyList())
-
-                val cursorKey = "${KEY_LAST_SYNC_CURSOR}_$cursorScope"
-                val sinceCursor = prefs.getString(cursorKey, null)
-                val pulledRecords = adapter.pullEncryptedDeltasSince(CLOUD_VAULT_COLLECTION_ID, sinceCursor)
-
-                val localMap = recordsToPush.associateBy { it.entityId }.toMutableMap()
-                var appliedRemote = 0
-
-                for (remote in pulledRecords) {
-                    val existing = localMap[remote.entityId]
-                    val winner = if (existing == null) remote else CrdtReconciler.resolve(existing, remote)
-                    if (existing == null || winner.hlcPacked != existing.hlcPacked || winner.isTombstone != existing.isTombstone) {
-                        localMap[remote.entityId] = winner
-                        appliedRemote++
-                        if (db != null) {
-                            applyWinningSyncRecordToDb(db, winner)
+                    for (item in currentItems) {
+                        if (!item.isBuiltInSample()) {
+                            localSyncMap[item.id] = encryptItemWithKey(item, cloudKey)
                         }
                     }
                 }
 
+                // Merge any pending offline outbox mutations into localSyncMap via CRDT LWW
+                for (queuedRaw in loadPendingCloudOutbox()) {
+                    val queued = queuedRaw.copy(hlcPacked = normalizeHlc(queuedRaw.hlcPacked))
+                    val prev = localSyncMap[queued.entityId]
+                    localSyncMap[queued.entityId] = if (prev == null) queued else CrdtReconciler.resolve(prev, queued)
+                }
+
+                // 2. PULL FIRST (full delta map, sinceHlc = null -> 100% immune to clock skew & out-of-order offline flushes)
+                val pulledRecords = adapter.pullEncryptedDeltasSince(CLOUD_VAULT_COLLECTION_ID, null)
+                    .map { it.copy(hlcPacked = normalizeHlc(it.hlcPacked)) }
+                val remoteById = pulledRecords.associateBy { it.entityId }
+
+                // 3. CRDT Reconcile: determine winning local deltas to push AND winning remote deltas to apply locally
+                val deltasToPush = mutableListOf<EncryptedSyncRecord>()
+                var appliedRemote = 0
+                val allEntityIds = (localSyncMap.keys + remoteById.keys).toSet()
+
+                for (entityId in allEntityIds) {
+                    val localRec = localSyncMap[entityId]
+                    val remoteRec = remoteById[entityId]
+                    when {
+                        remoteRec == null && localRec != null -> {
+                            deltasToPush += localRec
+                        }
+                        localRec == null && remoteRec != null -> {
+                            if (applyRemoteWinnerToLocalDb(db, remoteRec, cloudKey, deltasToPush)) {
+                                localSyncMap[entityId] = remoteRec
+                                appliedRemote++
+                            }
+                        }
+                        localRec != null && remoteRec != null -> {
+                            val winner = CrdtReconciler.resolve(localRec, remoteRec)
+                            val localWon = (winner.hlcPacked == localRec.hlcPacked && winner.hlcPacked != remoteRec.hlcPacked) ||
+                                (winner.isTombstone == localRec.isTombstone && winner.isTombstone != remoteRec.isTombstone && winner.hlcPacked >= remoteRec.hlcPacked)
+                            val remoteWon = (winner.hlcPacked == remoteRec.hlcPacked && winner.hlcPacked != localRec.hlcPacked) ||
+                                (winner.isTombstone == remoteRec.isTombstone && winner.isTombstone != localRec.isTombstone && winner.hlcPacked > localRec.hlcPacked)
+
+                            if (localWon) {
+                                deltasToPush += localRec.copy(versionVector = winner.versionVector)
+                            } else if (remoteWon) {
+                                val mergedRemote = remoteRec.copy(versionVector = winner.versionVector)
+                                if (applyRemoteWinnerToLocalDb(db, mergedRemote, cloudKey, deltasToPush)) {
+                                    localSyncMap[entityId] = mergedRemote
+                                    appliedRemote++
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. PUSH ONLY WINNING LOCAL DELTAS (zero unnecessary Firestore writes when idle!)
+                val pushRes = if (deltasToPush.isNotEmpty()) {
+                    adapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, deltasToPush)
+                } else {
+                    com.safepocket.shared.sync.SyncPushResult(0, pulledRecords.maxOfOrNull { it.hlcPacked })
+                }
+                savePendingCloudOutbox(emptyList())
+
+                // If remote vault already contains real user records, hide untouched built-in sample noise automatically
+                val hasRealRemoteItems = pulledRecords.any { !it.isTombstone && it.entityId !in com.safepocket.shared.model.SampleVaultCatalogIds.ALL_KNOWN_SAMPLE_IDS }
+                if (hasRealRemoteItems && !sampleDataPurged) {
+                    prefs.edit().putBoolean(KEY_SAMPLE_DATA_PURGED, true).apply()
+                }
+
+                val cursorKey = "${KEY_LAST_SYNC_CURSOR}_$cursorScope"
                 val maxPulledHlc = pulledRecords.maxOfOrNull { it.hlcPacked } ?: pushRes.latestServerCursorHlc
                 val nowIso = Instant.now().toString()
                 prefs.edit()
@@ -1072,7 +1159,7 @@ class AndroidVaultRepository(
                 val updatedItems = (if (db != null) {
                     db.safePocketVaultQueries.selectAllActiveItems().executeAsList().mapNotNull { decryptDbRowOrNull(it) }
                 } else {
-                    localMap.values.filter { !it.isTombstone }.mapNotNull { decryptSyncRecordOrNull(it) }
+                    localSyncMap.values.filter { !it.isTombstone }.mapNotNull { decryptSyncRecordWithKeyOrNull(it, cloudKey) }
                 }).let { list ->
                     if (sampleDataPurged) list.filterNot { it.isBuiltInSample() } else list
                 }
@@ -1226,10 +1313,38 @@ class AndroidVaultRepository(
     // INTERNAL SQLCIPHER + AES-GCM ROW SERIALIZATION
     // =========================================================================
 
+    private fun normalizeHlc(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.length >= 21 && trimmed[15] == '-' && trimmed[20] == '-') {
+            return "${trimmed.substring(0, 15)}:${trimmed.substring(16, 20)}:${trimmed.substring(21)}"
+        }
+        return trimmed
+    }
+
+    private fun resolveCloudSyncKey32(): ByteArray {
+        if (isGoogleDriveConfigured()) {
+            return activeVaultItemKey32
+        }
+        val hex = firebaseAuth.currentUser?.cloudKeyHex?.trim()
+        if (hex.isNullOrBlank() || hex.length != 64) {
+            throw CloudAuthExpiredException(
+                "Cloud Sync upgraded to Cross-Platform Zero-Knowledge v2 — please sign in once with your Cloud Sync password."
+            )
+        }
+        return ZeroKnowledgeEncryptionService.hexToBytes(hex)
+    }
+
     private fun nextHlcPacked(nowMs: Long = System.currentTimeMillis()): String {
         hlcLogicalCounter = (hlcLogicalCounter + 1) % 10_000
         return HybridLogicalClock(nowMs, hlcLogicalCounter, nodeId).pack()
     }
+
+    private fun parseRowVersionVector(row: Vault_items): Map<String, Long> =
+        runCatching {
+            json.parseToJsonElement(row.version_vector_json).jsonObject.mapNotNull { (k, v) ->
+                v.jsonPrimitive.longOrNull?.let { k to it }
+            }.toMap()
+        }.getOrDefault(mapOf(nodeId to row.updated_at))
 
     private suspend fun persistSnapshotToDbInternal(
         db: SafePocketDatabase,
@@ -1242,13 +1357,19 @@ class AndroidVaultRepository(
 
     private suspend fun upsertSingleItemInternal(
         db: SafePocketDatabase,
-        item: VaultItemPayload
+        item: VaultItemPayload,
+        hlcOverride: String? = null,
+        vvOverride: Map<String, Long>? = null
     ) {
         val aad = "safepocket:v${item.schemaVersion}:${item.category.name}:${item.id}".encodeToByteArray()
         val plaintext = json.encodeToString(item).encodeToByteArray()
         val (iv, ciphertext) = primitives.aes256GcmEncrypt(activeVaultItemKey32, plaintext, aad)
-        val hlc = nextHlcPacked(item.updatedAtEpochMs)
-        val versionVec = "{\"$nodeId\":${item.updatedAtEpochMs}}"
+        val hlc = hlcOverride?.let(::normalizeHlc) ?: nextHlcPacked(item.updatedAtEpochMs)
+        val versionVec = if (vvOverride != null) {
+            vvOverride.entries.joinToString(prefix = "{", postfix = "}") { "\"${it.key}\":${it.value}" }
+        } else {
+            "{\"$nodeId\":${item.updatedAtEpochMs}}"
+        }
 
         db.safePocketVaultQueries.upsertVaultItem(
             id = item.id,
@@ -1279,14 +1400,31 @@ class AndroidVaultRepository(
         )
         val hlc = nextHlcPacked(now)
         val versionVec = "{\"$nodeId\":$now}"
-        db.safePocketVaultQueries.markVaultItemTombstone(
-            emptyCiphertext = tombstoneCipher,
-            tombstoneIv = iv,
-            hlcTimestamp = hlc,
-            versionVectorJson = versionVec,
-            updatedAt = now,
-            id = itemId
-        )
+        val existingRow = db.safePocketVaultQueries.selectAllActiveItems().executeAsList().firstOrNull { it.id == itemId }
+        if (existingRow != null) {
+            db.safePocketVaultQueries.markVaultItemTombstone(
+                emptyCiphertext = tombstoneCipher,
+                tombstoneIv = iv,
+                hlcTimestamp = hlc,
+                versionVectorJson = versionVec,
+                updatedAt = now,
+                id = itemId
+            )
+        } else {
+            db.safePocketVaultQueries.upsertVaultItem(
+                id = itemId,
+                category = categoryName,
+                is_favorite = 0L,
+                expiry_epoch_day = null,
+                encrypted_payload = tombstoneCipher,
+                iv = iv,
+                schema_version = 1L,
+                hlc_timestamp = hlc,
+                version_vector_json = versionVec,
+                is_tombstone = 1L,
+                updated_at = now
+            )
+        }
         return EncryptedSyncRecord(
             entityId = itemId,
             entityType = "ITEM",
@@ -1309,37 +1447,23 @@ class AndroidVaultRepository(
         }.getOrNull()
     }
 
-    private fun rowToSyncRecord(row: Vault_items): EncryptedSyncRecord {
-        val vv = runCatching {
-            json.parseToJsonElement(row.version_vector_json).jsonObject.mapNotNull { (k, v) ->
-                v.jsonPrimitive.longOrNull?.let { k to it }
-            }.toMap()
-        }.getOrDefault(mapOf(nodeId to row.updated_at))
-
-        return EncryptedSyncRecord(
-            entityId = row.id,
-            entityType = "ITEM",
-            hlcPacked = row.hlc_timestamp,
-            versionVector = vv,
-            isTombstone = row.is_tombstone != 0L,
-            ivHex = ZeroKnowledgeEncryptionService.bytesToHex(row.iv),
-            ciphertextHex = ZeroKnowledgeEncryptionService.bytesToHex(row.encrypted_payload),
-            aadContext = "safepocket:v${row.schema_version}:${row.category}:${row.id}"
-        )
-    }
-
-    private suspend fun encryptItemToSyncRecord(item: VaultItemPayload): EncryptedSyncRecord {
+    private suspend fun encryptItemWithKey(
+        item: VaultItemPayload,
+        key32: ByteArray,
+        hlcOverride: String? = null,
+        vvOverride: Map<String, Long>? = null
+    ): EncryptedSyncRecord {
         val aadStr = "safepocket:v${item.schemaVersion}:${item.category.name}:${item.id}"
         val (iv, cipher) = primitives.aes256GcmEncrypt(
-            activeVaultItemKey32,
+            key32,
             json.encodeToString(item).encodeToByteArray(),
             aadStr.encodeToByteArray()
         )
         return EncryptedSyncRecord(
             entityId = item.id,
             entityType = "ITEM",
-            hlcPacked = nextHlcPacked(item.updatedAtEpochMs),
-            versionVector = mapOf(nodeId to item.updatedAtEpochMs),
+            hlcPacked = hlcOverride?.let(::normalizeHlc) ?: nextHlcPacked(item.updatedAtEpochMs),
+            versionVector = vvOverride ?: mapOf(nodeId to item.updatedAtEpochMs),
             isTombstone = false,
             ivHex = ZeroKnowledgeEncryptionService.bytesToHex(iv),
             ciphertextHex = ZeroKnowledgeEncryptionService.bytesToHex(cipher),
@@ -1347,13 +1471,44 @@ class AndroidVaultRepository(
         )
     }
 
-    private suspend fun decryptSyncRecordOrNull(rec: EncryptedSyncRecord): VaultItemPayload? {
+    private suspend fun encryptTombstoneWithKey(
+        entityId: String,
+        categoryName: String,
+        key32: ByteArray,
+        hlcPacked: String,
+        versionVector: Map<String, Long>
+    ): EncryptedSyncRecord {
+        val aadStr = "safepocket:v1:$categoryName:$entityId"
+        val (iv, cipher) = primitives.aes256GcmEncrypt(
+            key32,
+            "{\"deleted\":true}".encodeToByteArray(),
+            aadStr.encodeToByteArray()
+        )
+        return EncryptedSyncRecord(
+            entityId = entityId,
+            entityType = "ITEM",
+            hlcPacked = normalizeHlc(hlcPacked),
+            versionVector = versionVector,
+            isTombstone = true,
+            ivHex = ZeroKnowledgeEncryptionService.bytesToHex(iv),
+            ciphertextHex = ZeroKnowledgeEncryptionService.bytesToHex(cipher),
+            aadContext = aadStr
+        )
+    }
+
+    private suspend fun encryptItemToSyncRecord(item: VaultItemPayload): EncryptedSyncRecord =
+        encryptItemWithKey(item, resolveCloudSyncKey32())
+
+    private suspend fun decryptSyncRecordWithKeyOrNull(
+        rec: EncryptedSyncRecord,
+        key32: ByteArray
+    ): VaultItemPayload? {
         if (rec.isTombstone) return null
         return runCatching {
             val iv = ZeroKnowledgeEncryptionService.hexToBytes(rec.ivHex)
             val cipher = ZeroKnowledgeEncryptionService.hexToBytes(rec.ciphertextHex)
             val plain = primitives.aes256GcmDecrypt(
-                activeVaultItemKey32,
+                key32,
                 iv,
                 cipher,
                 rec.aadContext.encodeToByteArray()
@@ -1364,30 +1519,81 @@ class AndroidVaultRepository(
         }.getOrNull()
     }
 
-    private fun applyWinningSyncRecordToDb(db: SafePocketDatabase, rec: EncryptedSyncRecord) {
+    private suspend fun applyRemoteWinnerToLocalDb(
+        db: SafePocketDatabase?,
+        rec: EncryptedSyncRecord,
+        cloudKey32: ByteArray,
+        deltasToPush: MutableList<EncryptedSyncRecord>
+    ): Boolean {
         val parts = rec.aadContext.split(':')
         val categoryName = parts.getOrNull(2) ?: "SECURE_NOTE"
-        val iv = ZeroKnowledgeEncryptionService.hexToBytes(rec.ivHex)
-        val cipher = ZeroKnowledgeEncryptionService.hexToBytes(rec.ciphertextHex)
+        val normHlc = normalizeHlc(rec.hlcPacked)
         val vvJson = rec.versionVector.entries.joinToString(prefix = "{", postfix = "}") {
             "\"${it.key}\":${it.value}"
         }
-        val wallMs = runCatching { HybridLogicalClock.unpack(rec.hlcPacked).wallTimeEpochMs }
+        val wallMs = runCatching { HybridLogicalClock.unpack(normHlc).wallTimeEpochMs }
             .getOrDefault(System.currentTimeMillis())
 
-        db.safePocketVaultQueries.upsertVaultItem(
-            id = rec.entityId,
-            category = categoryName,
-            is_favorite = 0L,
-            expiry_epoch_day = null,
-            encrypted_payload = cipher,
-            iv = iv,
-            schema_version = 1L,
-            hlc_timestamp = rec.hlcPacked,
-            version_vector_json = vvJson,
-            is_tombstone = if (rec.isTombstone) 1L else 0L,
-            updated_at = wallMs
-        )
+        if (rec.isTombstone) {
+            if (db != null) {
+                val aadStr = "safepocket:v1:$categoryName:${rec.entityId}"
+                val (localIv, localCipher) = primitives.aes256GcmEncrypt(
+                    activeVaultItemKey32,
+                    "{\"deleted\":true}".encodeToByteArray(),
+                    aadStr.encodeToByteArray()
+                )
+                db.safePocketVaultQueries.upsertVaultItem(
+                    id = rec.entityId,
+                    category = categoryName,
+                    is_favorite = 0L,
+                    expiry_epoch_day = null,
+                    encrypted_payload = localCipher,
+                    iv = localIv,
+                    schema_version = 1L,
+                    hlc_timestamp = normHlc,
+                    version_vector_json = vvJson,
+                    is_tombstone = 1L,
+                    updated_at = wallMs
+                )
+            }
+            return true
+        }
+
+        // 1. Decrypt with unified v2 cross-platform cloudKey32
+        var decrypted = decryptSyncRecordWithKeyOrNull(rec, cloudKey32)
+        if (decrypted == null) {
+            // 2. Self-migration fallback: if this same device pushed a v0.3.x record under activeVaultItemKey32,
+            // decrypt it and automatically upgrade its cloud envelope to cloudKey32!
+            val legacyLocal = decryptSyncRecordWithKeyOrNull(rec, activeVaultItemKey32)
+            if (legacyLocal != null) {
+                decrypted = legacyLocal
+                deltasToPush += encryptItemWithKey(
+                    legacyLocal,
+                    cloudKey32,
+                    hlcOverride = normHlc,
+                    vvOverride = rec.versionVector
+                )
+            }
+        }
+        if (decrypted == null) {
+            SafePocketErrorHandler.record(
+                operation = "cloudSync.decryptSkip",
+                throwable = IllegalStateException("Skipped legacy undecryptable sync envelope ${rec.entityId}"),
+                epochMs = System.currentTimeMillis(),
+                surfaceBanner = false
+            )
+            return false
+        }
+
+        if (db != null) {
+            upsertSingleItemInternal(
+                db = db,
+                item = decrypted,
+                hlcOverride = normHlc,
+                vvOverride = rec.versionVector
+            )
+        }
+        return true
     }
 
     companion object {

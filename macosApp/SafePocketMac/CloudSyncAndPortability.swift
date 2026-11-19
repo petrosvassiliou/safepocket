@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import CommonCrypto
 import Security
 
 // MARK: - Zero-Knowledge Cloud Sync & Keychain Session (100% Compatible with Android & ChromeOS PWA)
@@ -16,6 +17,7 @@ struct MacCloudUserSession: Codable, Equatable {
     var email: String
     var idToken: String
     var refreshToken: String?
+    var cloudKeyHex: String? = nil
 }
 
 struct MacCloudEndpointConfig: Codable, Equatable {
@@ -35,6 +37,177 @@ struct MacEncryptedSyncDelta: Codable {
     var ciphertextHex: String
     var aadContext: String
     var isTombstone: Bool
+}
+
+struct MacPendingTombstone: Codable, Equatable {
+    var id: String
+    var category: String
+    var hlcPacked: String
+    var deletedAtMs: Int64
+}
+
+// MARK: - Canonical Cross-Platform Wire JSON Schema (100% Identical to Android VaultItemPayload & PWA VaultItem)
+
+struct MacCanonicalWireField: Codable {
+    var id: String
+    var labelKey: String
+    var isCustomLabel: Bool = false
+    var value: String
+    var valueType: String = "TEXT"
+    var isSensitive: Bool = false
+}
+
+struct MacCanonicalWireCardTheme: Codable {
+    var paletteId: String = "obsidian_slate"
+    var customColorHex: String? = nil
+    var showVisualCard: Bool? = true
+    var barcodeFormat: String? = nil
+    var networkBrand: String? = nil
+    var institutionId: String? = nil
+    var institutionName: String? = nil
+    var institutionDomain: String? = nil
+    var institutionLogoDataUri: String? = nil
+    var autoBrandColor: Bool? = true
+}
+
+struct MacCanonicalWireAttachment: Codable {
+    var id: String
+    var fileName: String
+    var mimeType: String
+    var side: String? = nil
+    var sizeBytes: Int64
+    var sha256Hex: String
+    var ivHex: String? = nil
+}
+
+struct MacCanonicalWireVaultItem: Codable {
+    var schemaVersion: Int = 1
+    var id: String
+    var category: String
+    var title: String
+    var subtitle: String = ""
+    var favorite: Bool = false
+    var pinned: Bool? = false
+    var isSampleItem: Bool? = false
+    var tags: [String] = []
+    var cardTheme: MacCanonicalWireCardTheme? = nil
+    var documentSubtype: String? = nil
+    var fields: [MacCanonicalWireField] = []
+    var attachments: [MacCanonicalWireAttachment] = []
+    var createdAtEpochMs: Int64
+    var updatedAtEpochMs: Int64
+}
+
+extension MacVaultEntry {
+    static let knownBuiltInSampleIds: Set<String> = [
+        "item-card-db-visa",
+        "item-card-n26-metal",
+        "item-card-alpine-metal",
+        "item-bank-ing-giro",
+        "item-bank-ing-sepa",
+        "item-bank-sepa-main",
+        "item-ins-tk-egk",
+        "item-ins-ehic-eu",
+        "item-mem-bahncard",
+        "item-mem-adac-plus",
+        "item-identity-primary",
+        "item-id-clara",
+        "item-id-eu-citizen",
+        "item-doc-hellenic-passport",
+        "item-doc-cie-italy",
+        "item-doc-passport-de",
+        "item-doc-passport-eu",
+        "item-note-home-safe",
+        "item-note-emergency",
+        "item-note-emergency-kit",
+        "item-note-vault-codes"
+    ]
+
+    var isBuiltInSampleEntry: Bool {
+        isSampleItem && Self.knownBuiltInSampleIds.contains(id) || isSampleItem
+    }
+
+    func toCanonicalWireData() throws -> Data {
+        let epochMs = Int64((updatedAt.timeIntervalSince1970 * 1000.0).rounded())
+        let domainVal = websiteUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let theme: MacCanonicalWireCardTheme? = (customColorHex != nil || networkBrand != nil || !domainVal.isEmpty)
+            ? MacCanonicalWireCardTheme(
+                paletteId: customColorHex != nil ? "custom" : "obsidian_slate",
+                customColorHex: customColorHex,
+                showVisualCard: true,
+                networkBrand: networkBrand,
+                institutionDomain: domainVal.isEmpty ? nil : domainVal,
+                autoBrandColor: true
+            )
+            : nil
+
+        let wireFields = fields.map { f in
+            MacCanonicalWireField(
+                id: f.id,
+                labelKey: f.labelKey,
+                isCustomLabel: f.isCustomLabel,
+                value: f.value,
+                valueType: f.valueType.rawValue,
+                isSensitive: f.isSensitive
+            )
+        }
+
+        let wire = MacCanonicalWireVaultItem(
+            schemaVersion: 1,
+            id: id,
+            category: category,
+            title: title,
+            subtitle: subtitle,
+            favorite: favorite,
+            pinned: pinned,
+            isSampleItem: isSampleItem,
+            tags: tags,
+            cardTheme: theme,
+            documentSubtype: nil,
+            fields: wireFields,
+            attachments: [],
+            createdAtEpochMs: epochMs,
+            updatedAtEpochMs: epochMs
+        )
+        return try JSONEncoder().encode(wire)
+    }
+
+    static func fromCanonicalOrLegacyData(_ data: Data, hlcPacked: String) -> MacVaultEntry? {
+        if let wire = try? JSONDecoder().decode(MacCanonicalWireVaultItem.self, from: data) {
+            let mappedFields: [MacVaultField] = wire.fields.map { wf in
+                let resolvedType = MacFieldValueType(rawValue: wf.valueType) ?? .text
+                return MacVaultField(
+                    id: wf.id,
+                    labelKey: wf.labelKey,
+                    isCustomLabel: wf.isCustomLabel,
+                    value: wf.value,
+                    valueType: resolvedType,
+                    isSensitive: wf.isSensitive
+                )
+            }
+            let updatedDate = Date(timeIntervalSince1970: Double(wire.updatedAtEpochMs) / 1000.0)
+            return MacVaultEntry(
+                id: wire.id,
+                category: wire.category,
+                title: wire.title,
+                subtitle: wire.subtitle,
+                fields: mappedFields,
+                tags: wire.tags,
+                customColorHex: wire.cardTheme?.customColorHex,
+                networkBrand: wire.cardTheme?.networkBrand,
+                pinned: wire.pinned ?? false,
+                favorite: wire.favorite,
+                isSampleItem: wire.isSampleItem ?? false,
+                updatedAt: updatedDate,
+                hlcPacked: hlcPacked
+            )
+        }
+        if var legacy = try? JSONDecoder().decode(MacVaultEntry.self, from: data) {
+            legacy.hlcPacked = hlcPacked
+            return legacy
+        }
+        return nil
+    }
 }
 
 enum MacKeychainStore {
@@ -111,6 +284,39 @@ enum MacZeroKnowledgeCrypto {
         return "spzk_\(hex)"
     }
 
+    /// Exact RFC 8018 PBKDF2-HMAC-SHA256 (100,000 iterations, 32-byte key) matching `HkdfSha256Pure.deriveCloudSyncKey`
+    /// on Android and `deriveZeroKnowledgeCloudSyncKeyHex` on ChromeOS / Web PWA byte-for-byte.
+    static func deriveCloudSyncKeyHex(email: String, syncPassword: String, uid: String) -> String {
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanUid = uid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let passwordStr = "safepocket-zk-cloud-sync-kek-v2:\(cleanEmail):\(syncPassword)"
+        let saltData = Data("safepocket-zk-cloud-salt-v2:\(cleanUid):\(cleanEmail)".utf8)
+        var derivedBytes = [UInt8](repeating: 0, count: 32)
+        let passwordData = Data(passwordStr.utf8)
+
+        passwordData.withUnsafeBytes { pwRaw in
+            saltData.withUnsafeBytes { saltRaw in
+                _ = CCKeyDerivationPBKDF(
+                    CCPBKDFAlgorithm(kCCPBKDF2),
+                    pwRaw.bindMemory(to: Int8.self).baseAddress,
+                    passwordData.count,
+                    saltRaw.bindMemory(to: UInt8.self).baseAddress,
+                    saltData.count,
+                    CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+                    100_000,
+                    &derivedBytes,
+                    32
+                )
+            }
+        }
+        return derivedBytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func symmetricKeyFromHex(_ hex: String) -> SymmetricKey? {
+        guard let data = Data(hexString: hex), data.count == 32 else { return nil }
+        return SymmetricKey(data: data)
+    }
+
     static func deriveVaultSymmetricKey(masterPassword: String, secretKey: String) -> SymmetricKey {
         let cleanKey = secretKey.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         let ikm = SymmetricKey(data: Data("safepocket-2skd:\(masterPassword):\(cleanKey)".utf8))
@@ -184,7 +390,13 @@ enum MacCloudSyncClient {
 
         let cleanApiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanApiKey.isEmpty {
-            return try authenticateEmbeddedFallback(action: action, cleanEmail: cleanEmail, zkPassword: zkPassword)
+            var embedded = try authenticateEmbeddedFallback(action: action, cleanEmail: cleanEmail, zkPassword: zkPassword)
+            embedded.cloudKeyHex = MacZeroKnowledgeCrypto.deriveCloudSyncKeyHex(
+                email: cleanEmail,
+                syncPassword: syncPassword,
+                uid: embedded.uid
+            )
+            return embedded
         }
 
         guard var components = URLComponents(string: "https://identitytoolkit.googleapis.com/v1/accounts:\(action)") else {
@@ -217,11 +429,17 @@ enum MacCloudSyncClient {
               let idToken = jsonObj["idToken"] as? String else {
             throw NSError(domain: "SafePocketCloudAuth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Incomplete Firebase Auth response"])
         }
+        let derivedCloudKeyHex = MacZeroKnowledgeCrypto.deriveCloudSyncKeyHex(
+            email: cleanEmail,
+            syncPassword: syncPassword,
+            uid: uid
+        )
         return MacCloudUserSession(
             uid: uid,
             email: resolvedEmail,
             idToken: idToken,
-            refreshToken: jsonObj["refreshToken"] as? String
+            refreshToken: jsonObj["refreshToken"] as? String,
+            cloudKeyHex: derivedCloudKeyHex
         )
     }
 
@@ -367,7 +585,8 @@ enum MacCloudSyncClient {
                             uid: nextUid,
                             email: updated.email,
                             idToken: updated.idToken,
-                            refreshToken: updated.refreshToken
+                            refreshToken: updated.refreshToken,
+                            cloudKeyHex: session.cloudKeyHex
                         )
                     }
                     return updated

@@ -46,6 +46,7 @@ enum class FieldValueType {
     IBAN,
     DATE_ISO,           // Formatted via locale-aware Intl rules; drives expiry warnings
     PHONE,
+    URL,
     EMAIL,
     MULTILINE_ADDRESS,
     MARKDOWN            // Rendered with copyable code/text blocks
@@ -376,6 +377,7 @@ object SampleVaultCatalogIds {
         "item-card-n26-metal",
         "item-card-alpine-metal",
         "item-bank-ing-giro",
+        "item-bank-ing-sepa",
         "item-bank-sepa-main",
         "item-ins-tk-egk",
         "item-ins-ehic-eu",

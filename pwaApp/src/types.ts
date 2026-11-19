@@ -41,6 +41,7 @@ export type FieldValueType =
   | 'IBAN'
   | 'DATE_ISO'
   | 'PHONE'
+  | 'URL'
   | 'EMAIL'
   | 'MULTILINE_ADDRESS'
   | 'MARKDOWN';
@@ -168,6 +169,7 @@ export const SAMPLE_VAULT_ITEM_IDS = new Set<string>([
   'item-card-n26-metal',
   'item-card-alpine-metal',
   'item-bank-ing-giro',
+  'item-bank-ing-sepa',
   'item-bank-sepa-main',
   'item-ins-tk-egk',
   'item-ins-ehic-eu',
@@ -237,6 +239,6 @@ export const SENSITIVE_FIELD_KEYS = new Set<string>([
 
 export const APP_BUILD_INFO = {
   appName: 'SafePocket',
-  versionName: '0.3.9',
-  versionCode: 14
+  versionName: '0.4.0',
+  versionCode: 15
 } as const;

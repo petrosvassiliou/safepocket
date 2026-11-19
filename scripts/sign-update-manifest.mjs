@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.9').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.4.0').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '14');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '15');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-19T08:25:00Z',
+    publishedAt: '2026-11-19T18:30:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} upgrades the macOS app icon to exact Apple macOS Dock & Finder proportions (full-size continuous squircle with top-lit Liquid Glass specular rim and full-scale shield + smart card hero emblem) and refreshes the live Dock tile automatically on launch.\n• Includes middle-pane + New top-bar placement on macOS plus all v0.3.7 UX & storage-mode upgrades.`,
-      de: `• SafePocket v${latestVersion} bringt das macOS-App-Icon auf exakte Apple-Dock- und Finder-Proportionen (vollflächiges kontinuierliches Squircle mit Liquid-Glass-Glanzkante und vergrößertem Schild- & Karten-Emblem) und aktualisiert das Dock-Symbol direkt beim Start.\n• Enthält den + Neu Button oben in der mittleren Spalte sowie alle v0.3.7-Verbesserungen.`,
-      it: `• SafePocket v${latestVersion} aggiorna l'icona macOS alle proporzioni standard del Dock e Finder Apple con bordo Liquid Glass ed emblema ingrandito, oltre al pulsante + Nuovo nella barra superiore centrale.`,
-      fr: `• SafePocket v${latestVersion} met à l'échelle l'icône macOS aux proportions exactes du Dock et du Finder Apple avec bordure Liquid Glass et emblème agrandi, ainsi que le bouton + Nouveau dans le volet central.`,
-      es: `• SafePocket v${latestVersion} ajusta el icono de macOS a las proporciones exactas del Dock y Finder de Apple con borde Liquid Glass y emblema ampliado, además del botón + Nuevo en el panel central.`,
-      el: `• Το SafePocket v${latestVersion} αναβαθμίζει το εικονίδιο macOS στις ακριβείς αναλογίες του Apple Dock & Finder με περίγραμμα Liquid Glass και μεγαλύτερο έμβλημα ασπίδας/κάρτας, μαζί με το κουμπί + Νέο στη μεσαία στήλη.`
+      en: `• SafePocket v${latestVersion} eliminates Google Play Protect dropper false-positives by removing REQUEST_INSTALL_PACKAGES and in-APK package installer sessions in favor of verified HTTPS release downloads.\n• Introduces Cross-Platform Zero-Knowledge Cloud Sync v2 (deterministic PBKDF2-HMAC-SHA256 100k-round Cloud Sync Key, canonical wire schema across Android/macOS/PWA, Pull-First CRDT reconciliation, real tombstones, and instant 5-second live background sync).`,
+      de: `• SafePocket v${latestVersion} beseitigt Google-Play-Protect-Warnungen durch Entfernen von REQUEST_INSTALL_PACKAGES und In-App-APK-Installationen zugunsten verifizierter HTTPS-Downloads.\n• Führt Cross-Platform Zero-Knowledge Cloud-Sync v2 ein (deterministischer PBKDF2-HMAC-SHA256-Schlüssel, einheitliches Schema für Android/macOS/PWA, Pull-First-CRDT-Abgleich, echte Lösch-Tombstones und sofortige Live-Synchronisation alle 5 Sekunden).`,
+      it: `• SafePocket v${latestVersion} elimina i falsi positivi di Google Play Protect rimuovendo REQUEST_INSTALL_PACKAGES e introduce Cloud Sync Zero-Knowledge multipiattaforma v2 istantaneo tra Android, macOS e PWA.`,
+      fr: `• SafePocket v${latestVersion} élimine les alertes Google Play Protect en supprimant REQUEST_INSTALL_PACKAGES et introduit la synchronisation Cloud Zero-Knowledge multiplateforme v2 instantanée entre Android, macOS et PWA.`,
+      es: `• SafePocket v${latestVersion} elimina las alertas de Google Play Protect al retirar REQUEST_INSTALL_PACKAGES e introduce sincronización en la nube Zero-Knowledge multiplataforma v2 instantánea entre Android, macOS y PWA.`,
+      el: `• Το SafePocket v${latestVersion} εξαλείφει τις προειδοποιήσεις του Google Play Protect αφαιρώντας το REQUEST_INSTALL_PACKAGES και εισάγει άμεσο συγχρονισμό Cloud Zero-Knowledge v2 σε πραγματικό χρόνο μεταξύ Android, macOS και PWA.`
     },
     artifacts: {
       'android-universal': {

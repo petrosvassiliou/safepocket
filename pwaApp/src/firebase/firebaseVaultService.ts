@@ -3,6 +3,7 @@ import type { SqliteWasmVaultDb } from '../db/sqliteWasmVaultDb';
 import {
   computeEmbeddedAuthVerifier,
   deriveZeroKnowledgeCloudAuthPassword,
+  deriveZeroKnowledgeCloudSyncKeyHex,
   type FirebaseAuthResult,
   firebaseAuthSignInRest,
   firebaseAuthSignUpRest,
@@ -26,7 +27,7 @@ export interface FirebaseWebConfig {
 /**
  * Provisioned Live Firebase Project (`safepocket-vault-eu`, Cloud Firestore `eur3` EU Multi-Region).
  * Public Firebase Web SDK identifiers; zero-knowledge security is enforced client-side via
- * Argon2id + Secret Key -> AES-256-GCM and server-side via `firebase/firestore.rules`.
+ * Argon2id + PBKDF2-SHA256 -> AES-256-GCM and server-side via `firebase/firestore.rules`.
  */
 export const DEFAULT_PROVISIONED_FIREBASE_CONFIG: Readonly<FirebaseWebConfig> = {
   apiKey: 'AIzaSyBCeyZx121Eq5xxyWZD4k3w1-9vyr0yIsw',
@@ -39,10 +40,9 @@ export const DEFAULT_PROVISIONED_FIREBASE_CONFIG: Readonly<FirebaseWebConfig> = 
 /**
  * Pre-Initialized Firebase Zero-Knowledge Database & User Authentication Service.
  *
- * Present and initialized from v0.1 app boot (even while Cloud Sync is disabled by default).
- * - Zero outbound network calls occur while `cloudSyncEnabled === false`.
- * - Pre-wired to live `safepocket-vault-eu` (`eur3`) in production/browser builds while remaining
- *   100% hermetic in unit tests (`MODE === 'test'`) unless explicitly configured.
+ * Persists authenticated Cloud Sync sessions in `localStorage` (with seamless migration from
+ * legacy `sessionStorage`) so standalone ChromeOS / Desktop PWAs keep Cloud Sync active across
+ * window restarts without silently dropping authentication.
  */
 export class FirebaseVaultService {
   private initialized = false;
@@ -98,22 +98,25 @@ export class FirebaseVaultService {
     }
     this.config = defaultCfg;
 
-    if (typeof sessionStorage !== 'undefined') {
-      const rawSession = sessionStorage.getItem(FIREBASE_SESSION_STORAGE_KEY);
-      if (rawSession) {
-        try {
-          this.activeSession = JSON.parse(rawSession) as FirebaseAuthResult;
-        } catch {
-          this.activeSession = null;
+    const persistedRaw =
+      (typeof localStorage !== 'undefined'
+        ? localStorage.getItem(FIREBASE_SESSION_STORAGE_KEY)
+        : null) ||
+      (typeof sessionStorage !== 'undefined'
+        ? sessionStorage.getItem(FIREBASE_SESSION_STORAGE_KEY)
+        : null);
+    if (persistedRaw) {
+      try {
+        this.activeSession = JSON.parse(persistedRaw) as FirebaseAuthResult;
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(FIREBASE_SESSION_STORAGE_KEY, persistedRaw);
         }
+      } catch {
+        this.activeSession = null;
       }
     }
   }
 
-  /**
-   * Initializes the Firebase local database tables at startup in dormant/standby mode
-   * without generating any network traffic.
-   */
   async initializeDormant(): Promise<void> {
     await this.sqliteDb.ensureInitialized();
     this.initialized = true;
@@ -166,7 +169,8 @@ export class FirebaseVaultService {
         : undefined,
       firebaseStorageBucket: this.config.storageBucket || undefined,
       firebaseUserId: this.activeSession?.uid,
-      bearerToken: overrideBearerToken || this.activeSession?.idToken
+      bearerToken: overrideBearerToken || this.activeSession?.idToken,
+      cloudKeyHex: this.activeSession?.cloudKeyHex
     };
   }
 
@@ -214,6 +218,11 @@ export class FirebaseVaultService {
     const saltHex = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
     const verifierHex = await computeEmbeddedAuthVerifier(saltHex, zkAuthPwd);
     const uid = `fb-uid-${bytesToHex(crypto.getRandomValues(new Uint8Array(8)))}`;
+    const cloudKeyHex = await deriveZeroKnowledgeCloudSyncKeyHex(
+      cleanEmail,
+      syncPassword,
+      uid
+    );
 
     await this.sqliteDb.createLocalFirebaseUser({
       uid,
@@ -227,6 +236,7 @@ export class FirebaseVaultService {
       uid,
       email: cleanEmail,
       idToken: `local-fb-jwt-${uid}`,
+      cloudKeyHex,
       mode: 'embedded-firebase-db'
     };
     this.persistSession(embeddedSession);
@@ -284,10 +294,16 @@ export class FirebaseVaultService {
       throw new Error('INVALID_PASSWORD: Cloud Sync authentication failed');
     }
 
+    const cloudKeyHex = await deriveZeroKnowledgeCloudSyncKeyHex(
+      cleanEmail,
+      syncPassword,
+      existing.uid
+    );
     const session: FirebaseAuthResult = {
       uid: existing.uid,
       email: existing.email,
       idToken: `local-fb-jwt-${existing.uid}`,
+      cloudKeyHex,
       mode: 'embedded-firebase-db'
     };
     this.persistSession(session);
@@ -327,7 +343,8 @@ export class FirebaseVaultService {
           ...current,
           uid: refreshed.uid || current.uid,
           idToken: refreshed.idToken,
-          refreshToken: refreshed.refreshToken
+          refreshToken: refreshed.refreshToken,
+          cloudKeyHex: current.cloudKeyHex
         };
         this.persistSession(updated);
         return { ...updated };
@@ -344,7 +361,7 @@ export class FirebaseVaultService {
       }
     }
 
-    if (!matchesProject || !claims?.exp || claims.exp <= nowSec + 10) {
+    if (!matchesProject || !claims?.exp || !current.cloudKeyHex || claims.exp <= nowSec + 10) {
       this.signOutCloudUser();
       throw new Error(
         'Cloud Sync session expired — please sign in again in Settings.'
@@ -355,6 +372,9 @@ export class FirebaseVaultService {
 
   signOutCloudUser(): void {
     this.activeSession = null;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(FIREBASE_SESSION_STORAGE_KEY);
+    }
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.removeItem(FIREBASE_SESSION_STORAGE_KEY);
     }
@@ -362,11 +382,12 @@ export class FirebaseVaultService {
 
   private persistSession(session: FirebaseAuthResult): void {
     this.activeSession = session;
+    const serialized = JSON.stringify(session);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(FIREBASE_SESSION_STORAGE_KEY, serialized);
+    }
     if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem(
-        FIREBASE_SESSION_STORAGE_KEY,
-        JSON.stringify(session)
-      );
+      sessionStorage.setItem(FIREBASE_SESSION_STORAGE_KEY, serialized);
     }
   }
 }

@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
-  "latestVersion": "0.3.9",
-  "versionCode": 14,
+  "latestVersion": "0.4.0",
+  "versionCode": 15,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-19T08:25:00Z",
+  "publishedAt": "2026-11-19T18:30:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:ac7dc5e8d2526598113fb7429b9b7c4a1929a01fdbd33dd77aa5fd2f2e59a5a0fbbe56665b72548b25f23b19b4c55398f181b7e28a10eeaf986eb9553e79a307",
+  "manifestSignature": "ed25519:791cef19929963e79b88e783aac1abce95481a833610445d81a489622af0001d1c025073f17209f8c4accfbabb9855c718d8ecef5e08b0d51dd9036967d3f205",
   "releaseNotes": {
-    "en": "• SafePocket v0.3.9 upgrades the macOS app icon to exact Apple macOS Dock & Finder proportions (full-size continuous squircle with top-lit Liquid Glass specular rim and full-scale shield + smart card hero emblem) and refreshes the live Dock tile automatically on launch.\n• Includes middle-pane + New top-bar placement on macOS plus all v0.3.7 UX & storage-mode upgrades.",
-    "de": "• SafePocket v0.3.9 bringt das macOS-App-Icon auf exakte Apple-Dock- und Finder-Proportionen (vollflächiges kontinuierliches Squircle mit Liquid-Glass-Glanzkante und vergrößertem Schild- & Karten-Emblem) und aktualisiert das Dock-Symbol direkt beim Start.\n• Enthält den + Neu Button oben in der mittleren Spalte sowie alle v0.3.7-Verbesserungen.",
-    "it": "• SafePocket v0.3.9 aggiorna l'icona macOS alle proporzioni standard del Dock e Finder Apple con bordo Liquid Glass ed emblema ingrandito, oltre al pulsante + Nuovo nella barra superiore centrale.",
-    "fr": "• SafePocket v0.3.9 met à l'échelle l'icône macOS aux proportions exactes du Dock et du Finder Apple avec bordure Liquid Glass et emblème agrandi, ainsi que le bouton + Nouveau dans le volet central.",
-    "es": "• SafePocket v0.3.9 ajusta el icono de macOS a las proporciones exactas del Dock y Finder de Apple con borde Liquid Glass y emblema ampliado, además del botón + Nuevo en el panel central.",
-    "el": "• Το SafePocket v0.3.9 αναβαθμίζει το εικονίδιο macOS στις ακριβείς αναλογίες του Apple Dock & Finder με περίγραμμα Liquid Glass και μεγαλύτερο έμβλημα ασπίδας/κάρτας, μαζί με το κουμπί + Νέο στη μεσαία στήλη."
+    "en": "• SafePocket v0.4.0 eliminates Google Play Protect dropper false-positives by removing REQUEST_INSTALL_PACKAGES and in-APK package installer sessions in favor of verified HTTPS release downloads.\n• Introduces Cross-Platform Zero-Knowledge Cloud Sync v2 (deterministic PBKDF2-HMAC-SHA256 100k-round Cloud Sync Key, canonical wire schema across Android/macOS/PWA, Pull-First CRDT reconciliation, real tombstones, and instant 5-second live background sync).",
+    "de": "• SafePocket v0.4.0 beseitigt Google-Play-Protect-Warnungen durch Entfernen von REQUEST_INSTALL_PACKAGES und In-App-APK-Installationen zugunsten verifizierter HTTPS-Downloads.\n• Führt Cross-Platform Zero-Knowledge Cloud-Sync v2 ein (deterministischer PBKDF2-HMAC-SHA256-Schlüssel, einheitliches Schema für Android/macOS/PWA, Pull-First-CRDT-Abgleich, echte Lösch-Tombstones und sofortige Live-Synchronisation alle 5 Sekunden).",
+    "it": "• SafePocket v0.4.0 elimina i falsi positivi di Google Play Protect rimuovendo REQUEST_INSTALL_PACKAGES e introduce Cloud Sync Zero-Knowledge multipiattaforma v2 istantaneo tra Android, macOS e PWA.",
+    "fr": "• SafePocket v0.4.0 élimine les alertes Google Play Protect en supprimant REQUEST_INSTALL_PACKAGES et introduit la synchronisation Cloud Zero-Knowledge multiplateforme v2 instantanée entre Android, macOS et PWA.",
+    "es": "• SafePocket v0.4.0 elimina las alertas de Google Play Protect al retirar REQUEST_INSTALL_PACKAGES e introduce sincronización en la nube Zero-Knowledge multiplataforma v2 instantánea entre Android, macOS y PWA.",
+    "el": "• Το SafePocket v0.4.0 εξαλείφει τις προειδοποιήσεις του Google Play Protect αφαιρώντας το REQUEST_INSTALL_PACKAGES και εισάγει άμεσο συγχρονισμό Cloud Zero-Knowledge v2 σε πραγματικό χρόνο μεταξύ Android, macOS και PWA."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.9/SafePocket-v0.3.9-b14-universal-arm64-x86_64.apk",
-      "sha256": "77302ebd81b098487e09ea47dbb0f594d11d903696bb8593f70e7011ba434170",
-      "sizeBytes": 38268800,
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.4.0/SafePocket-v0.4.0-b15-universal-arm64-x86_64.apk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 18432960,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -34,17 +34,17 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.9/SafePocket-0.3.9-14-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.4.0/SafePocket-0.4.0-15-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "abc91630e45db7712d60804fc436af5e2b8080e2a9359a7502da0d24254b432c",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 3654157,
+      "sizeBytes": 14208512,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "c8da2ff48a2b48cfad43c38927ee73b0410300ddb62079f8372eb203a1af8a94",
+      "sha256": "036175cd29ca61372911441717b5160d4b8da6741496b9cec62ae60f280c896a",
       "sizeBytes": 2709
     }
   }

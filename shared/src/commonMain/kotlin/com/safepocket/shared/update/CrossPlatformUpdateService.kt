@@ -26,12 +26,12 @@ import kotlinx.serialization.json.Json
  */
 object AppBuildInfo {
     const val APP_NAME = "SafePocket"
-    const val CURRENT_VERSION_NAME = "0.3.9"
-    const val CURRENT_VERSION_CODE = 14
+    const val CURRENT_VERSION_NAME = "0.4.0"
+    const val CURRENT_VERSION_CODE = 15
     val DISPLAY_STRING: String get() = "$APP_NAME v$CURRENT_VERSION_NAME (Build $CURRENT_VERSION_CODE)"
 
-    const val PRIMARY_MANIFEST_URL = "https://safepocket-vault-eu.web.app/version.json"
-    const val FALLBACK_MANIFEST_URL = "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json"
+    const val PRIMARY_MANIFEST_URL = "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json"
+    const val FALLBACK_MANIFEST_URL = "https://safepocket-vault-eu.web.app/version.json"
 }
 
 @Serializable

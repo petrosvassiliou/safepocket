@@ -656,6 +656,7 @@ export function isBuiltInSampleItem(
     item.id === 'item-card-n26-metal' ||
     item.id === 'item-card-alpine-metal' ||
     item.id === 'item-bank-ing-giro' ||
+    item.id === 'item-bank-ing-sepa' ||
     item.id === 'item-bank-sepa-main' ||
     item.id === 'item-ins-tk-egk' ||
     item.id === 'item-ins-ehic-eu' ||

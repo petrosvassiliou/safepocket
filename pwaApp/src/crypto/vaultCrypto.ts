@@ -210,9 +210,16 @@ export class ZeroKnowledgeVaultCrypto {
     if (!this.vaultKey) {
       throw new Error('SafePocket vault is locked');
     }
+    const normalizedItem: VaultItem = {
+      ...item,
+      schemaVersion: item.schemaVersion || 1,
+      attachments: item.attachments ?? [],
+      createdAtEpochMs: Math.round(item.createdAtEpochMs || Date.now()),
+      updatedAtEpochMs: Math.round(item.updatedAtEpochMs || Date.now())
+    };
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const aadContext = `safepocket:v${item.schemaVersion}:${item.category}:${item.id}`;
-    const plaintextBytes = new TextEncoder().encode(JSON.stringify(item));
+    const aadContext = `safepocket:v${normalizedItem.schemaVersion}:${normalizedItem.category}:${normalizedItem.id}`;
+    const plaintextBytes = new TextEncoder().encode(JSON.stringify(normalizedItem));
 
     const cipherBuffer = await crypto.subtle.encrypt(
       {
@@ -226,16 +233,16 @@ export class ZeroKnowledgeVaultCrypto {
     );
 
     return {
-      id: item.id,
-      category: item.category,
-      favorite: item.favorite,
+      id: normalizedItem.id,
+      category: normalizedItem.category,
+      favorite: normalizedItem.favorite,
       ivHex: bytesToHex(iv),
       ciphertextHex: bytesToHex(new Uint8Array(cipherBuffer)),
       aadContext,
       hlcPacked,
       versionVector,
       isTombstone: false,
-      updatedAtEpochMs: item.updatedAtEpochMs
+      updatedAtEpochMs: normalizedItem.updatedAtEpochMs
     };
   }
 
@@ -257,7 +264,143 @@ export class ZeroKnowledgeVaultCrypto {
       ciphertext as BufferSource
     );
 
-    return JSON.parse(new TextDecoder().decode(plainBuffer)) as VaultItem;
+    const parsed = JSON.parse(new TextDecoder().decode(plainBuffer)) as VaultItem;
+    return {
+      ...parsed,
+      schemaVersion: parsed.schemaVersion || 1,
+      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+      fields: Array.isArray(parsed.fields) ? parsed.fields : [],
+      attachments: Array.isArray(parsed.attachments)
+        ? parsed.attachments.map((a) => ({ ...a, ivHex: a.ivHex ?? '' }))
+        : [],
+      createdAtEpochMs: Math.round(parsed.createdAtEpochMs || Date.now()),
+      updatedAtEpochMs: Math.round(parsed.updatedAtEpochMs || Date.now())
+    };
+  }
+
+  private async importAesKeyFromHex(
+    keyHex: string,
+    usages: KeyUsage[]
+  ): Promise<CryptoKey> {
+    const clean = keyHex.trim().toLowerCase();
+    if (clean.length !== 64) {
+      throw new Error('Invalid 256-bit Cloud Sync key hex');
+    }
+    const rawBytes = hexToBytes(clean);
+    return crypto.subtle.importKey(
+      'raw',
+      rawBytes as BufferSource,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      usages
+    );
+  }
+
+  async encryptVaultItemWithKeyHex(
+    item: VaultItem,
+    keyHex: string,
+    hlcPacked: string,
+    versionVector: Record<string, number>
+  ): Promise<EncryptedVaultRow> {
+    const aesKey = await this.importAesKeyFromHex(keyHex, ['encrypt']);
+    const normalizedItem: VaultItem = {
+      ...item,
+      schemaVersion: item.schemaVersion || 1,
+      attachments: item.attachments ?? [],
+      createdAtEpochMs: Math.round(item.createdAtEpochMs || Date.now()),
+      updatedAtEpochMs: Math.round(item.updatedAtEpochMs || Date.now())
+    };
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const aadContext = `safepocket:v${normalizedItem.schemaVersion}:${normalizedItem.category}:${normalizedItem.id}`;
+    const plaintextBytes = new TextEncoder().encode(JSON.stringify(normalizedItem));
+    const cipherBuffer = await crypto.subtle.encrypt(
+      {
+        name: 'AES-GCM',
+        iv,
+        additionalData: new TextEncoder().encode(aadContext),
+        tagLength: 128
+      },
+      aesKey,
+      plaintextBytes
+    );
+    return {
+      id: normalizedItem.id,
+      category: normalizedItem.category,
+      favorite: normalizedItem.favorite,
+      ivHex: bytesToHex(iv),
+      ciphertextHex: bytesToHex(new Uint8Array(cipherBuffer)),
+      aadContext,
+      hlcPacked,
+      versionVector,
+      isTombstone: false,
+      updatedAtEpochMs: normalizedItem.updatedAtEpochMs
+    };
+  }
+
+  async createTombstoneRowWithKeyHex(
+    itemId: string,
+    category: VaultItem['category'],
+    keyHex: string,
+    hlcPacked: string,
+    versionVector: Record<string, number>
+  ): Promise<EncryptedVaultRow> {
+    const aesKey = await this.importAesKeyFromHex(keyHex, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const aadContext = `safepocket:v1:${category}:${itemId}`;
+    const tombstoneMarker = new TextEncoder().encode('{"deleted":true}');
+    const cipherBuf = await crypto.subtle.encrypt(
+      {
+        name: 'AES-GCM',
+        iv,
+        additionalData: new TextEncoder().encode(aadContext),
+        tagLength: 128
+      },
+      aesKey,
+      tombstoneMarker
+    );
+    return {
+      id: itemId,
+      category,
+      favorite: false,
+      ivHex: bytesToHex(iv),
+      ciphertextHex: bytesToHex(new Uint8Array(cipherBuf)),
+      aadContext,
+      hlcPacked,
+      versionVector,
+      isTombstone: true,
+      updatedAtEpochMs: Date.now()
+    };
+  }
+
+  async decryptVaultRowWithKeyHex(
+    row: EncryptedVaultRow,
+    keyHex: string
+  ): Promise<VaultItem> {
+    const aesKey = await this.importAesKeyFromHex(keyHex, ['decrypt']);
+    const iv = hexToBytes(row.ivHex);
+    const ciphertext = hexToBytes(row.ciphertextHex);
+    const plainBuffer = await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: iv as BufferSource,
+        additionalData: new TextEncoder().encode(row.aadContext),
+        tagLength: 128
+      },
+      aesKey,
+      ciphertext as BufferSource
+    );
+    const parsed = JSON.parse(new TextDecoder().decode(plainBuffer)) as VaultItem;
+    return {
+      ...parsed,
+      schemaVersion: parsed.schemaVersion || 1,
+      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+      fields: Array.isArray(parsed.fields) ? parsed.fields : [],
+      attachments: Array.isArray(parsed.attachments)
+        ? parsed.attachments.map((a) => ({ ...a, ivHex: a.ivHex ?? '' }))
+        : [],
+      createdAtEpochMs: Math.round(parsed.createdAtEpochMs || Date.now()),
+      updatedAtEpochMs: Math.round(parsed.updatedAtEpochMs || Date.now())
+    };
   }
 
   async encryptBinaryAttachment(

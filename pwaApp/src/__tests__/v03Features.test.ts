@@ -19,16 +19,20 @@ import {
 import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
 import { IdleAutoLockMonitor } from '../security/autoLockMonitor';
 import {
+  deriveZeroKnowledgeCloudSyncKeyHex,
   firebaseRefreshIdTokenRest,
   inspectFirebaseJwtClaims
 } from '../sync/liveCloudConnectors';
 import {
+  type CloudCipherBridge,
   EncryptedLocalVaultDb,
   FirebaseZeroKnowledgeAdapter,
   GoogleDriveAppDataAdapter,
+  HybridClock,
+  normalizeHlcPacked,
   VaultSyncCoordinator
 } from '../sync/syncAdapters';
-import { APP_BUILD_INFO } from '../types';
+import { APP_BUILD_INFO, type VaultItem } from '../types';
 import {
   analyzeAndFormatCardNumber,
   analyzeAndFormatIban,
@@ -40,7 +44,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.3.9 (Build 14) Feature Suite', () => {
+describe('SafePocket v0.4.0 (Build 15) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -311,13 +315,13 @@ describe('SafePocket v0.3.9 (Build 14) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.9 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.9');
-    expect(APP_BUILD_INFO.versionCode).toBe(14);
+  it('7. Cross-Platform v0.4.0 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.4.0');
+    expect(APP_BUILD_INFO.versionCode).toBe(15);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
-    // Verify Android ripple elimination, bottom-right sync pill, swipe & right-click context menu, smart fields & Play Protect updater
+    // Verify Android ripple elimination, bottom-right sync pill, swipe & right-click context menu, smart fields & Play Protect compliance
     const smoothComponents = fs.readFileSync(
       path.join(
         repoRoot,
@@ -372,6 +376,13 @@ describe('SafePocket v0.3.9 (Build 14) Feature Suite', () => {
     );
     expect(sharedUpdater).toContain('Ed25519VerifierPure.verify');
 
+    const androidManifest = fs.readFileSync(
+      path.join(repoRoot, 'androidApp/src/main/AndroidManifest.xml'),
+      'utf-8'
+    );
+    expect(androidManifest).not.toContain('REQUEST_INSTALL_PACKAGES');
+    expect(androidManifest).not.toContain('PackageInstallerStatusReceiver');
+
     const playProtect = fs.readFileSync(
       path.join(
         repoRoot,
@@ -379,16 +390,18 @@ describe('SafePocket v0.3.9 (Build 14) Feature Suite', () => {
       ),
       'utf-8'
     );
-    expect(playProtect).toContain('canInstallPackages');
-    expect(playProtect).toContain('verifyApkSigningCertificate');
-    expect(playProtect).toContain('INSTALL_REASON_USER');
+    expect(playProtect).toContain('Intent.ACTION_VIEW');
+    expect(playProtect).toContain(
+      'https://github.com/petrosvassiliou/safepocket/releases/'
+    );
+    expect(playProtect).not.toContain('android.content.pm.PackageInstaller');
 
     // Verify macOS CryptoKit Ed25519 in-app updater, NWPathMonitor exclusive cloud offline sync, live Dock icon refresh, swipe & context menus
     const macApp = fs.readFileSync(
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.9 (Build 14)');
+    expect(macApp).toContain('SafePocket v0.4.0 (Build 15)');
     expect(macApp).toContain('NSApplication.shared.applicationIconImage = appIcon');
     expect(macApp).toContain('noteFileSystemChanged(destApp.path)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
@@ -1011,6 +1024,294 @@ describe('SafePocket v0.3.9 (Build 14) Feature Suite', () => {
     expect(pwaShell).toContain('entryEl.getBoundingClientRect()');
     expect(pwaCss).toContain('.sp-context-item:hover');
     expect(pwaCss).toContain('.sp-context-item.is-danger:hover');
+  });
+
+  it('15. Cross-Platform Zero-Knowledge Sync v2: PBKDF2-100k Test Vector, Distinct-Secret-Key Multi-Device Sync, Pull-First CRDT, Tombstones & macOS Wire Compatibility', async () => {
+    // 1) Verify pinned RFC 8018 PBKDF2-HMAC-SHA256 (100,000 rounds) test vector shared across Kotlin, Swift & WebCrypto
+    const cloudKeyHex = await deriveZeroKnowledgeCloudSyncKeyHex(
+      'Clara@SafePocket.EU ',
+      'MyStrongCloudPass!2026',
+      'uid_eu_test_12345'
+    );
+    expect(cloudKeyHex).toBe(
+      'e5f20ce7e6b0f14c9175cd10bba9dafb54f4e2014d2d7e89b9edb97684df6001'
+    );
+
+    // 2) Simulate two independent devices with completely DIFFERENT local Secret Keys & Argon2id salts
+    const sharedCloudReplica = new SqliteWasmVaultDb(false);
+    await sharedCloudReplica.ensureInitialized();
+
+    const makeDevice = async (nodeId: string, masterPass: string) => {
+      const localSqlite = new SqliteWasmVaultDb(false);
+      await localSqlite.ensureInitialized();
+      const localCrypto = new ZeroKnowledgeVaultCrypto({
+        memorySizeKiB: 1024,
+        iterations: 1,
+        parallelism: 1
+      });
+      await localCrypto.initializeOrUnlock(
+        masterPass,
+        generateFormattedSecretKey()
+      );
+      const fbAdapter = new FirebaseZeroKnowledgeAdapter(sharedCloudReplica);
+      const gdAdapter = new GoogleDriveAppDataAdapter();
+      const coord = new VaultSyncCoordinator(fbAdapter, gdAdapter);
+      coord.setStorageMode('CLOUD_SYNC');
+      const db = new EncryptedLocalVaultDb(localSqlite, coord);
+      const bridge: CloudCipherBridge = {
+        isActive: () => true,
+        toCloudRow: async (localRow) => {
+          const normHlc = normalizeHlcPacked(localRow.hlcPacked);
+          if (localRow.isTombstone) {
+            return localCrypto.createTombstoneRowWithKeyHex(
+              localRow.id,
+              localRow.category,
+              cloudKeyHex,
+              normHlc,
+              localRow.versionVector
+            );
+          }
+          const item = await localCrypto.decryptVaultRow(localRow);
+          if (isBuiltInSampleItem(item)) return null;
+          return localCrypto.encryptVaultItemWithKeyHex(
+            item,
+            cloudKeyHex,
+            normHlc,
+            localRow.versionVector
+          );
+        },
+        fromCloudRow: async (cloudRow) => {
+          const normHlc = normalizeHlcPacked(cloudRow.hlcPacked);
+          if (cloudRow.isTombstone) {
+            return {
+              localRow: await localCrypto.createTombstoneRow(
+                cloudRow.id,
+                cloudRow.category,
+                normHlc,
+                cloudRow.versionVector
+              )
+            };
+          }
+          const item = await localCrypto.decryptVaultRowWithKeyHex(
+            cloudRow,
+            cloudKeyHex
+          );
+          return {
+            localRow: await localCrypto.encryptVaultItem(
+              item,
+              normHlc,
+              cloudRow.versionVector
+            )
+          };
+        }
+      };
+      db.bindCloudCipherBridge(bridge);
+      return {
+        localSqlite,
+        localCrypto,
+        coord,
+        db,
+        hlc: new HybridClock(nodeId),
+        nodeId
+      };
+    };
+
+    const deviceA = await makeDevice('android-pixel9', 'DeviceAMaster!1');
+    const deviceB = await makeDevice('macos-m4pro', 'CompletelyDifferentMaster!2');
+
+    // Seed untouched built-in sample item on Device B -> must NEVER pollute Cloud!
+    const sampleB = createInitialSampleVaultItems()[0];
+    await deviceB.db.saveEncryptedRow(
+      await deviceB.localCrypto.encryptVaultItem(
+        sampleB,
+        deviceB.hlc.nowPacked(1_700_000_001_000),
+        { [deviceB.nodeId]: 1_700_000_001_000 }
+      )
+    );
+
+    // Create real user item on Device A and sync
+    const createdItem: VaultItem = {
+      schemaVersion: 1,
+      id: 'item-cross-platform-visa-1',
+      category: 'PAYMENT_CARD',
+      title: 'Alpha Bank Gold Visa',
+      subtitle: 'Primary Travel Card',
+      favorite: true,
+      pinned: true,
+      tags: ['travel', 'visa'],
+      fields: [
+        {
+          id: 'f-pan',
+          labelKey: 'field_card_number',
+          value: '4539 0075 1284 4918',
+          valueType: 'NUMBER',
+          isSensitive: true
+        }
+      ],
+      attachments: [],
+      createdAtEpochMs: 1_700_000_010_000,
+      updatedAtEpochMs: 1_700_000_010_000,
+      isSampleItem: false
+    };
+    await deviceA.db.saveEncryptedRow(
+      await deviceA.localCrypto.encryptVaultItem(
+        createdItem,
+        deviceA.hlc.nowPacked(1_700_000_010_000),
+        { [deviceA.nodeId]: 1_700_000_010_000 }
+      )
+    );
+
+    const syncA1 = await deviceA.db.reconcileCloudSessionAutomatically(
+      'default-vault',
+      'FIREBASE:uid_eu_test_12345'
+    );
+    expect(syncA1?.pushedCount).toBe(1);
+
+    // Idle 5-second background sync when nothing changed -> 0 redundant writes!
+    const syncAIdle = await deviceA.db.reconcileCloudSessionAutomatically(
+      'default-vault',
+      'FIREBASE:uid_eu_test_12345'
+    );
+    expect(syncAIdle?.pushedCount).toBe(0);
+
+    // Sync Device B: sample item is NOT pushed (pushedCount === 0), and Device A's item decrypts 100% cleanly on Device B!
+    const syncB1 = await deviceB.db.reconcileCloudSessionAutomatically(
+      'default-vault',
+      'FIREBASE:uid_eu_test_12345'
+    );
+    expect(syncB1?.pushedCount).toBe(0);
+    expect(syncB1?.pulledCount).toBe(1);
+    const bRowsAfterPull = (await deviceB.db.loadAllEncryptedRows()).filter(
+      (r) => r.id === createdItem.id
+    );
+    expect(bRowsAfterPull.length).toBe(1);
+    const decryptedOnB = await deviceB.localCrypto.decryptVaultRow(
+      bRowsAfterPull[0]
+    );
+    expect(decryptedOnB.title).toBe('Alpha Bank Gold Visa');
+    expect(decryptedOnB.fields[0].value).toBe('4539 0075 1284 4918');
+
+    // 3) Pull-First Guarantee: Device A makes a newer edit, then Device B syncs with stale v1 local state -> MUST NOT overwrite Device A's newer edit!
+    const editedOnA: VaultItem = {
+      ...createdItem,
+      title: 'Alpha Bank Platinum Visa (Edited on Android)',
+      updatedAtEpochMs: 1_700_000_050_000
+    };
+    await deviceA.db.saveEncryptedRow(
+      await deviceA.localCrypto.encryptVaultItem(
+        editedOnA,
+        deviceA.hlc.nowPacked(1_700_000_050_000),
+        { [deviceA.nodeId]: 1_700_000_050_000 }
+      )
+    );
+    const syncA2 = await deviceA.db.reconcileCloudSessionAutomatically(
+      'default-vault',
+      'FIREBASE:uid_eu_test_12345'
+    );
+    expect(syncA2?.pushedCount).toBe(1);
+
+    const syncB2 = await deviceB.db.reconcileCloudSessionAutomatically(
+      'default-vault',
+      'FIREBASE:uid_eu_test_12345'
+    );
+    expect(syncB2?.pushedCount).toBe(0);
+    const bUpdatedRow = (await deviceB.db.loadAllEncryptedRows()).find(
+      (r) => r.id === createdItem.id
+    )!;
+    expect((await deviceB.localCrypto.decryptVaultRow(bUpdatedRow)).title).toBe(
+      'Alpha Bank Platinum Visa (Edited on Android)'
+    );
+
+    // 4) Cross-Device Tombstone Propagation without Resurrection: Device B deletes item -> Device A deletes it cleanly on sync!
+    await deviceB.db.saveEncryptedRow(
+      await deviceB.localCrypto.createTombstoneRow(
+        createdItem.id,
+        createdItem.category,
+        deviceB.hlc.nowPacked(1_700_000_090_000),
+        {
+          [deviceA.nodeId]: 1_700_000_050_000,
+          [deviceB.nodeId]: 1_700_000_090_000
+        }
+      )
+    );
+    const syncBDelete = await deviceB.db.reconcileCloudSessionAutomatically(
+      'default-vault',
+      'FIREBASE:uid_eu_test_12345'
+    );
+    expect(syncBDelete?.pushedCount).toBe(1);
+
+    await deviceA.db.reconcileCloudSessionAutomatically(
+      'default-vault',
+      'FIREBASE:uid_eu_test_12345'
+    );
+    const activeOnAAfterDelete = await deviceA.db.loadAllEncryptedRows();
+    expect(
+      activeOnAAfterDelete.some((r) => r.id === createdItem.id)
+    ).toBe(false);
+
+    // 5) Verify macOS Canonical Wire JSON (URL field enum + integer epochMs) decrypts cleanly
+    const macWireItem: VaultItem = {
+      schemaVersion: 1,
+      id: 'mac-wire-item-1',
+      category: 'BANK_ACCOUNT',
+      title: 'DKB Girokonto',
+      subtitle: 'DE89 3704 0044 0532 0130 00',
+      favorite: false,
+      pinned: false,
+      tags: ['sepa'],
+      cardTheme: {
+        paletteId: 'nordic_ocean',
+        autoBrandColor: true,
+        institutionDomain: 'dkb.de'
+      },
+      fields: [
+        {
+          id: 'f-url',
+          labelKey: 'field_institution_domain',
+          value: 'https://www.dkb.de',
+          valueType: 'URL'
+        }
+      ],
+      attachments: [],
+      createdAtEpochMs: 1_700_000_100_000,
+      updatedAtEpochMs: 1_700_000_100_000
+    };
+    const macCloudRow = await deviceA.localCrypto.encryptVaultItemWithKeyHex(
+      macWireItem,
+      cloudKeyHex,
+      '001700000100000:0000:macos-node',
+      { 'macos-node': 1_700_000_100_000 }
+    );
+    const decodedMacWire = await deviceB.localCrypto.decryptVaultRowWithKeyHex(
+      macCloudRow,
+      cloudKeyHex
+    );
+    expect(decodedMacWire.fields[0].valueType).toBe('URL');
+    expect(decodedMacWire.title).toBe('DKB Girokonto');
+
+    // 6) Verify Kotlin & Swift Cross-Platform Sync v2 source invariants
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const ktCrypto = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'shared/src/commonMain/kotlin/com/safepocket/shared/crypto/Argon2idPure.kt'
+      ),
+      'utf-8'
+    );
+    const macCloudSwift = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/CloudSyncAndPortability.swift'),
+      'utf-8'
+    );
+    const macAppSwift = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    expect(ktCrypto).toContain('safepocket-zk-cloud-sync-kek-v2:');
+    expect(ktCrypto).toContain('iterations = 100_000');
+    expect(macCloudSwift).toContain('safepocket-zk-cloud-sync-kek-v2:');
+    expect(macCloudSwift).toContain('MacCanonicalWireVaultItem');
+    expect(macCloudSwift).toContain('MacPendingTombstone');
+    expect(macAppSwift).toContain('startLiveCloudSyncLoop');
   });
 });
 

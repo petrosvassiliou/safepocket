@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       version_name:
-        description: 'Semantic release version (current: 0.3.9)'
+        description: 'Semantic release version (current: 0.4.0)'
         required: false
-        default: '0.3.9'
+        default: '0.4.0'
       version_code:
-        description: 'Monotonic integer build number (current: 14)'
+        description: 'Monotonic integer build number (current: 15)'
         required: false
-        default: '14'
+        default: '15'
 
 permissions:
   contents: write
@@ -63,12 +63,14 @@ jobs:
               echo "version_code=13" >> "${GITHUB_OUTPUT}"
             elif [[ "${RAW_TAG}" == "0.3.9" ]]; then
               echo "version_code=14" >> "${GITHUB_OUTPUT}"
+            elif [[ "${RAW_TAG}" == "0.4" || "${RAW_TAG}" == "0.4.0" ]]; then
+              echo "version_code=15" >> "${GITHUB_OUTPUT}"
             else
-              echo "version_code=${GITHUB_RUN_NUMBER:-14}" >> "${GITHUB_OUTPUT}"
+              echo "version_code=${GITHUB_RUN_NUMBER:-15}" >> "${GITHUB_OUTPUT}"
             fi
           else
-            echo "version_name=${{ inputs.version_name || '0.3.9' }}" >> "${GITHUB_OUTPUT}"
-            echo "version_code=${{ inputs.version_code || '14' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_name=${{ inputs.version_name || '0.4.0' }}" >> "${GITHUB_OUTPUT}"
+            echo "version_code=${{ inputs.version_code || '15' }}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Setup Node.js 24 LTS
