@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
   "channel": "stable",
-  "latestVersion": "0.3.8",
-  "versionCode": 13,
+  "latestVersion": "0.3.9",
+  "versionCode": 14,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-19T08:05:00Z",
+  "publishedAt": "2026-11-19T08:25:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:81246295599e002c612de4ae88051c9a6284eb6397f9e14f81db5d3cde8bbe96f5bd3b79326a90447c1e84ce37beb5712b9433425e8d19954eeab05ebff5410c",
+  "manifestSignature": "ed25519:8bdf9ea13e3d6ffa78b831c0b37cdbc22f05c8e4e48721ceb8b930845544c95226daf9e2ab69c92253a5f053cb8edbf1aee4fa67dbf8453860bc3e60d5f93f07",
   "releaseNotes": {
-    "en": "• SafePocket v0.3.8 anchors the + New category menu button directly inside the middle list pane's top bar on macOS (matching Android / Googlebook OS and ChromeOS / Web PWA).\n• Includes all v0.3.7 upgrades: centered sidebar footer icons, category-free item dialogs, side-by-side Local DB vs Cloud-Sync cards with 1-click sync pause/resume, elevated modal footers, and top-anchored hover context menus.",
-    "de": "• SafePocket v0.3.8 platziert den + Neu Kategorie-Button auf macOS direkt oben in der mittleren Listen-Spalte (analog zu Android / Googlebook OS und ChromeOS / Web PWA).\n• Enthält alle v0.3.7-Verbesserungen: zentrierte Symbole unten links, nebeneinanderliegende Karten für Lokale DB & Cloud-Sync mit 1-Klick-Pause/Fortsetzen, erhöhte Dialog-Schaltflächen und Kontextmenüs direkt über dem Eintrag.",
-    "it": "• SafePocket v0.3.8 posiziona il pulsante + Nuovo direttamente nella barra superiore del pannello centrale su macOS.\n• Include tutti i miglioramenti v0.3.7: icone centrate, schede affiancate DB locale e Cloud-Sync, pulsanti modali rialzati e menu contestuali sopra l'elemento.",
-    "fr": "• SafePocket v0.3.8 place le bouton + Nouveau directement dans la barre supérieure du volet central sur macOS.\n• Inclut toutes les améliorations v0.3.7 : icônes centrées, cartes Base locale et Cloud-Sync côte à côte, boutons modaux rehaussés et menus contextuels au-dessus de l'élément.",
-    "es": "• SafePocket v0.3.8 sitúa el botón + Nuevo directamente en la barra superior del panel central en macOS.\n• Incluye todas las mejoras de v0.3.7: iconos centrados, tarjetas BD local y Cloud-Sync lado a lado, botones modales elevados y menús contextuales sobre el elemento.",
-    "el": "• Το SafePocket v0.3.8 τοποθετεί το κουμπί + Νέο απευθείας στην επάνω μπάρα της μεσαίας στήλης στο macOS.\n• Περιλαμβάνει όλες τις βελτιώσεις v0.3.7: κεντραρισμένα εικονίδια, κάρτες Τοπική ΒΔ & Cloud-Sync δίπλα-δίπλα, ανυψωμένα κουμπιά διαλόγων και μενού δεξιού κλικ πάνω από το στοιχείο."
+    "en": "• SafePocket v0.3.9 upgrades the macOS app icon to exact Apple macOS Dock & Finder proportions (full-size continuous squircle with top-lit Liquid Glass specular rim and full-scale shield + smart card hero emblem) and refreshes the live Dock tile automatically on launch.\n• Includes middle-pane + New top-bar placement on macOS plus all v0.3.7 UX & storage-mode upgrades.",
+    "de": "• SafePocket v0.3.9 bringt das macOS-App-Icon auf exakte Apple-Dock- und Finder-Proportionen (vollflächiges kontinuierliches Squircle mit Liquid-Glass-Glanzkante und vergrößertem Schild- & Karten-Emblem) und aktualisiert das Dock-Symbol direkt beim Start.\n• Enthält den + Neu Button oben in der mittleren Spalte sowie alle v0.3.7-Verbesserungen.",
+    "it": "• SafePocket v0.3.9 aggiorna l'icona macOS alle proporzioni standard del Dock e Finder Apple con bordo Liquid Glass ed emblema ingrandito, oltre al pulsante + Nuovo nella barra superiore centrale.",
+    "fr": "• SafePocket v0.3.9 met à l'échelle l'icône macOS aux proportions exactes du Dock et du Finder Apple avec bordure Liquid Glass et emblème agrandi, ainsi que le bouton + Nouveau dans le volet central.",
+    "es": "• SafePocket v0.3.9 ajusta el icono de macOS a las proporciones exactas del Dock y Finder de Apple con borde Liquid Glass y emblema ampliado, además del botón + Nuevo en el panel central.",
+    "el": "• Το SafePocket v0.3.9 αναβαθμίζει το εικονίδιο macOS στις ακριβείς αναλογίες του Apple Dock & Finder με περίγραμμα Liquid Glass και μεγαλύτερο έμβλημα ασπίδας/κάρτας, μαζί με το κουμπί + Νέο στη μεσαία στήλη."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.8/SafePocket-v0.3.8-b13-universal-arm64-x86_64.apk",
-      "sha256": "5bd3124e98454d455650bdcf538713e1e11d1e7588d4a64f8ad359099c5ad81a",
-      "sizeBytes": 38268805,
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.9/SafePocket-v0.3.9-b14-universal-arm64-x86_64.apk",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 18432960,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -34,17 +34,17 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.8/SafePocket-0.3.8-13-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.9/SafePocket-0.3.9-14-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "02089bd9030295c7dcc637ed0fecd2de49c7469704cbada9fe5e8772cefb1ff0",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 3264933,
+      "sizeBytes": 14208512,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "d30b54e0a15d05fa9f9a014c152994969cc1aa504dd6f423f2e83ef339a81f11",
+      "sha256": "c8da2ff48a2b48cfad43c38927ee73b0410300ddb62079f8372eb203a1af8a94",
       "sizeBytes": 2709
     }
   }

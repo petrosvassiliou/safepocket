@@ -68,11 +68,11 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.8').replace(
+  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.3.9').replace(
     /^v/i,
     ''
   );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '13');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '14');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -91,17 +91,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-19T08:05:00Z',
+    publishedAt: '2026-11-19T08:25:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} anchors the + New category menu button directly inside the middle list pane's top bar on macOS (matching Android / Googlebook OS and ChromeOS / Web PWA).\n• Includes all v0.3.7 upgrades: centered sidebar footer icons, category-free item dialogs, side-by-side Local DB vs Cloud-Sync cards with 1-click sync pause/resume, elevated modal footers, and top-anchored hover context menus.`,
-      de: `• SafePocket v${latestVersion} platziert den + Neu Kategorie-Button auf macOS direkt oben in der mittleren Listen-Spalte (analog zu Android / Googlebook OS und ChromeOS / Web PWA).\n• Enthält alle v0.3.7-Verbesserungen: zentrierte Symbole unten links, nebeneinanderliegende Karten für Lokale DB & Cloud-Sync mit 1-Klick-Pause/Fortsetzen, erhöhte Dialog-Schaltflächen und Kontextmenüs direkt über dem Eintrag.`,
-      it: `• SafePocket v${latestVersion} posiziona il pulsante + Nuovo direttamente nella barra superiore del pannello centrale su macOS.\n• Include tutti i miglioramenti v0.3.7: icone centrate, schede affiancate DB locale e Cloud-Sync, pulsanti modali rialzati e menu contestuali sopra l'elemento.`,
-      fr: `• SafePocket v${latestVersion} place le bouton + Nouveau directement dans la barre supérieure du volet central sur macOS.\n• Inclut toutes les améliorations v0.3.7 : icônes centrées, cartes Base locale et Cloud-Sync côte à côte, boutons modaux rehaussés et menus contextuels au-dessus de l'élément.`,
-      es: `• SafePocket v${latestVersion} sitúa el botón + Nuevo directamente en la barra superior del panel central en macOS.\n• Incluye todas las mejoras de v0.3.7: iconos centrados, tarjetas BD local y Cloud-Sync lado a lado, botones modales elevados y menús contextuales sobre el elemento.`,
-      el: `• Το SafePocket v${latestVersion} τοποθετεί το κουμπί + Νέο απευθείας στην επάνω μπάρα της μεσαίας στήλης στο macOS.\n• Περιλαμβάνει όλες τις βελτιώσεις v0.3.7: κεντραρισμένα εικονίδια, κάρτες Τοπική ΒΔ & Cloud-Sync δίπλα-δίπλα, ανυψωμένα κουμπιά διαλόγων και μενού δεξιού κλικ πάνω από το στοιχείο.`
+      en: `• SafePocket v${latestVersion} upgrades the macOS app icon to exact Apple macOS Dock & Finder proportions (full-size continuous squircle with top-lit Liquid Glass specular rim and full-scale shield + smart card hero emblem) and refreshes the live Dock tile automatically on launch.\n• Includes middle-pane + New top-bar placement on macOS plus all v0.3.7 UX & storage-mode upgrades.`,
+      de: `• SafePocket v${latestVersion} bringt das macOS-App-Icon auf exakte Apple-Dock- und Finder-Proportionen (vollflächiges kontinuierliches Squircle mit Liquid-Glass-Glanzkante und vergrößertem Schild- & Karten-Emblem) und aktualisiert das Dock-Symbol direkt beim Start.\n• Enthält den + Neu Button oben in der mittleren Spalte sowie alle v0.3.7-Verbesserungen.`,
+      it: `• SafePocket v${latestVersion} aggiorna l'icona macOS alle proporzioni standard del Dock e Finder Apple con bordo Liquid Glass ed emblema ingrandito, oltre al pulsante + Nuovo nella barra superiore centrale.`,
+      fr: `• SafePocket v${latestVersion} met à l'échelle l'icône macOS aux proportions exactes du Dock et du Finder Apple avec bordure Liquid Glass et emblème agrandi, ainsi que le bouton + Nouveau dans le volet central.`,
+      es: `• SafePocket v${latestVersion} ajusta el icono de macOS a las proporciones exactas del Dock y Finder de Apple con borde Liquid Glass y emblema ampliado, además del botón + Nuevo en el panel central.`,
+      el: `• Το SafePocket v${latestVersion} αναβαθμίζει το εικονίδιο macOS στις ακριβείς αναλογίες του Apple Dock & Finder με περίγραμμα Liquid Glass και μεγαλύτερο έμβλημα ασπίδας/κάρτας, μαζί με το κουμπί + Νέο στη μεσαία στήλη.`
     },
     artifacts: {
       'android-universal': {

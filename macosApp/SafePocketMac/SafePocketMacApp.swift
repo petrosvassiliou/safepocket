@@ -20,6 +20,10 @@ final class SafePocketMacAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let appIcon = NSImage(contentsOf: iconURL) {
+            NSApplication.shared.applicationIconImage = appIcon
+        }
         NSApplication.shared.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {
             for window in NSApplication.shared.windows where window.canBecomeKey {
@@ -142,9 +146,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.3.8"
-    let currentVersionCode = 13
-    let currentVersionDisplay = "SafePocket v0.3.8 (Build 13)"
+    let currentVersionName = "0.3.9"
+    let currentVersionCode = 14
+    let currentVersionDisplay = "SafePocket v0.3.9 (Build 14)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -333,6 +337,8 @@ final class MacSparkleUpdateController: ObservableObject {
             try FileManager.default.removeItem(at: destApp)
         }
         try FileManager.default.copyItem(at: sourceApp, to: destApp)
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: destApp.path)
+        NSWorkspace.shared.noteFileSystemChanged(destApp.path)
         return destApp
     }
 }

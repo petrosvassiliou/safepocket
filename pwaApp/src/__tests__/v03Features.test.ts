@@ -40,7 +40,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.3.8 (Build 13) Feature Suite', () => {
+describe('SafePocket v0.3.9 (Build 14) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -311,9 +311,9 @@ describe('SafePocket v0.3.8 (Build 13) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.3.8 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.3.8');
-    expect(APP_BUILD_INFO.versionCode).toBe(13);
+  it('7. Cross-Platform v0.3.9 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.3.9');
+    expect(APP_BUILD_INFO.versionCode).toBe(14);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -383,16 +383,26 @@ describe('SafePocket v0.3.8 (Build 13) Feature Suite', () => {
     expect(playProtect).toContain('verifyApkSigningCertificate');
     expect(playProtect).toContain('INSTALL_REASON_USER');
 
-    // Verify macOS CryptoKit Ed25519 in-app updater, NWPathMonitor exclusive cloud offline sync, swipe & context menus
+    // Verify macOS CryptoKit Ed25519 in-app updater, NWPathMonitor exclusive cloud offline sync, live Dock icon refresh, swipe & context menus
     const macApp = fs.readFileSync(
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.3.8 (Build 13)');
+    expect(macApp).toContain('SafePocket v0.3.9 (Build 14)');
+    expect(macApp).toContain('NSApplication.shared.applicationIconImage = appIcon');
+    expect(macApp).toContain('noteFileSystemChanged(destApp.path)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
     expect(macApp).toContain('NWPathMonitor');
     expect(macApp).toContain('MacExclusiveStorageMode');
     expect(macApp).toContain('deleteAllExampleData');
+
+    // Verify macOS AppIcon-1024.png exists with exact 1024x1024 IHDR header
+    const macIconBytes = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/Resources/AppIcon-1024.png')
+    );
+    expect(macIconBytes.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(macIconBytes.readUInt32BE(16)).toBe(1024);
+    expect(macIconBytes.readUInt32BE(20)).toBe(1024);
 
     const macSplit = fs.readFileSync(
       path.join(

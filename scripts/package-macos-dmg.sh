@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Packages SafePocket native macOS universal binary (arm64 + x86_64) into SafePocket.app + .dmg
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION_NAME="${SAFEPOCKET_RELEASE_VERSION:-0.3.8}"
+VERSION_NAME="${SAFEPOCKET_RELEASE_VERSION:-0.3.9}"
 VERSION_NAME="${VERSION_NAME#v}"
-VERSION_CODE="${SAFEPOCKET_VERSION_CODE:-13}"
+VERSION_CODE="${SAFEPOCKET_VERSION_CODE:-14}"
 OUT_DMG="${1:-${REPO_ROOT}/SafePocket-${VERSION_NAME}-${VERSION_CODE}-macOS-universal.dmg}"
 
 echo "Building SafePocketMac v${VERSION_NAME} (Build ${VERSION_CODE}) universal macOS binary..."
@@ -42,7 +42,7 @@ if [[ -f "${ICON_PNG}" ]] && command -v sips >/dev/null 2>&1 && command -v iconu
   sips -z 512 512   "${ICON_PNG}" --out "${ICONSET_DIR}/icon_256x256@2x.png" >/dev/null
   sips -z 512 512   "${ICON_PNG}" --out "${ICONSET_DIR}/icon_512x512.png" >/dev/null
   cp "${ICON_PNG}" "${ICONSET_DIR}/icon_512x512@2x.png"
-  iconutil -c icns "${ICONSET_DIR}" -o "${APP_BUNDLE}/Contents/Resources/AppIcon.icns" || true
+  iconutil -c icns "${ICONSET_DIR}" -o "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
   rm -rf "${ICONSET_DIR}"
 fi
 
