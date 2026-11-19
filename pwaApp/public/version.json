@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-19T08:05:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:975c5c880cfb0ef1e1cc9656d03726d26b45a81153a55c1b834d03c355e06157648d68d88f44b7285a0fe52c2f259f4626920be93f032811e8f0c03bf2588b01",
+  "manifestSignature": "ed25519:81246295599e002c612de4ae88051c9a6284eb6397f9e14f81db5d3cde8bbe96f5bd3b79326a90447c1e84ce37beb5712b9433425e8d19954eeab05ebff5410c",
   "releaseNotes": {
     "en": "• SafePocket v0.3.8 anchors the + New category menu button directly inside the middle list pane's top bar on macOS (matching Android / Googlebook OS and ChromeOS / Web PWA).\n• Includes all v0.3.7 upgrades: centered sidebar footer icons, category-free item dialogs, side-by-side Local DB vs Cloud-Sync cards with 1-click sync pause/resume, elevated modal footers, and top-anchored hover context menus.",
     "de": "• SafePocket v0.3.8 platziert den + Neu Kategorie-Button auf macOS direkt oben in der mittleren Listen-Spalte (analog zu Android / Googlebook OS und ChromeOS / Web PWA).\n• Enthält alle v0.3.7-Verbesserungen: zentrierte Symbole unten links, nebeneinanderliegende Karten für Lokale DB & Cloud-Sync mit 1-Klick-Pause/Fortsetzen, erhöhte Dialog-Schaltflächen und Kontextmenüs direkt über dem Eintrag.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.8/SafePocket-v0.3.8-b13-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "5bd3124e98454d455650bdcf538713e1e11d1e7588d4a64f8ad359099c5ad81a",
+      "sizeBytes": 38268805,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.8/SafePocket-0.3.8-13-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "02089bd9030295c7dcc637ed0fecd2de49c7469704cbada9fe5e8772cefb1ff0",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 3264933,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
