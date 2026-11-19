@@ -288,6 +288,7 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
       valueType: 'TEXT'
     });
 
+    searchVaultItems(items, 'warmup', i18n);
     const start = performance.now();
     const byDigraph = searchVaultItems(items, 'mueller', i18n);
     const byStripped = searchVaultItems(items, 'muller', i18n);

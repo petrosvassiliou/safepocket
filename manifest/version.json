@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-19T18:30:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:791cef19929963e79b88e783aac1abce95481a833610445d81a489622af0001d1c025073f17209f8c4accfbabb9855c718d8ecef5e08b0d51dd9036967d3f205",
+  "manifestSignature": "ed25519:f06c3f8530da4e77c525906988fdb2c6f79e7d2356601c1ae17ea616a64a933aa6cce8f6f0e09a7e99fe0989eb931feecb23cd0840594af4c70f95aa99dd8f0e",
   "releaseNotes": {
     "en": "• SafePocket v0.4.0 eliminates Google Play Protect dropper false-positives by removing REQUEST_INSTALL_PACKAGES and in-APK package installer sessions in favor of verified HTTPS release downloads.\n• Introduces Cross-Platform Zero-Knowledge Cloud Sync v2 (deterministic PBKDF2-HMAC-SHA256 100k-round Cloud Sync Key, canonical wire schema across Android/macOS/PWA, Pull-First CRDT reconciliation, real tombstones, and instant 5-second live background sync).",
     "de": "• SafePocket v0.4.0 beseitigt Google-Play-Protect-Warnungen durch Entfernen von REQUEST_INSTALL_PACKAGES und In-App-APK-Installationen zugunsten verifizierter HTTPS-Downloads.\n• Führt Cross-Platform Zero-Knowledge Cloud-Sync v2 ein (deterministischer PBKDF2-HMAC-SHA256-Schlüssel, einheitliches Schema für Android/macOS/PWA, Pull-First-CRDT-Abgleich, echte Lösch-Tombstones und sofortige Live-Synchronisation alle 5 Sekunden).",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.4.0/SafePocket-v0.4.0-b15-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "abbb947380049bc9ea36f1f18d665b4675c73c11eabc28898e5298b8c7f6dc72",
+      "sizeBytes": 38285098,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.4.0/SafePocket-0.4.0-15-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "6ae1ff1344268d3dbdedee84e151c266a985782db8d3dba4662bba32233d7d37",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 3782296,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
