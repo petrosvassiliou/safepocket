@@ -7,7 +7,7 @@
   "publishedAt": "2026-11-19T08:25:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:8bdf9ea13e3d6ffa78b831c0b37cdbc22f05c8e4e48721ceb8b930845544c95226daf9e2ab69c92253a5f053cb8edbf1aee4fa67dbf8453860bc3e60d5f93f07",
+  "manifestSignature": "ed25519:ac7dc5e8d2526598113fb7429b9b7c4a1929a01fdbd33dd77aa5fd2f2e59a5a0fbbe56665b72548b25f23b19b4c55398f181b7e28a10eeaf986eb9553e79a307",
   "releaseNotes": {
     "en": "• SafePocket v0.3.9 upgrades the macOS app icon to exact Apple macOS Dock & Finder proportions (full-size continuous squircle with top-lit Liquid Glass specular rim and full-scale shield + smart card hero emblem) and refreshes the live Dock tile automatically on launch.\n• Includes middle-pane + New top-bar placement on macOS plus all v0.3.7 UX & storage-mode upgrades.",
     "de": "• SafePocket v0.3.9 bringt das macOS-App-Icon auf exakte Apple-Dock- und Finder-Proportionen (vollflächiges kontinuierliches Squircle mit Liquid-Glass-Glanzkante und vergrößertem Schild- & Karten-Emblem) und aktualisiert das Dock-Symbol direkt beim Start.\n• Enthält den + Neu Button oben in der mittleren Spalte sowie alle v0.3.7-Verbesserungen.",
@@ -19,8 +19,8 @@
   "artifacts": {
     "android-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.9/SafePocket-v0.3.9-b14-universal-arm64-x86_64.apk",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "sizeBytes": 18432960,
+      "sha256": "77302ebd81b098487e09ea47dbb0f594d11d903696bb8593f70e7011ba434170",
+      "sizeBytes": 38268800,
       "minSdk": 29,
       "abis": [
         "arm64-v8a",
@@ -36,9 +36,9 @@
     "macos-universal": {
       "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.3.9/SafePocket-0.3.9-14-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
-      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "sha256": "abc91630e45db7712d60804fc436af5e2b8080e2a9359a7502da0d24254b432c",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
-      "sizeBytes": 14208512,
+      "sizeBytes": 3654157,
       "minMacOS": "14.0"
     },
     "chromeos-pwa": {
