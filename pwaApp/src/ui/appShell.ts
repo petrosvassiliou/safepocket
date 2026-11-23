@@ -230,6 +230,7 @@ export class SafePocketAppShell {
   private settingsTab: 'appearance' | 'security' | 'sync' | 'data' | 'updates' =
     'appearance';
   private flippedCardIds = new Set<string>();
+  private revealedCardSecretKeys = new Set<string>();
   private onboardingStep: 1 | 2 | 3 = 1;
   private editorMoreFieldsExpanded = false;
   private selectedItemId: string | null;
@@ -1287,6 +1288,8 @@ export class SafePocketAppShell {
     this.crypto.lock();
     this.autoLockMonitor.stop();
     this.revealedFieldIds.clear();
+    this.flippedCardIds.clear();
+    this.revealedCardSecretKeys.clear();
     this.settingsModalOpen = false;
     this.editorDraft = null;
     this.restoreModalState = null;
@@ -3033,13 +3036,50 @@ export class SafePocketAppShell {
     palette: string,
     customStyleAttr: string,
     instDisplayName: string,
-    isPresentation: boolean
+    isPresentation: boolean,
+    flipKey: string
   ): string {
     const valOf = (key: string): string =>
       item.fields.find((f) => f.labelKey === key)?.value?.trim() ?? '';
 
-    const cvv = valOf('field_cvv');
-    const pin = valOf('field_pin');
+    const cvvAliases = [
+      'cvv',
+      'cvc',
+      'csc',
+      'prüfziffer',
+      'kartenprüfnummer',
+      'prüfnummer',
+      'verification number',
+      'security code',
+      'codice sicurezza',
+      'cryptogramme',
+      'código de seguridad',
+      'κωδικός ασφαλείας'
+    ];
+    const cvv =
+      valOf('field_cvv') ||
+      (item.fields
+        .find((f) => {
+          const k = f.labelKey.toLowerCase();
+          return Boolean(f.value?.trim()) && cvvAliases.some((a) => k.includes(a));
+        })
+        ?.value?.trim() ??
+        '');
+    const pin =
+      valOf('field_pin') ||
+      (item.fields
+        .find((f) => {
+          const k = f.labelKey.toLowerCase().trim();
+          return (
+            Boolean(f.value?.trim()) &&
+            (k === 'pin' ||
+              k.includes('karten-pin') ||
+              k.includes('card pin') ||
+              k.includes('telephonepin'))
+          );
+        })
+        ?.value?.trim() ??
+        '');
     const bic = valOf('field_bic');
     const routing = valOf('field_routing_code');
     const hotline =
@@ -3050,11 +3090,25 @@ export class SafePocketAppShell {
     const authority =
       valOf('field_issuing_authority') || valOf('field_issuing_country');
 
-    const cells: Array<{ label: string; value: string }> = [];
+    const cvvSecretKey = `${flipKey}:cvv`;
+    const pinSecretKey = `${flipKey}:pin`;
+    const isCvvRevealed =
+      isPresentation || this.revealedCardSecretKeys.has(cvvSecretKey);
+    const isPinRevealed =
+      isPresentation || this.revealedCardSecretKeys.has(pinSecretKey);
+
+    const cells: Array<{
+      label: string;
+      value: string;
+      secretKey?: string;
+      isRevealed?: boolean;
+    }> = [];
     if (pin) {
       cells.push({
         label: this.i18n.resolveFieldLabel('field_pin', false, item.category),
-        value: isPresentation ? pin : '••••'
+        value: isPinRevealed ? pin : '•'.repeat(Math.max(4, pin.length)),
+        secretKey: isPresentation ? undefined : pinSecretKey,
+        isRevealed: isPinRevealed
       });
     }
     if (bic) {
@@ -3125,18 +3179,65 @@ export class SafePocketAppShell {
     }
 
     const backScan = item.attachments.find((a) => a.side === 'back');
+    const maskedCvv = cvv ? '•'.repeat(Math.max(3, cvv.length)) : '—';
 
     return `
       <div class="sp-visual-card sp-card-face-back" data-palette="${palette}"${customStyleAttr}>
         ${
           item.category === 'PAYMENT_CARD'
             ? `<div class="sp-card-magstripe" aria-hidden="true"></div>
-               <div class="sp-card-cvv-strip">
-                 <span style="font-size:10px;opacity:0.65;letter-spacing:0.06em;">AUTHORIZED SIGNATURE • ${this.escape(
-                   this.i18n.t('field_cvv')
-                 )}</span>
-                 <span>${this.escape(cvv || '•••')}</span>
-               </div>`
+               ${
+                 cvv
+                   ? `<button
+                        type="button"
+                        class="sp-card-cvv-strip sp-card-cvv-btn"
+                        data-toggle-card-secret="${this.escape(cvvSecretKey)}"
+                        title="${this.escape(
+                          this.i18n.t(
+                            isCvvRevealed ? 'action_hide' : 'action_reveal'
+                          )
+                        )}"
+                        aria-label="${this.escape(
+                          this.i18n.t(
+                            isCvvRevealed ? 'action_hide' : 'action_reveal'
+                          )
+                        )}"
+                      >
+                        <span style="font-size:10px;opacity:0.65;letter-spacing:0.06em;">AUTHORIZED SIGNATURE • ${this.escape(
+                          this.i18n.t('field_cvv')
+                        )}</span>
+                        <span class="sp-card-cvv-pill ${
+                          isCvvRevealed ? 'is-revealed' : ''
+                        }">
+                          <span>${this.escape(
+                            isCvvRevealed ? cvv : maskedCvv
+                          )}</span>
+                          ${renderIconSvg(isCvvRevealed ? 'eyeOff' : 'eye', 12)}
+                        </span>
+                      </button>`
+                   : !isPresentation
+                     ? `<button
+                          type="button"
+                          class="sp-card-cvv-strip sp-card-cvv-btn"
+                          data-edit-card-cvv="${this.escape(item.id)}"
+                          title="${this.escape(this.i18n.t('action_edit'))}"
+                          aria-label="${this.escape(this.i18n.t('action_edit'))}"
+                        >
+                          <span style="font-size:10px;opacity:0.65;letter-spacing:0.06em;">AUTHORIZED SIGNATURE • ${this.escape(
+                            this.i18n.t('field_cvv')
+                          )}</span>
+                          <span class="sp-card-cvv-pill" style="opacity:0.6;">
+                            <span>—</span>
+                            ${renderIconSvg('edit', 11)}
+                          </span>
+                        </button>`
+                     : `<div class="sp-card-cvv-strip">
+                          <span style="font-size:10px;opacity:0.65;letter-spacing:0.06em;">AUTHORIZED SIGNATURE • ${this.escape(
+                            this.i18n.t('field_cvv')
+                          )}</span>
+                          <span style="opacity:0.5;">—</span>
+                        </div>`
+               }`
             : `<div class="sp-card-top-row">
                  <span style="font-weight:700;font-size:13px;opacity:0.92;">${this.escape(
                    instDisplayName
@@ -3152,12 +3253,31 @@ export class SafePocketAppShell {
             ? `<div class="sp-card-back-grid">
                  ${cells
                    .slice(0, 4)
-                   .map(
-                     (c) => `
-                   <div class="sp-card-back-cell">
-                     <span class="sp-card-back-label">${this.escape(c.label)}</span>
-                     <span class="sp-card-back-val">${this.escape(c.value)}</span>
-                   </div>`
+                   .map((c) =>
+                     c.secretKey
+                       ? `<button
+                            type="button"
+                            class="sp-card-back-cell sp-card-back-secret-btn"
+                            data-toggle-card-secret="${this.escape(c.secretKey)}"
+                            title="${this.escape(
+                              this.i18n.t(
+                                c.isRevealed ? 'action_hide' : 'action_reveal'
+                              )
+                            )}"
+                          >
+                            <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+                              <span class="sp-card-back-label">${this.escape(c.label)}</span>
+                              <span class="sp-card-back-val">${this.escape(c.value)}</span>
+                            </span>
+                            <span style="opacity:0.78;flex-shrink:0;">${renderIconSvg(
+                              c.isRevealed ? 'eyeOff' : 'eye',
+                              12
+                            )}</span>
+                          </button>`
+                       : `<div class="sp-card-back-cell">
+                            <span class="sp-card-back-label">${this.escape(c.label)}</span>
+                            <span class="sp-card-back-val">${this.escape(c.value)}</span>
+                          </div>`
                    )
                    .join('')}
                </div>`
@@ -3612,7 +3732,8 @@ export class SafePocketAppShell {
       palette,
       customStyleAttr,
       instDisplayName,
-      isPresentation
+      isPresentation,
+      flipKey
     );
 
     return `
@@ -5836,21 +5957,6 @@ export class SafePocketAppShell {
             placeholder: '4532 0192 8834 1109'
           },
           {
-            key: 'field_card_network',
-            valueType: 'TEXT',
-            placeholder: 'VISA / Mastercard / AMEX / girocard'
-          },
-          {
-            key: 'field_card_type',
-            valueType: 'TEXT',
-            placeholder: 'Credit / Debit / Virtual / Prepaid'
-          },
-          {
-            key: 'field_valid_from',
-            valueType: 'DATE_ISO',
-            placeholder: '2025-11'
-          },
-          {
             key: 'field_expiry_date',
             valueType: 'DATE_ISO',
             placeholder: '2029-11'
@@ -5864,6 +5970,21 @@ export class SafePocketAppShell {
             key: 'field_pin',
             valueType: 'SENSITIVE_SECRET',
             placeholder: '1234'
+          },
+          {
+            key: 'field_card_network',
+            valueType: 'TEXT',
+            placeholder: 'VISA / Mastercard / AMEX / girocard'
+          },
+          {
+            key: 'field_card_type',
+            valueType: 'TEXT',
+            placeholder: 'Credit / Debit / Virtual / Prepaid'
+          },
+          {
+            key: 'field_valid_from',
+            valueType: 'DATE_ISO',
+            placeholder: '2025-11'
           },
           {
             key: 'field_issuing_bank',
@@ -6771,14 +6892,52 @@ export class SafePocketAppShell {
       });
 
     this.root
+      .querySelectorAll<HTMLElement>('[data-toggle-card-secret]')
+      .forEach((secretBtn) => {
+        secretBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const secretKey = secretBtn.dataset.toggleCardSecret ?? '';
+          if (!secretKey) return;
+          if (this.revealedCardSecretKeys.has(secretKey)) {
+            this.revealedCardSecretKeys.delete(secretKey);
+          } else {
+            this.revealedCardSecretKeys.add(secretKey);
+          }
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-edit-card-cvv]')
+      .forEach((editCvvBtn) => {
+        editCvvBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const targetId = editCvvBtn.dataset.editCardCvv ?? '';
+          const target = this.items.find((i) => i.id === targetId);
+          if (target) {
+            this.openEditItemModal(target);
+          }
+        });
+      });
+
+    this.root
       .querySelectorAll<HTMLElement>('[data-flip-card]')
       .forEach((flipEl) => {
         const toggleFlip = (e: Event) => {
+          const targetEl = e.target as HTMLElement | null;
+          if (
+            flipEl.tagName !== 'BUTTON' &&
+            targetEl?.closest('[data-toggle-card-secret], [data-edit-card-cvv]')
+          ) {
+            return;
+          }
           e.stopPropagation();
           const key = flipEl.dataset.flipCard ?? '';
           if (!key) return;
           if (this.flippedCardIds.has(key)) {
             this.flippedCardIds.delete(key);
+            this.revealedCardSecretKeys.delete(`${key}:cvv`);
+            this.revealedCardSecretKeys.delete(`${key}:pin`);
           } else {
             this.flippedCardIds.add(key);
           }
@@ -6787,6 +6946,7 @@ export class SafePocketAppShell {
         flipEl.addEventListener('click', toggleFlip);
         if (flipEl.tagName !== 'BUTTON') {
           flipEl.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.target !== flipEl) return;
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               toggleFlip(e);

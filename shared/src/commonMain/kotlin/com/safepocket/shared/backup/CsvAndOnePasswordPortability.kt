@@ -477,7 +477,8 @@ object CsvAndOnePasswordPortability {
                 fid == "type" && category == VaultCategory.PAYMENT_CARD -> addStd(CanonicalFieldKeys.CARD_NETWORK, value)
                 "validfrom" in k -> addStd(CanonicalFieldKeys.VALID_FROM, value, FieldValueType.DATE_ISO)
                 "expiry" in k || "expiration" in k -> addStd(CanonicalFieldKeys.EXPIRY_DATE, value, FieldValueType.DATE_ISO)
-                "cvv" in k || "verification number" in k -> addStd(CanonicalFieldKeys.CVV, value, FieldValueType.SENSITIVE_SECRET)
+                "cvv" in k || "cvc" in k || "verification number" in k || "security code" in k || "prüfziffer" in k || "kartenprüfnummer" in k ->
+                    addStd(CanonicalFieldKeys.CVV, value, FieldValueType.SENSITIVE_SECRET)
                 fid == "pin" || "telephonepin" in k || "card pin" in k -> addStd(CanonicalFieldKeys.PIN, value, FieldValueType.SENSITIVE_SECRET)
                 "bankname" in k || fid == "bank" || "issuing bank" in k -> addStd(CanonicalFieldKeys.ISSUING_BANK, value)
                 "creditlimit" in k -> addStd(CanonicalFieldKeys.CREDIT_LIMIT, value)
@@ -724,7 +725,11 @@ object CsvAndOnePasswordPortability {
         add(CanonicalFieldKeys.CARD_NETWORK, getByAliases(map, "brand", "network", "kartennetzwerk"))
         add(CanonicalFieldKeys.VALID_FROM, getByAliases(map, "valid from", "gültig ab"), FieldValueType.DATE_ISO)
         add(CanonicalFieldKeys.EXPIRY_DATE, getByAliases(map, "expiry date", "expiration date", "ablaufdatum", "gültig bis"), FieldValueType.DATE_ISO)
-        add(CanonicalFieldKeys.CVV, getByAliases(map, "verification number", "cvv", "cvc"), FieldValueType.SENSITIVE_SECRET)
+        add(
+            CanonicalFieldKeys.CVV,
+            getByAliases(map, "verification number", "cvv", "cvc", "security code", "prüfziffer", "kartenprüfnummer"),
+            FieldValueType.SENSITIVE_SECRET
+        )
         add(CanonicalFieldKeys.PIN, getByAliases(map, "pin"), FieldValueType.SENSITIVE_SECRET)
         if (category == VaultCategory.INSURANCE_CARD) {
             add(CanonicalFieldKeys.INSURER_NAME, getByAliases(map, "issuing bank", "insurer", "provider", "krankenkasse", "versicherung"))

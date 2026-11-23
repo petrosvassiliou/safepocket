@@ -1,24 +1,24 @@
 {
   "schemaVersion": 2,
   "channel": "beta",
-  "latestVersion": "0.5.0-beta.1",
-  "versionCode": 16,
+  "latestVersion": "0.5.0-beta.2",
+  "versionCode": 17,
   "minimumSupportedVersionCode": 1,
   "publishedAt": "2026-11-23T11:30:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:1e90d0998923586086a65b3f53377cfb2594cc90fa7871dd51572e46fd5b206ef2120ab8da90c01e4a35eff91ff0a9b346ed4df59f42db4d77010402945b3309",
+  "manifestSignature": "ed25519:74e249e114bdbf6850231c328be2c051130f7a43c47405e33c6dd710659b9d6621e36977019604266b0b766cee97b1d4cbe8a83baecf430c9ad06bd9c13f0b07",
   "releaseNotes": {
-    "en": "• SafePocket v0.5.0-beta.1 introduces the Phase 1 UI/UX Overhaul across Android, macOS, and PWA: ISO ID-1 (1.586:1) 3D Front/Back flippable cards, 5-tab Settings dialog, unified stroke vector icons, Vault Shield lock/onboarding stepper, and live-preview item editor with progressive disclosure.\n• Includes Cross-Platform Zero-Knowledge Cloud Sync v2 and Google Play Protect compliant HTTPS updates.",
-    "de": "• SafePocket v0.5.0-beta.1 bringt das Phase-1-UI/UX-Redesign für Android, macOS und PWA: interaktive 3D-Karten im ISO-ID-1-Format (Vorder-/Rückseite), 5-Tab-Einstellungen, einheitliche Vektor-Icons, Vault-Shield-Sperrbildschirm sowie Live-Kartenvorschau im Editor.\n• Inklusive Cross-Platform Zero-Knowledge Cloud-Sync v2 und Play-Protect-konformer Updates.",
-    "it": "• SafePocket v0.5.0-beta.1 introduce il redesign UI/UX Fase 1 su Android, macOS e PWA: carte interattive 3D fronte/retro ISO ID-1, Impostazioni a 5 schede, icone vettoriali unificate, schermata di blocco Vault Shield ed editor con anteprima dal vivo.",
-    "fr": "• SafePocket v0.5.0-beta.1 introduit la refonte UI/UX Phase 1 sur Android, macOS et PWA : cartes 3D recto/verso au format ISO ID-1, Paramètres à 5 onglets, icônes vectorielles unifiées, écran de verrouillage Vault Shield et éditeur avec aperçu en direct.",
-    "es": "• SafePocket v0.5.0-beta.1 presenta el rediseño UI/UX Fase 1 en Android, macOS y PWA: tarjetas interactivas 3D anverso/reverso ISO ID-1, Ajustes en 5 pestañas, iconos vectoriales unificados, pantalla de bloqueo Vault Shield y editor con vista previa en vivo.",
-    "el": "• Το SafePocket v0.5.0-beta.1 παρουσιάζει τον ανασχεδιασμό UI/UX Φάσης 1 σε Android, macOS και PWA: διαδραστικές τρισδιάστατες κάρτες εμπρός/πίσω όψης ISO ID-1, Ρυθμίσεις 5 καρτελών, διανυσματικά εικονίδια, οθόνη κλειδώματος Vault Shield και ζωντανή προεπισκόπηση κάρτας."
+    "en": "• SafePocket v0.5.0-beta.2 introduces the Phase 1 UI/UX Overhaul across Android, macOS, and PWA: ISO ID-1 (1.586:1) 3D Front/Back flippable cards, 5-tab Settings dialog, unified stroke vector icons, Vault Shield lock/onboarding stepper, and live-preview item editor with progressive disclosure.\n• Includes Cross-Platform Zero-Knowledge Cloud Sync v2 and Google Play Protect compliant HTTPS updates.",
+    "de": "• SafePocket v0.5.0-beta.2 bringt das Phase-1-UI/UX-Redesign für Android, macOS und PWA: interaktive 3D-Karten im ISO-ID-1-Format (Vorder-/Rückseite), 5-Tab-Einstellungen, einheitliche Vektor-Icons, Vault-Shield-Sperrbildschirm sowie Live-Kartenvorschau im Editor.\n• Inklusive Cross-Platform Zero-Knowledge Cloud-Sync v2 und Play-Protect-konformer Updates.",
+    "it": "• SafePocket v0.5.0-beta.2 introduce il redesign UI/UX Fase 1 su Android, macOS e PWA: carte interattive 3D fronte/retro ISO ID-1, Impostazioni a 5 schede, icone vettoriali unificate, schermata di blocco Vault Shield ed editor con anteprima dal vivo.",
+    "fr": "• SafePocket v0.5.0-beta.2 introduit la refonte UI/UX Phase 1 sur Android, macOS et PWA : cartes 3D recto/verso au format ISO ID-1, Paramètres à 5 onglets, icônes vectorielles unifiées, écran de verrouillage Vault Shield et éditeur avec aperçu en direct.",
+    "es": "• SafePocket v0.5.0-beta.2 presenta el rediseño UI/UX Fase 1 en Android, macOS y PWA: tarjetas interactivas 3D anverso/reverso ISO ID-1, Ajustes en 5 pestañas, iconos vectoriales unificados, pantalla de bloqueo Vault Shield y editor con vista previa en vivo.",
+    "el": "• Το SafePocket v0.5.0-beta.2 παρουσιάζει τον ανασχεδιασμό UI/UX Φάσης 1 σε Android, macOS και PWA: διαδραστικές τρισδιάστατες κάρτες εμπρός/πίσω όψης ISO ID-1, Ρυθμίσεις 5 καρτελών, διανυσματικά εικονίδια, οθόνη κλειδώματος Vault Shield και ζωντανή προεπισκόπηση κάρτας."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0-beta.1/SafePocket-v0.5.0-beta.1-b16-universal-arm64-x86_64.apk",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0-beta.2/SafePocket-v0.5.0-beta.2-b17-universal-arm64-x86_64.apk",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "sizeBytes": 18432960,
       "minSdk": 29,
@@ -34,7 +34,7 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0-beta.1/SafePocket-0.5.0-beta.1-16-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0-beta.2/SafePocket-0.5.0-beta.2-17-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
       "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
@@ -44,7 +44,7 @@
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "3dd7f8dfa90835ce9cfbf32db7004a3e04edebd57e9ce1defe06748d91601673",
+      "sha256": "0375d56699c2125292e4ee18b275a20ab30638bf1a0d0ed6b63345ed0f2bdcc7",
       "sizeBytes": 2716
     }
   }

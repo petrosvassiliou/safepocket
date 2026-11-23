@@ -44,7 +44,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.5.0-beta.1 (Build 16) Feature Suite', () => {
+describe('SafePocket v0.5.0-beta.2 (Build 17) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -315,9 +315,9 @@ describe('SafePocket v0.5.0-beta.1 (Build 16) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.5.0-beta.1 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.1');
-    expect(APP_BUILD_INFO.versionCode).toBe(16);
+  it('7. Cross-Platform v0.5.0-beta.2 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.2');
+    expect(APP_BUILD_INFO.versionCode).toBe(17);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -401,7 +401,7 @@ describe('SafePocket v0.5.0-beta.1 (Build 16) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.5.0-beta.1 (Build 16)');
+    expect(macApp).toContain('SafePocket v0.5.0-beta.2 (Build 17)');
     expect(macApp).toContain('NSApplication.shared.applicationIconImage = appIcon');
     expect(macApp).toContain('noteFileSystemChanged(destApp.path)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
@@ -1365,7 +1365,10 @@ describe('SafePocket v0.5.0-beta.1 (Build 16) Feature Suite', () => {
     expect(macSplit).toContain('.aspectRatio(1.586, contentMode: .fit)');
     expect(macSplit).toContain('.rotation3DEffect');
     expect(androidBrandCard).toContain('Modifier.aspectRatio(1.586f)');
-    expect(androidBrandCard).toContain('rotationY = rotationYDeg');
+    expect(androidBrandCard).toContain('rotationY = cardFaceRotationDeg');
+    expect(pwaShell).toContain('data-toggle-card-secret=');
+    expect(macSplit).toContain('isCvvRevealed');
+    expect(androidBrandCard).toContain('isCvvRevealed');
 
     // 3) 5-Tab Settings Modal across PWA, macOS & Android
     for (const tabKey of [

@@ -86,7 +86,9 @@ fun DualBrandVisualCardHero(
     flipLabelFront: String = "Front",
     flipLabelBack: String = "Reverse",
     reverseBadgeLabel: String = "REVERSE",
-    reverseEmptyHint: String = "Secondary security & support details appear here"
+    reverseEmptyHint: String = "Secondary security & support details appear here",
+    cvvLabelText: String = "CVV",
+    onEditClick: (() -> Unit)? = null
 ) {
     val resolved = remember(item) { InstitutionBrandRegistry.resolveForItem(item) }
     val (gradStart, gradEnd) = remember(item.cardTheme, resolved) {
@@ -119,27 +121,61 @@ fun DualBrandVisualCardHero(
     val resolvedSubtitle = (displaySubtitleText ?: item.subtitle).trim()
 
     var isFlipped by remember(item.id) { mutableStateOf(false) }
+    var isCvvRevealed by remember(item.id, isFlipped) { mutableStateOf(false) }
+    var isPinRevealed by remember(item.id, isFlipped) { mutableStateOf(false) }
     val rotationYDeg by animateFloatAsState(
         targetValue = if (!isCompactPreview && isFlipped) 180f else 0f,
         animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
         label = "card3dFlip"
     )
     val showingBack = rotationYDeg > 90f
+    val cardFaceRotationDeg = if (showingBack) rotationYDeg - 180f else rotationYDeg
 
-    val reverseCells = remember(item) {
+    val resolvedCvv = remember(item) {
+        val std = item.fieldValue(CanonicalFieldKeys.CVV)
+        if (std.isNotBlank()) {
+            std
+        } else {
+            val aliases = listOf(
+                "cvv", "cvc", "csc", "prüfziffer", "kartenprüfnummer", "prüfnummer",
+                "verification number", "security code", "codice sicurezza",
+                "cryptogramme", "código de seguridad", "κωδικός ασφαλείας"
+            )
+            item.fields.firstOrNull { f ->
+                val k = f.labelKey.lowercase()
+                f.value.isNotBlank() && aliases.any { k.contains(it) }
+            }?.value?.trim().orEmpty()
+        }
+    }
+
+    val resolvedPin = remember(item) {
+        val std = item.fieldValue(CanonicalFieldKeys.PIN)
+        if (std.isNotBlank()) {
+            std
+        } else {
+            item.fields.firstOrNull { f ->
+                val k = f.labelKey.lowercase().trim()
+                f.value.isNotBlank() && (k == "pin" || "karten-pin" in k || "card pin" in k || "telephonepin" in k)
+            }?.value?.trim().orEmpty()
+        }
+    }
+
+    val reverseCells = remember(item, resolvedPin, isPinRevealed) {
         buildList {
-            val pin = item.fieldValue(CanonicalFieldKeys.PIN)
-            if (pin.isNotBlank()) add("PIN" to "••••")
+            if (resolvedPin.isNotBlank()) {
+                val maskedPin = "•".repeat(maxOf(4, resolvedPin.length))
+                add(Triple("PIN", if (isPinRevealed) resolvedPin else maskedPin, true))
+            }
             val bic = item.fieldValue(CanonicalFieldKeys.BIC)
-            if (bic.isNotBlank()) add("BIC" to bic)
+            if (bic.isNotBlank()) add(Triple("BIC", bic, false))
             val routing = item.fieldValue(CanonicalFieldKeys.ROUTING_CODE)
-            if (routing.isNotBlank()) add("BLZ / Routing" to routing)
+            if (routing.isNotBlank()) add(Triple("BLZ / Routing", routing, false))
             val phone = item.fieldValue(CanonicalFieldKeys.EMERGENCY_PHONE)
                 .ifBlank { item.fieldValue(CanonicalFieldKeys.SUPPORT_PHONE) }
-            if (phone.isNotBlank()) add("Hotline" to phone)
+            if (phone.isNotBlank()) add(Triple("Hotline", phone, false))
             val domain = item.fieldValue(CanonicalFieldKeys.INSTITUTION_DOMAIN)
             if (domain.isNotBlank() && size < 4) {
-                add("Web" to domain.removePrefix("https://").removePrefix("www."))
+                add(Triple("Web", domain.removePrefix("https://").removePrefix("www."), false))
             }
         }.take(4)
     }
@@ -153,7 +189,7 @@ fun DualBrandVisualCardHero(
                 .fillMaxWidth()
                 .then(if (isCompactPreview) Modifier else Modifier.aspectRatio(1.586f))
                 .graphicsLayer {
-                    rotationY = rotationYDeg
+                    rotationY = cardFaceRotationDeg
                     cameraDistance = 14f * density
                 }
                 .clip(RoundedCornerShape(20.dp))
@@ -179,11 +215,10 @@ fun DualBrandVisualCardHero(
                 .padding(if (isCompactPreview) 16.dp else 20.dp)
         ) {
             if (showingBack) {
-                val cvv = item.fieldValue(CanonicalFieldKeys.CVV)
+                val cvv = resolvedCvv
+                val maskedCvv = "•".repeat(maxOf(3, cvv.length))
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { rotationY = 180f },
+                    modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -200,23 +235,52 @@ fun DualBrandVisualCardHero(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(Color.White.copy(alpha = 0.92f))
+                                    .then(
+                                        if (cvv.isNotBlank()) {
+                                            Modifier.clickable { isCvvRevealed = !isCvvRevealed }
+                                        } else if (onEditClick != null) {
+                                            Modifier.clickable { onEditClick() }
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
                                     .padding(horizontal = 10.dp, vertical = 5.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "SIGNATURE • CVV",
+                                    text = "AUTHORIZED SIGNATURE • $cvvLabelText",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontFamily = FontFamily.Monospace,
-                                    color = Color(0xFF475569)
+                                    color = Color(0xFF475569),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
-                                Text(
-                                    text = cvv.ifBlank { "•••" },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF0F172A)
-                                )
+                                Spacer(Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(
+                                            Color(0xFF0F172A).copy(
+                                                alpha = if (isCvvRevealed) 0.13f else 0.07f
+                                            )
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = when {
+                                            cvv.isNotBlank() && isCvvRevealed -> "$cvv ◡"
+                                            cvv.isNotBlank() -> "$maskedCvv ◉"
+                                            onEditClick != null -> "— ✎"
+                                            else -> "—"
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (cvv.isNotBlank()) Color(0xFF0F172A) else Color(0xFF64748B)
+                                    )
+                                }
                             }
                         } else {
                             Row(
@@ -262,30 +326,48 @@ fun DualBrandVisualCardHero(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        rowCells.forEach { (lbl, value) ->
-                                            Column(
+                                        rowCells.forEach { (lbl, value, isPinCell) ->
+                                            Row(
                                                 modifier = Modifier
                                                     .weight(1f)
                                                     .clip(RoundedCornerShape(8.dp))
                                                     .background(badgeGlassBg)
-                                                    .padding(horizontal = 9.dp, vertical = 5.dp)
+                                                    .then(
+                                                        if (isPinCell) {
+                                                            Modifier.clickable { isPinRevealed = !isPinRevealed }
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                    )
+                                                    .padding(horizontal = 9.dp, vertical = 5.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Text(
-                                                    text = lbl.uppercase(),
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = fgMuted,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Text(
-                                                    text = value,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = fgPrimary,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = lbl.uppercase(),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = fgMuted,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = value,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = fgPrimary,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                if (isPinCell) {
+                                                    Text(
+                                                        text = if (isPinRevealed) "◡" else "◉",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = fgMuted
+                                                    )
+                                                }
                                             }
                                         }
                                     }

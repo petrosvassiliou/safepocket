@@ -598,7 +598,14 @@ function map1PasswordFieldsToSafePocket(params: {
       addStd('field_valid_from', value, 'DATE_ISO');
     } else if (k.includes('expiry') || k.includes('expiration')) {
       addStd('field_expiry_date', value, 'DATE_ISO');
-    } else if (k.includes('cvv') || k.includes('verification number')) {
+    } else if (
+      k.includes('cvv') ||
+      k.includes('cvc') ||
+      k.includes('verification number') ||
+      k.includes('security code') ||
+      k.includes('prüfziffer') ||
+      k.includes('kartenprüfnummer')
+    ) {
       addStd('field_cvv', value, 'SENSITIVE_SECRET');
     } else if (
       fid === 'pin' ||
@@ -1032,7 +1039,15 @@ function buildFieldsFromCsvRow(
   );
   add(
     'field_cvv',
-    getByAliases(map, 'verification number', 'cvv', 'cvc'),
+    getByAliases(
+      map,
+      'verification number',
+      'cvv',
+      'cvc',
+      'security code',
+      'prüfziffer',
+      'kartenprüfnummer'
+    ),
     'SENSITIVE_SECRET'
   );
   add('field_pin', getByAliases(map, 'pin'), 'SENSITIVE_SECRET');

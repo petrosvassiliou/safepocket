@@ -2168,6 +2168,11 @@ body {
   transform: rotateY(180deg);
 }
 
+.sp-card-3d-flipper.is-flipped .sp-card-face-front,
+.sp-card-3d-flipper:not(.is-flipped) .sp-card-face-back {
+  pointer-events: none;
+}
+
 .sp-visual-card::after {
   content: '';
   position: absolute;
@@ -2227,13 +2232,59 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  width: 100%;
   background: rgba(255, 255, 255, 0.92);
   color: #0f172a;
+  border: none;
   border-radius: 7px;
-  padding: 6px 12px;
+  padding: 5px 10px 5px 12px;
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
+  z-index: 2;
+}
+
+.sp-card-cvv-btn {
+  cursor: pointer;
+  text-align: left;
+  transition: background 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sp-card-cvv-btn:hover {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.sp-card-cvv-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sp-card-cvv-pill.is-revealed {
+  background: rgba(15, 23, 42, 0.14);
+}
+
+.sp-card-back-secret-btn {
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.sp-card-back-secret-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .sp-card-back-grid {

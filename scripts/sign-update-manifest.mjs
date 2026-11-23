@@ -69,9 +69,9 @@ function main() {
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
   const latestVersion = (
-    process.env.SAFEPOCKET_RELEASE_VERSION || '0.5.0-beta.1'
+    process.env.SAFEPOCKET_RELEASE_VERSION || '0.5.0-beta.2'
   ).replace(/^v/i, '');
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '16');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '17');
   const channel =
     process.env.SAFEPOCKET_RELEASE_CHANNEL ||
     (latestVersion.includes('-') ? 'beta' : 'stable');

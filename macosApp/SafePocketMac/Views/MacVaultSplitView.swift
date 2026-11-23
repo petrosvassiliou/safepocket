@@ -660,6 +660,9 @@ struct MacVaultSplitView: View {
                 if !entry.primaryValue.isEmpty {
                     vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
                 }
+            },
+            onEditEntry: {
+                vaultState.openEditEditor(entry)
             }
         )
     }
@@ -672,9 +675,51 @@ struct MacFlippableVisualCard: View {
     var isCompactPreview: Bool = false
     var onToggleFlip: (() -> Void)? = nil
     var onCopyPrimary: (() -> Void)? = nil
+    var onEditEntry: (() -> Void)? = nil
+
+    @State private var isCvvRevealed: Bool = false
+    @State private var isPinRevealed: Bool = false
+
+    private struct ReverseCellItem: Identifiable {
+        let id: String
+        let label: String
+        let value: String
+        let isPin: Bool
+    }
 
     private func fieldValue(_ key: String) -> String {
         entry.fields.first(where: { $0.labelKey == key })?.value.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var resolvedCvv: String {
+        let std = fieldValue("field_cvv")
+        if !std.isEmpty { return std }
+        let aliases = [
+            "cvv", "cvc", "csc", "prüfziffer", "kartenprüfnummer", "prüfnummer",
+            "verification number", "security code", "codice sicurezza",
+            "cryptogramme", "código de seguridad", "κωδικός ασφαλείας"
+        ]
+        for f in entry.fields {
+            let k = f.labelKey.lowercased()
+            let v = f.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !v.isEmpty && aliases.contains(where: { k.contains($0) }) {
+                return v
+            }
+        }
+        return ""
+    }
+
+    private var resolvedPin: String {
+        let std = fieldValue("field_pin")
+        if !std.isEmpty { return std }
+        for f in entry.fields {
+            let k = f.labelKey.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let v = f.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !v.isEmpty && (k == "pin" || k.contains("karten-pin") || k.contains("card pin") || k.contains("telephonepin")) {
+                return v
+            }
+        }
+        return ""
     }
 
     private var maskedPrimary: String {
@@ -703,20 +748,54 @@ struct MacFlippableVisualCard: View {
         return fieldValue("field_member_name")
     }
 
-    private var reverseCells: [(String, String)] {
-        var out: [(String, String)] = []
-        let pin = fieldValue("field_pin")
-        if !pin.isEmpty { out.append((vaultState.resolveFieldLabel(key: "field_pin", isCustom: false, category: entry.category), "••••")) }
+    private var reverseCells: [ReverseCellItem] {
+        var out: [ReverseCellItem] = []
+        let pin = resolvedPin
+        if !pin.isEmpty {
+            let maskedPin = String(repeating: "•", count: max(4, pin.count))
+            out.append(ReverseCellItem(
+                id: "pin",
+                label: vaultState.resolveFieldLabel(key: "field_pin", isCustom: false, category: entry.category),
+                value: isPinRevealed ? pin : maskedPin,
+                isPin: true
+            ))
+        }
         let bic = fieldValue("field_bic")
-        if !bic.isEmpty { out.append((vaultState.resolveFieldLabel(key: "field_bic", isCustom: false, category: entry.category), bic)) }
+        if !bic.isEmpty {
+            out.append(ReverseCellItem(
+                id: "bic",
+                label: vaultState.resolveFieldLabel(key: "field_bic", isCustom: false, category: entry.category),
+                value: bic,
+                isPin: false
+            ))
+        }
         let routing = fieldValue("field_routing_code").isEmpty ? fieldValue("field_routing_number") : fieldValue("field_routing_code")
-        if !routing.isEmpty { out.append((vaultState.resolveFieldLabel(key: "field_routing_code", isCustom: false, category: entry.category), routing)) }
+        if !routing.isEmpty {
+            out.append(ReverseCellItem(
+                id: "routing",
+                label: vaultState.resolveFieldLabel(key: "field_routing_code", isCustom: false, category: entry.category),
+                value: routing,
+                isPin: false
+            ))
+        }
         let phone = fieldValue("field_emergency_phone").isEmpty ? fieldValue("field_support_phone") : fieldValue("field_emergency_phone")
-        if !phone.isEmpty { out.append((vaultState.resolveFieldLabel(key: "field_support_phone", isCustom: false, category: entry.category), phone)) }
+        if !phone.isEmpty {
+            out.append(ReverseCellItem(
+                id: "phone",
+                label: vaultState.resolveFieldLabel(key: "field_support_phone", isCustom: false, category: entry.category),
+                value: phone,
+                isPin: false
+            ))
+        }
         let domain = fieldValue("field_institution_domain")
         if !domain.isEmpty && out.count < 4 {
             let host = domain.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "www.", with: "")
-            out.append((vaultState.resolveFieldLabel(key: "field_institution_domain", isCustom: false, category: entry.category), host))
+            out.append(ReverseCellItem(
+                id: "domain",
+                label: vaultState.resolveFieldLabel(key: "field_institution_domain", isCustom: false, category: entry.category),
+                value: host,
+                isPin: false
+            ))
         }
         return Array(out.prefix(4))
     }
@@ -847,7 +926,7 @@ struct MacFlippableVisualCard: View {
 
     @ViewBuilder
     private func backCardFace(baseColor: Color) -> some View {
-        let cvv = fieldValue("field_cvv")
+        let cvv = resolvedCvv
         VStack(alignment: .leading, spacing: 12) {
             if entry.category == "PAYMENT_CARD" {
                 Rectangle()
@@ -855,18 +934,89 @@ struct MacFlippableVisualCard: View {
                     .frame(height: 34)
                     .padding(.horizontal, -22)
 
-                HStack {
-                    Text("AUTHORIZED SIGNATURE • \(vaultState.t("field_cvv"))")
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.black.opacity(0.65))
-                    Spacer()
-                    Text(cvv.isEmpty ? "•••" : cvv)
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.black)
+                if !cvv.isEmpty {
+                    let maskedCvv = String(repeating: "•", count: max(3, cvv.count))
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            isCvvRevealed.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("AUTHORIZED SIGNATURE • \(vaultState.t("field_cvv"))")
+                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Color.black.opacity(0.65))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            HStack(spacing: 5) {
+                                Text(isCvvRevealed ? cvv : maskedCvv)
+                                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Color.black)
+                                Image(systemName: isCvvRevealed ? "eye.slash" : "eye")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(Color.black.opacity(0.62))
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(isCvvRevealed ? 0.11 : 0.06), in: Capsule())
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity)
+                        .background(.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help(vaultState.t(isCvvRevealed ? "action_hide" : "action_reveal"))
+                    .contextMenu {
+                        Button(vaultState.t("action_copy")) {
+                            vaultState.copyFieldWithClipboardHygiene(cvv, isSensitive: true)
+                        }
+                    }
+                } else if let onEditEntry {
+                    Button {
+                        onEditEntry()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("AUTHORIZED SIGNATURE • \(vaultState.t("field_cvv"))")
+                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Color.black.opacity(0.65))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            HStack(spacing: 4) {
+                                Text("—")
+                                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(Color.black.opacity(0.45))
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color.black.opacity(0.50))
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.05), in: Capsule())
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity)
+                        .background(.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help(vaultState.t("action_edit"))
+                } else {
+                    HStack {
+                        Text("AUTHORIZED SIGNATURE • \(vaultState.t("field_cvv"))")
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.black.opacity(0.65))
+                        Spacer()
+                        Text("—")
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Color.black.opacity(0.45))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             } else {
                 HStack {
                     Text(entry.title)
@@ -889,21 +1039,53 @@ struct MacFlippableVisualCard: View {
                     .foregroundStyle(.white.opacity(0.85))
             } else {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                    ForEach(Array(reverseCells.enumerated()), id: \.offset) { _, pair in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(pair.0.uppercased())
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.75))
-                                .lineLimit(1)
-                            Text(pair.1)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
+                    ForEach(reverseCells) { cell in
+                        if cell.isPin {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.16)) {
+                                    isPinRevealed.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(cell.label.uppercased())
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .foregroundStyle(.white.opacity(0.75))
+                                            .lineLimit(1)
+                                        Text(cell.value)
+                                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                            .foregroundStyle(.white)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer(minLength: 4)
+                                    Image(systemName: isPinRevealed ? "eye.slash" : "eye")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.78))
+                                }
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .help(vaultState.t(isPinRevealed ? "action_hide" : "action_reveal"))
+                        } else {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(cell.label.uppercased())
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.75))
+                                    .lineLimit(1)
+                                Text(cell.value)
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                 }
             }
@@ -939,19 +1121,32 @@ struct MacFlippableVisualCard: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 ZStack {
-                    if isFlipped {
-                        backCardFace(baseColor: baseColor)
-                            .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
-                    } else {
-                        frontCardFace(baseColor: baseColor, inst: inst, networkBadge: networkBadge)
-                    }
+                    frontCardFace(baseColor: baseColor, inst: inst, networkBadge: networkBadge)
+                        .opacity(isFlipped ? 0 : 1)
+                        .rotation3DEffect(.degrees(isFlipped ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+                        .allowsHitTesting(!isFlipped)
+
+                    backCardFace(baseColor: baseColor)
+                        .opacity(isFlipped ? 1 : 0)
+                        .rotation3DEffect(.degrees(isFlipped ? 0 : -180), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+                        .allowsHitTesting(isFlipped)
                 }
                 .aspectRatio(1.586, contentMode: .fit)
                 .frame(maxWidth: 440)
                 .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
-                .rotation3DEffect(.degrees(isFlipped ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .onTapGesture {
                     onToggleFlip?()
+                }
+                .onChange(of: entry.id) { _, _ in
+                    isCvvRevealed = false
+                    isPinRevealed = false
+                }
+                .onChange(of: isFlipped) { _, flipped in
+                    if !flipped {
+                        isCvvRevealed = false
+                        isPinRevealed = false
+                    }
                 }
 
                 HStack(spacing: 8) {

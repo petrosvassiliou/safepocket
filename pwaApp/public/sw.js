@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'safepocket-offline-v0.5.0-beta.1';
+const CACHE_VERSION = 'safepocket-offline-v0.5.0-beta.2';
 const APP_SHELL_ASSETS = [
   '/',
   '/index.html',

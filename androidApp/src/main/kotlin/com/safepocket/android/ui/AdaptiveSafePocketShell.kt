@@ -1723,7 +1723,9 @@ private fun VaultDetailInspectorPane(
                 flipLabelFront = i18n.t("card_flip_to_front"),
                 flipLabelBack = i18n.t("card_flip_to_back"),
                 reverseBadgeLabel = i18n.t("card_back_badge"),
-                reverseEmptyHint = i18n.t("card_back_empty_hint")
+                reverseEmptyHint = i18n.t("card_back_empty_hint"),
+                cvvLabelText = i18n.t("field_cvv"),
+                onEditClick = { onEdit(selectedItem) }
             )
         } else {
             Text(selectedItem.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)

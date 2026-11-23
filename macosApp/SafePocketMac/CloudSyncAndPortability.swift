@@ -905,14 +905,34 @@ enum MacPortabilityEngine {
 
             let title = col(["title", "name"]).isEmpty ? "Imported Entry" : col(["title", "name"])
             let subtitle = col(["subtitle", "cardholder name", "username"])
-            let number = col(["primary_value", "number", "iban", "password"])
+            let number = col(["primary_value", "number", "card number", "ccnum", "kartennummer", "iban", "password"])
+            let cvv = col(["cvv", "cvc", "verification number", "prüfziffer", "kartenprüfnummer", "security code"])
+            let pin = col(["pin", "card pin", "karten-pin"])
+            let expiry = col(["expiry date", "expiration date", "expiry_date", "ablaufdatum", "gültig bis"])
+            let cardholder = col(["cardholder name", "cardholder", "karteninhaber"])
+            let network = col(["brand", "network", "type_brand", "kartennetzwerk"])
             let website = col(["website_url", "website", "url"])
             let notes = col(["notes", "note"])
 
             var fields: [MacVaultField] = []
+            if resolvedCat == "PAYMENT_CARD" && !cardholder.isEmpty {
+                fields.append(.init(id: UUID().uuidString, labelKey: "field_cardholder", value: cardholder, valueType: .text))
+            }
             if !number.isEmpty {
                 let key = resolvedCat == "BANK_ACCOUNT" ? "field_iban" : (resolvedCat == "PAYMENT_CARD" ? "field_card_number" : "field_document_number")
                 fields.append(.init(id: UUID().uuidString, labelKey: key, value: number, valueType: .sensitiveSecret, isSensitive: true))
+            }
+            if !expiry.isEmpty {
+                fields.append(.init(id: UUID().uuidString, labelKey: "field_expiry_date", value: expiry, valueType: .dateIso))
+            }
+            if !cvv.isEmpty {
+                fields.append(.init(id: UUID().uuidString, labelKey: "field_cvv", value: cvv, valueType: .sensitiveSecret, isSensitive: true))
+            }
+            if !pin.isEmpty {
+                fields.append(.init(id: UUID().uuidString, labelKey: "field_pin", value: pin, valueType: .sensitiveSecret, isSensitive: true))
+            }
+            if resolvedCat == "PAYMENT_CARD" && !network.isEmpty {
+                fields.append(.init(id: UUID().uuidString, labelKey: "field_card_network", value: network, valueType: .text))
             }
             if !website.isEmpty {
                 fields.append(.init(id: UUID().uuidString, labelKey: "field_institution_domain", value: website, valueType: .url))
