@@ -1,47 +1,96 @@
-# SafePocket `v0.1`
+# SafePocket `v0.4.0` (`Build 15`)
 
-**Modern Zero-Knowledge Personal Identity, Payment Card, Official Document & Secure Note Vault (`SafePocket v0.1 • Build 1`)**
+**Cross-Platform Zero-Knowledge Personal Identity, Payment Card, Official Document & Secure Note Vault**
 
-SafePocket manages personal life administration — **Payment Cards, Bank Accounts, Insurance Cards, Membership Cards, Identities, Official Documents, and Markdown Secure Notes** — across **Android Smartphones, Foldables & Googlebook OS** (`arm64-v8a` + `x86_64`), **ChromeOS / Web Standalone PWA** (100% offline), and **macOS Native Desktop** (Apple HIG). Website logins, password generators, and browser autofill are intentionally excluded by design.
+SafePocket manages personal life administration — **Payment Cards, Bank Accounts, Insurance Cards, Membership Cards, Identities, Official Documents, and Markdown Secure Notes** — across:
+- **macOS Native Desktop** (`Apple Silicon` + `Intel` universal SwiftUI/AppKit app)
+- **Android Smartphones, Foldables & Googlebook OS** (`arm64-v8a` + `x86_64` Jetpack Compose Material 3 Adaptive app, Google Play Protect compliant)
+- **ChromeOS & Web Standalone PWA** (100% offline-capable TypeScript + SQLite WASM + OPFS app, hosted at `https://safepocket-vault-eu.web.app`)
 
-## Key Capabilities in `v0.1`
+Website logins, password generators, and browser autofill are excluded by design.
 
-- **Light Theme Default, Dark & Device Theme Options + Custom Card Colors**:
-  - Launches in a crisp Light Material 3 Expressive theme by default, with Dark, Use Device Theme (`system`), Material Design Device Accent (`AccentColor`), 12 curated anodized card palettes, a **Custom Hex Card Color Picker** with WCAG 2.1 auto-contrast, and **Visual Identity Cards** enabled by default.
-- **Offline Camera Scanner, Standards-Compliant Barcodes & Full-Screen Presentation Mode**:
-  - Offline `getUserMedia` camera viewfinder (`BarcodeDetector` + pure TypeScript 1D Code-128B scanline fallback + image-file upload fallback), real ISO/IEC 15417 **Code 128B**, GS1 **EAN-13**, and ISO/IEC 18004 **QR Code** SVG encoders, encrypted front/back document photo capture, ICAO Doc 9303 MRZ scanner, and full-screen card/barcode presentation with Screen Wake Lock.
-- **Configurable Expiry Monitor, Pin-to-Top, Tag Filter Chips & 4-Mode Sorting**:
-  - Configurable local renewal horizon (`30 / 60 / 90 / 180` days; `<= 30` days Critical badge), Pin-to-Top, clickable tag chips, and 4 sort modes.
-- **Cross-Vault `.safepocket` Merge/Restore & Printable Emergency Recovery Kit v2**:
-  - SHA-256 header inspection, cross-vault **Merge** vs **Replace** restore modal, Master-Password-gated JSON/CSV export modal, and A4/Letter printable Emergency Kit v2 with an offline **Secret Key QR code** (`safepocket-recovery://v1`).
-- **Local Encrypted Storage by Default + Optional EU Firebase Sync (`safepocket-vault-eu`)**:
-  - Defaults to **Local Encrypted Storage Only** (`SQLCipher` on Android/macOS, **SQLite WASM + OPFS** `safepocket_vault_v01.sqlite3` on PWA) with zero outbound network traffic until Cloud Sync is explicitly enabled.
-- **6-Language Runtime Localization (`en`, `de`, `it`, `fr`, `es`, `el`) & Signed Self-Updater (`Ed25519` + `SHA-256`)**:
-  - Instant runtime switching across 6 languages and Ed25519 + SHA-256 verified updates starting from `v0.1 (Build 1)`.
+---
+
+## Opening SafePocket as a Local Antigravity Workspace
+
+1. **Clone the repository onto your machine:**
+   ```bash
+   git clone https://github.com/petrosvassiliou/safepocket.git
+   cd safepocket
+   ```
+2. **Open in Antigravity Desktop:**
+   - Launch **Antigravity** on your Mac/Linux/Windows machine.
+   - Choose **File → Open Folder…** (or select **Local** instead of Cloud VM in the project picker) and open the cloned `safepocket` directory.
+   - Local agents will automatically read [`AGENTS.md`](./AGENTS.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), and [`docs/V040_WALKTHROUGH.md`](./docs/V040_WALKTHROUGH.md) for full architectural and release history.
+
+---
+
+## Local Prerequisites & Build / Run Commands
+
+### 1. ChromeOS / Web PWA (`pwaApp/`)
+- **Prerequisites:** Node.js `20+` (Node `24 LTS` recommended) and `npm`.
+- **Commands:**
+  ```bash
+  # Install dependencies
+  npm --prefix pwaApp ci
+
+  # Run the 45-test cross-platform verification suite (Vitest)
+  npm --prefix pwaApp test
+
+  # Start local Vite dev server (http://127.0.0.1:4173)
+  npm --prefix pwaApp run dev
+
+  # Type-check & build production offline bundle (pwaApp/dist)
+  npm --prefix pwaApp run build
+  ```
+
+### 2. Native macOS App (`macosApp/`)
+- **Prerequisites:** macOS `14.0+` (Sonoma / Sequoia / Tahoe) with Xcode `16+` or Xcode Command Line Tools (`swift --version`).
+- **Commands:**
+  ```bash
+  # Build & launch debug app directly via Swift Package Manager
+  swift run --package-path macosApp SafePocketMac
+
+  # Package universal (arm64 + x86_64) SafePocket.app + UDZO .dmg installer
+  ./scripts/package-macos-dmg.sh
+  ```
+
+### 3. Native Android & Googlebook OS App (`androidApp/` + `shared/`)
+- **Prerequisites:** JDK `17` (Temurin 17 recommended), Android SDK (`compileSdk = 35`, `minSdk = 29`), and Gradle `8.11.1+` (or Android Studio Ladybug / Meerkat+).
+- **Commands:**
+  ```bash
+  # Option A: Open the repository root in Android Studio and run the `androidApp` configuration.
+
+  # Option B: Build from terminal with Gradle 8.11.1+
+  gradle :androidApp:assembleDebug
+
+  # Install debug APK onto a connected Android device / emulator
+  adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
+
+  # Build release universal APK (uses debug fallback signing locally unless SAFEPOCKET_KEYSTORE_PATH is set)
+  gradle :androidApp:assembleRelease --no-daemon
+  ```
+
+### 4. Release Manifest Signing & Firebase Cloud Provisioning (`scripts/`)
+```bash
+# Re-compute SHA-256 digests and sign manifest/version.json + pwaApp/public/version.json
+node scripts/sign-update-manifest.mjs
+
+# (Optional) Deploy Firestore & Storage zero-knowledge rules to a Firebase project
+./scripts/setup-firebase.sh safepocket-vault-eu
+```
+
+---
 
 ## Repository Structure
 
-- `ARCHITECTURE.md` — Zero-Knowledge `Argon2id` + `SecretKey` -> `AES-256-GCM` cryptographic design, EU Firebase Sync, and self-updater design.
-- `i18n/` — Strongly-typed localization catalogs in **6 languages** (`en`, `de`, `it`, `fr`, `es`, `el`).
-- `manifest/version.json` & `scripts/sign-update-manifest.mjs` — Ed25519-signed release manifest initialized at `v0.1 (Build 1)` with localized changelogs and mandatory `SHA-256` checksums.
-- `firebase/` & `scripts/setup-firebase.sh` — Zero-knowledge `firestore.rules`, `storage.rules`, `firestore.indexes.json`, `firebase.json`, and 1-command Firebase Cloud project provisioning script.
-- `shared/` — **Kotlin Multiplatform (KMP)** core (`VaultModels.kt`, `SafePocketVault.sq`, `ZeroKnowledgeCrypto.kt`, `LocalizationEngine.kt`, `MultilingualSearchEngine.kt`, `CloudSyncEngine.kt`, `FirebaseAuthService.kt`, `FirebaseSyncAdapter.kt`, `GoogleDriveSyncAdapter.kt`, `MrzAndCardValidator.kt`, `VaultPortabilityService.kt`, `EmergencyKitGenerator.kt`, `CrossPlatformUpdateService.kt`).
-- `androidApp/` — **Android & Googlebook OS** native Jetpack Compose Material 3 Expressive target (`versionName = "0.1"`, `versionCode = 1`, universal `arm64-v8a` + `x86_64`).
-- `macosApp/` & `scripts/package-macos-dmg.sh` — **Native macOS Desktop** SwiftUI + AppKit universal target (`0.1 Build 1`, vibrancy sidebar, unified toolbar, Touch ID, 30s `NSPasteboard` scrub, and `.dmg` packager).
-- `pwaApp/` — **100% Offline-Capable ChromeOS / Web Standalone PWA** (TypeScript + Vite + SQLite WASM + OPFS + WebCrypto `AES-256-GCM` & `Argon2id` WASM + Camera/Barcode/QR Engine + 24-test Vitest suite).
-- `.github/workflows/` — Automated CI + EU Firebase Hosting CD (`ci-verify.yml`) and multi-platform Direct Distribution Release (`release-direct-distribution.yml` for PWA + Android APK + macOS DMG on `v*` tags starting at `v0.1`).
-
-## Running & Provisioning
-
-```bash
-# 1. Run the 24-test Vitest verification suite & build the ChromeOS/Web PWA
-cd pwaApp
-npm test
-npm run build
-
-# 2. (Optional) Link a live Google Cloud Firebase project in 1 command
-../scripts/setup-firebase.sh <your-firebase-project-id>
-
-# 3. Re-sign manifest/version.json (defaults to v0.1 Build 1)
-node ../scripts/sign-update-manifest.mjs
-```
+- [`AGENTS.md`](./AGENTS.md) — Workspace instructions, cryptographic/sync invariants, and version-bump checklist for local AI agents.
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — Zero-Knowledge local & Cross-Platform Cloud Sync v2 specification, CRDT reconciliation, and Ed25519 update architecture.
+- [`docs/V040_WALKTHROUGH.md`](./docs/V040_WALKTHROUGH.md) — Detailed root-cause walkthrough of `v0.4.0` (`Build 15`) Play Protect compliance and Cross-Platform Cloud Sync v2.
+- [`i18n/`](./i18n) — Strongly-typed localization catalogs across **6 languages** (`en`, `de`, `it`, `fr`, `es`, `el` — 320 keys each).
+- [`shared/`](./shared) — **Kotlin Multiplatform (KMP)** core (`VaultModels.kt`, `SafePocketVault.sq`, `Argon2idPure.kt`, `ZeroKnowledgeCrypto.kt`, `CloudSyncEngine.kt`, `FirebaseAuthService.kt`, `FirebaseSyncAdapter.kt`, `GoogleDriveSyncAdapter.kt`, `CrossPlatformUpdateService.kt`).
+- [`androidApp/`](./androidApp) — **Android & Googlebook OS** native Jetpack Compose Material 3 Adaptive app.
+- [`macosApp/`](./macosApp) — **macOS Native Desktop** SwiftUI + AppKit universal app (`NavigationSplitView`, Keychain + Touch ID, `NSPasteboard` 30s auto-scrub, in-app DMG updater).
+- [`pwaApp/`](./pwaApp) — **Offline-Capable ChromeOS / Web PWA** (TypeScript, Vite, `sql.js` SQLite WASM + OPFS, WebCrypto + `hash-wasm`, 45-test Vitest suite).
+- [`firebase/`](./firebase) — Zero-knowledge `firestore.rules`, `storage.rules`, and `firestore.indexes.json` deployed to `safepocket-vault-eu` (`eur3`).
+- [`.github/workflows/`](./.github/workflows) — Automated CI + EU Firebase Hosting deploy (`ci-verify.yml`) and multi-platform Direct Distribution Release (`release-direct-distribution.yml` triggered on `v*` git tags).
