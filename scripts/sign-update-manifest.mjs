@@ -69,9 +69,9 @@ function main() {
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
   const latestVersion = (
-    process.env.SAFEPOCKET_RELEASE_VERSION || '0.5.0-beta.3'
+    process.env.SAFEPOCKET_RELEASE_VERSION || '0.5.0-beta.4'
   ).replace(/^v/i, '');
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '18');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '19');
   const channel =
     process.env.SAFEPOCKET_RELEASE_CHANNEL ||
     (latestVersion.includes('-') ? 'beta' : 'stable');
@@ -98,12 +98,12 @@ function main() {
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} introduces the Phase 1 UI/UX Overhaul across Android, macOS, and PWA: ISO ID-1 (1.586:1) 3D Front/Back flippable cards, 5-tab Settings dialog, unified stroke vector icons, Vault Shield lock/onboarding stepper, and live-preview item editor with progressive disclosure.\n• Includes Cross-Platform Zero-Knowledge Cloud Sync v2 and Google Play Protect compliant HTTPS updates.`,
-      de: `• SafePocket v${latestVersion} bringt das Phase-1-UI/UX-Redesign für Android, macOS und PWA: interaktive 3D-Karten im ISO-ID-1-Format (Vorder-/Rückseite), 5-Tab-Einstellungen, einheitliche Vektor-Icons, Vault-Shield-Sperrbildschirm sowie Live-Kartenvorschau im Editor.\n• Inklusive Cross-Platform Zero-Knowledge Cloud-Sync v2 und Play-Protect-konformer Updates.`,
-      it: `• SafePocket v${latestVersion} introduce il redesign UI/UX Fase 1 su Android, macOS e PWA: carte interattive 3D fronte/retro ISO ID-1, Impostazioni a 5 schede, icone vettoriali unificate, schermata di blocco Vault Shield ed editor con anteprima dal vivo.`,
-      fr: `• SafePocket v${latestVersion} introduit la refonte UI/UX Phase 1 sur Android, macOS et PWA : cartes 3D recto/verso au format ISO ID-1, Paramètres à 5 onglets, icônes vectorielles unifiées, écran de verrouillage Vault Shield et éditeur avec aperçu en direct.`,
-      es: `• SafePocket v${latestVersion} presenta el rediseño UI/UX Fase 1 en Android, macOS y PWA: tarjetas interactivas 3D anverso/reverso ISO ID-1, Ajustes en 5 pestañas, iconos vectoriales unificados, pantalla de bloqueo Vault Shield y editor con vista previa en vivo.`,
-      el: `• Το SafePocket v${latestVersion} παρουσιάζει τον ανασχεδιασμό UI/UX Φάσης 1 σε Android, macOS και PWA: διαδραστικές τρισδιάστατες κάρτες εμπρός/πίσω όψης ISO ID-1, Ρυθμίσεις 5 καρτελών, διανυσματικά εικονίδια, οθόνη κλειδώματος Vault Shield και ζωντανή προεπισκόπηση κάρτας.`
+      en: `• SafePocket v${latestVersion} adds Phase 2 Signature Digital Wallet UX across Android, macOS, and PWA: 30s radial clipboard hygiene pill, offline EPC069-12 SEPA GiroCode QR on bank accounts, Counter Pass Mode with 4-character Read-Aloud dictation blocks, and Pinned Wallet Deck.\n• Includes Phase 1 3D flippable ISO ID-1 cards, 5-tab Settings, Cross-Platform Zero-Knowledge Cloud Sync v2, and Google Play Protect compliant updates.`,
+      de: `• SafePocket v${latestVersion} ergänzt Phase 2 Digital-Wallet-UX für Android, macOS und PWA: schwebende 30s-Zwischenablage-Anzeige mit Countdown-Ring, Offline-SEPA-GiroCode (EPC-QR) für Bankkonten, Pass- & Vorlesemodus (4er-Blöcke) sowie angepinntes Wallet-Deck.\n• Inklusive Phase-1-3D-Karten, 5-Tab-Einstellungen und Zero-Knowledge Cloud-Sync v2.`,
+      it: `• SafePocket v${latestVersion} aggiunge la UX Digital Wallet Fase 2 su Android, macOS e PWA: indicatore appunti con conto alla rovescia di 30s, QR SEPA (EPC GiroCode) offline, modalità Pass e dettatura a blocchi di 4 caratteri, e mazzo di carte fissate.`,
+      fr: `• SafePocket v${latestVersion} ajoute l’UX Portefeuille Numérique Phase 2 sur Android, macOS et PWA : pilule presse-papiers avec anneau 30s, QR SEPA (EPC GiroCode) hors ligne, mode Pass et dictée par blocs de 4 caractères, et cartes épinglées.`,
+      es: `• SafePocket v${latestVersion} incorpora la UX de Cartera Digital Fase 2 en Android, macOS y PWA: píldora de portapapeles con anillo de 30s, QR SEPA (EPC GiroCode) sin conexión, modo Pase y dictado en bloques de 4 caracteres, y tarjetas fijadas.`,
+      el: `• Το SafePocket v${latestVersion} προσθέτει τη Φάση 2 Digital Wallet UX σε Android, macOS και PWA: ένδειξη προχείρου 30s, κωδικό QR SEPA (EPC) εκτός σύνδεσης, λειτουργία πάσου και υπαγόρευσης ανά 4 χαρακτήρες, και καρφιτσωμένες κάρτες.`
     },
     artifacts: {
       'android-universal': {

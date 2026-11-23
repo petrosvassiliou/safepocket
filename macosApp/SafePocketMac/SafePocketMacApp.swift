@@ -146,9 +146,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.5.0-beta.3"
-    let currentVersionCode = 18
-    let currentVersionDisplay = "SafePocket v0.5.0-beta.3 (Build 18)"
+    let currentVersionName = "0.5.0-beta.4"
+    let currentVersionCode = 19
+    let currentVersionDisplay = "SafePocket v0.5.0-beta.4 (Build 19)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -459,6 +459,9 @@ final class MacVaultViewModel: ObservableObject {
     @Published var lastErrorBanner: String?
     @Published var diagnostics: [MacDiagnosticEntry] = []
     @Published var entries: [MacVaultEntry] = []
+    @Published var clipboardCountdownSeconds: Int? = nil
+    @Published var clipboardClearedFlash: Bool = false
+    @Published var plainCopiedBanner: String? = nil
 
     private var clipboardClearTask: Task<Void, Never>?
     private var inactivityTimerTask: Task<Void, Never>?
@@ -1590,14 +1593,51 @@ final class MacVaultViewModel: ObservableObject {
         pasteboard.setString(value, forType: .string)
         let snapshotChangeCount = pasteboard.changeCount
 
-        guard isSensitive else { return }
         clipboardClearTask?.cancel()
-        clipboardClearTask = Task {
-            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+        clipboardClearedFlash = false
+
+        guard isSensitive else {
+            clipboardCountdownSeconds = nil
+            plainCopiedBanner = t("clipboard_copied_plain")
+            clipboardClearTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_200_000_000)
+                guard !Task.isCancelled else { return }
+                self?.plainCopiedBanner = nil
+            }
+            return
+        }
+
+        plainCopiedBanner = nil
+        clipboardCountdownSeconds = 30
+        clipboardClearTask = Task { @MainActor [weak self] in
+            for remaining in stride(from: 29, through: 1, by: -1) {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.clipboardCountdownSeconds = remaining
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
             if NSPasteboard.general.changeCount == snapshotChangeCount {
                 NSPasteboard.general.clearContents()
             }
+            self?.clipboardCountdownSeconds = nil
+            self?.clipboardClearedFlash = true
+            try? await Task.sleep(nanoseconds: 2_800_000_000)
+            guard !Task.isCancelled else { return }
+            self?.clipboardClearedFlash = false
+        }
+    }
+
+    func scrubClipboardNow() {
+        clipboardClearTask?.cancel()
+        clipboardClearTask = nil
+        NSPasteboard.general.clearContents()
+        clipboardCountdownSeconds = nil
+        plainCopiedBanner = nil
+        clipboardClearedFlash = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            self?.clipboardClearedFlash = false
         }
     }
 

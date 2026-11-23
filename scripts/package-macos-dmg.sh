@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Packages SafePocket native macOS universal binary (arm64 + x86_64) into SafePocket.app + .dmg
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION_NAME="${SAFEPOCKET_RELEASE_VERSION:-0.5.0-beta.3}"
+VERSION_NAME="${SAFEPOCKET_RELEASE_VERSION:-0.5.0-beta.4}"
 VERSION_NAME="${VERSION_NAME#v}"
-VERSION_CODE="${SAFEPOCKET_VERSION_CODE:-18}"
+VERSION_CODE="${SAFEPOCKET_VERSION_CODE:-19}"
 OUT_DMG="${1:-${REPO_ROOT}/SafePocket-${VERSION_NAME}-${VERSION_CODE}-macOS-universal.dmg}"
 
 echo "Building SafePocketMac v${VERSION_NAME} (Build ${VERSION_CODE}) universal macOS binary..."

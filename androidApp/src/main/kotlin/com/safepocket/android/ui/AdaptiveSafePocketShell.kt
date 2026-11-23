@@ -11,8 +11,15 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import com.safepocket.shared.scanner.EpcSepaAndQrEngine
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -175,6 +182,8 @@ fun AdaptiveSafePocketShell(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var clipboardJob by remember { mutableStateOf<Job?>(null) }
+    var clipboardCountdownSecs by remember { mutableStateOf<Int?>(null) }
+    var presentingPassItem by remember { mutableStateOf<VaultItemPayload?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var copiedNotice by remember { mutableStateOf<String?>(null) }
     var showPurgeConfirmDialog by remember { mutableStateOf(false) }
@@ -297,15 +306,34 @@ fun AdaptiveSafePocketShell(
         clipboard.setPrimaryClip(clip)
         clipboardJob?.cancel()
         clipboardJob = coroutineScope.launch {
-            copiedNotice = if (isSensitive) {
-                i18n.t("clipboard_hygiene_active", mapOf("seconds" to 30))
-            } else {
-                "${i18n.t("action_copied")}: $label"
-            }
-            delay(if (isSensitive) 30_000L else 3_500L)
             if (isSensitive) {
+                copiedNotice = null
+                for (rem in 30 downTo 1) {
+                    clipboardCountdownSecs = rem
+                    delay(1_000L)
+                }
                 clipboard.clearPrimaryClip()
+                clipboardCountdownSecs = null
+                copiedNotice = i18n.t("clipboard_hygiene_cleared")
+                delay(2_500L)
+                copiedNotice = null
+            } else {
+                clipboardCountdownSecs = null
+                copiedNotice = "${i18n.t("action_copied")}: $label"
+                delay(2_800L)
+                copiedNotice = null
             }
+        }
+    }
+
+    val scrubClipboardNow: () -> Unit = {
+        clipboardJob?.cancel()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.clearPrimaryClip()
+        clipboardCountdownSecs = null
+        coroutineScope.launch {
+            copiedNotice = i18n.t("clipboard_hygiene_cleared")
+            delay(2_500L)
             copiedNotice = null
         }
     }
@@ -402,14 +430,14 @@ fun AdaptiveSafePocketShell(
                                                         Column(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .padding(start = 8.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
-                                                            verticalArrangement = Arrangement.spacedBy(5.dp),
-                                                            horizontalAlignment = Alignment.Start
+                                                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                            horizontalAlignment = Alignment.CenterHorizontally
                                                         ) {
                                                             HorizontalDivider()
                                                             Row(
                                                                 modifier = Modifier.fillMaxWidth(),
-                                                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.Start),
+                                                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                                                                 verticalAlignment = Alignment.CenterVertically
                                                             ) {
                                                                 SmoothOutlinedIconButton(
@@ -436,8 +464,7 @@ fun AdaptiveSafePocketShell(
                                                                 text = "v${AppBuildInfo.CURRENT_VERSION_NAME} (b${AppBuildInfo.CURRENT_VERSION_CODE})",
                                                                 style = MaterialTheme.typography.labelSmall,
                                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                maxLines = 1,
-                                                                modifier = Modifier.padding(start = 2.dp)
+                                                                maxLines = 1
                                                             )
                                                         }
                                                     }
@@ -465,6 +492,14 @@ fun AdaptiveSafePocketShell(
                                                             i18n = i18n,
                                                             exampleCount = exampleItemsCount,
                                                             onRequestDelete = { showPurgeConfirmDialog = true }
+                                                        )
+                                                    }
+                                                    if (selectedCategory == null && !favoritesOnly && searchQuery.isBlank()) {
+                                                        PinnedWalletDeckStrip(
+                                                            i18n = i18n,
+                                                            items = items,
+                                                            selectedItemId = selectedItem?.id,
+                                                            onSelectItem = { onSelectItem(it) }
                                                         )
                                                     }
                                                     VaultItemListPane(
@@ -512,7 +547,8 @@ fun AdaptiveSafePocketShell(
                                                             onDuplicate = onDuplicateItem,
                                                             onTogglePin = onTogglePinItem,
                                                             onToggleFavorite = onToggleFavoriteItem,
-                                                            onDelete = onDeleteItem
+                                                            onDelete = onDeleteItem,
+                                                            onPresentPass = { presentingPassItem = it }
                                                         )
                                                     }
                                                     HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
@@ -646,6 +682,14 @@ fun AdaptiveSafePocketShell(
                                                                     onRequestDelete = { showPurgeConfirmDialog = true }
                                                                 )
                                                             }
+                                                            if (selectedCategory == null && !favoritesOnly && searchQuery.isBlank()) {
+                                                                PinnedWalletDeckStrip(
+                                                                    i18n = i18n,
+                                                                    items = items,
+                                                                    selectedItemId = selectedItem?.id,
+                                                                    onSelectItem = { onSelectItem(it) }
+                                                                )
+                                                            }
                                                             VaultItemListPane(
                                                                 i18n = i18n,
                                                                 items = filteredItems,
@@ -675,7 +719,8 @@ fun AdaptiveSafePocketShell(
                                                                 onDuplicate = onDuplicateItem,
                                                                 onTogglePin = onTogglePinItem,
                                                                 onToggleFavorite = onToggleFavoriteItem,
-                                                                onDelete = onDeleteItem
+                                                                onDelete = onDeleteItem,
+                                                                onPresentPass = { presentingPassItem = it }
                                                             )
                                                         }
                                                     }
@@ -837,6 +882,14 @@ fun AdaptiveSafePocketShell(
                                                                 onRequestDelete = { showPurgeConfirmDialog = true }
                                                             )
                                                         }
+                                                        if (selectedCategory == null && !favoritesOnly && searchQuery.isBlank()) {
+                                                            PinnedWalletDeckStrip(
+                                                                i18n = i18n,
+                                                                items = items,
+                                                                selectedItemId = null,
+                                                                onSelectItem = { onSelectItem(it) }
+                                                            )
+                                                        }
                                                         VaultItemListPane(
                                                             i18n = i18n,
                                                             items = filteredItems,
@@ -866,16 +919,36 @@ fun AdaptiveSafePocketShell(
                                                             onDelete = {
                                                                 onDeleteItem(it)
                                                                 onSelectItem(null)
-                                                            }
+                                                            },
+                                                            onPresentPass = { presentingPassItem = it }
                                                         )
                                                     }
                                                 }
                                             }
                                         }
                                     }
+
+                                    if (clipboardCountdownSecs != null) {
+                                        ClipboardCountdownToastPill(
+                                            i18n = i18n,
+                                            secondsLeft = clipboardCountdownSecs ?: 0,
+                                            onClearNow = scrubClipboardNow,
+                                            modifier = Modifier
+                                                .align(Alignment.BottomCenter)
+                                                .padding(bottom = 24.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    presentingPassItem?.let { passTarget ->
+                        PassPresentationDialog(
+                            i18n = i18n,
+                            item = passTarget,
+                            onDismiss = { presentingPassItem = null }
+                        )
                     }
 
                     // Delete All Example Data Confirmation Modal
@@ -1682,7 +1755,8 @@ private fun VaultDetailInspectorPane(
     onDuplicate: (VaultItemPayload) -> Unit,
     onTogglePin: (VaultItemPayload) -> Unit,
     onToggleFavorite: (VaultItemPayload) -> Unit,
-    onDelete: (VaultItemPayload) -> Unit
+    onDelete: (VaultItemPayload) -> Unit,
+    onPresentPass: ((VaultItemPayload) -> Unit)? = null
 ) {
     if (selectedItem == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1738,13 +1812,22 @@ private fun VaultDetailInspectorPane(
             }
         }
 
-        // Complete Item Action Bar: Edit, Duplicate, Pin, Favorite, Delete
+        if (selectedItem.category == VaultCategory.BANK_ACCOUNT) {
+            SepaQrSectionCard(i18n = i18n, item = selectedItem)
+        }
+
+        // Complete Item Action Bar: Edit, Present, Duplicate, Pin, Favorite, Delete
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             SmoothPrimaryButton(onClick = { onEdit(selectedItem) }) {
                 Text("✎ ${i18n.t("action_edit")}")
+            }
+            if (onPresentPass != null && selectedItem.category != VaultCategory.SECURE_NOTE) {
+                SmoothTonalButton(onClick = { onPresentPass(selectedItem) }) {
+                    Text(i18n.t("action_present_card"))
+                }
             }
             SmoothTonalButton(onClick = { onDuplicate(selectedItem) }) {
                 Text("⎘ ${i18n.t("action_duplicate")}")
@@ -3727,7 +3810,7 @@ private fun MainAppFlagLanguageSelector(
                 } else {
                     "$badgeFlag ${activeLocale.code.uppercase()}"
                 },
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.withCenteredMetrics(),
                 maxLines = 1
             )
         }
@@ -3859,6 +3942,582 @@ private fun LockedVaultView(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(i18n.t("action_unlock_vault"))
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// PHASE 2: PINNED WALLET DECK, CLIPBOARD COUNTDOWN PILL, SEPA QR & PASS MODE
+// ============================================================================
+
+@Composable
+private fun PinnedWalletDeckStrip(
+    i18n: LocalizationEngine,
+    items: List<VaultItemPayload>,
+    selectedItemId: String?,
+    onSelectItem: (VaultItemPayload) -> Unit
+) {
+    val pinnedItems = remember(items) { items.filter { it.pinned } }
+    if (pinnedItems.isEmpty()) return
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "📌 ${i18n.t("wallet_deck_pinned_title").uppercase()}",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = pinnedItems.size.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            pinnedItems.take(8).forEach { item ->
+                val resolved = remember(item) { InstitutionBrandRegistry.resolveForItem(item) }
+                val (gradStart, gradEnd) = remember(item.cardTheme, resolved) {
+                    resolveCardGradientColors(item, resolved)
+                }
+                val compactPrimary = remember(item) {
+                    item.primaryCopyableField()?.value?.replace(Regex("[\\s-]+"), "").orEmpty()
+                }
+                val tailBadge = if (compactPrimary.length >= 4) {
+                    "•• ${compactPrimary.takeLast(4)}"
+                } else {
+                    resolved.networkDisplayLabel
+                }
+                val isSelected = selectedItemId == item.id
+
+                Column(
+                    modifier = Modifier
+                        .width(146.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(gradStart, gradEnd),
+                                start = Offset(0f, 0f),
+                                end = Offset(320f, 180f)
+                            )
+                        )
+                        .border(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.24f),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .clickable { onSelectItem(item) }
+                        .padding(horizontal = 11.dp, vertical = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = tailBadge,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White.copy(alpha = 0.92f),
+                            maxLines = 1
+                        )
+                        Text(
+                            text = resolved.networkDisplayLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color.White.copy(alpha = 0.78f),
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClipboardCountdownToastPill(
+    i18n: LocalizationEngine,
+    secondsLeft: Int,
+    onClearNow: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+    val sweep = (secondsLeft.coerceIn(0, 30) / 30f) * 360f
+
+    Surface(
+        modifier = modifier,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.35f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(26.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val strokePx = 2.6.dp.toPx()
+                    val inset = strokePx / 2f
+                    val arcSize = Size(size.width - strokePx, size.height - strokePx)
+                    drawArc(
+                        color = track,
+                        startAngle = 0f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = Offset(inset, inset),
+                        size = arcSize,
+                        style = Stroke(width = strokePx)
+                    )
+                    drawArc(
+                        color = accent,
+                        startAngle = -90f,
+                        sweepAngle = sweep,
+                        useCenter = false,
+                        topLeft = Offset(inset, inset),
+                        size = arcSize,
+                        style = Stroke(width = strokePx, cap = StrokeCap.Round)
+                    )
+                }
+                Text(
+                    text = secondsLeft.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = accent
+                )
+            }
+
+            Text(
+                text = i18n.t("clipboard_hygiene_active", mapOf("seconds" to secondsLeft)),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            SmoothOutlinedButton(
+                onClick = onClearNow,
+                shape = CircleShape,
+                minHeight = 28.dp,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = i18n.t("action_clear_now"),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfflineQrCodeCanvas(
+    payload: String,
+    sizeDp: androidx.compose.ui.unit.Dp = 156.dp
+) {
+    val matrix = remember(payload) { EpcSepaAndQrEngine.encodeQrMatrix(payload) }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White)
+            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+            .padding(10.dp)
+    ) {
+        Canvas(modifier = Modifier.size(sizeDp)) {
+            val quiet = 2
+            val total = matrix.size + quiet * 2
+            val cell = size.minDimension / total.toFloat()
+            for (r in matrix.indices) {
+                for (c in matrix[r].indices) {
+                    if (matrix[r][c]) {
+                        drawRect(
+                            color = Color(0xFF0F172A),
+                            topLeft = Offset((c + quiet) * cell, (r + quiet) * cell),
+                            size = Size(cell + 0.4f, cell + 0.4f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfflineCode128Canvas(
+    payload: String,
+    modifier: Modifier = Modifier
+        .fillMaxWidth()
+        .height(82.dp)
+) {
+    val modules = remember(payload) { EpcSepaAndQrEngine.encodeCode128BModules(payload) }
+    Canvas(modifier = modifier) {
+        if (modules.isEmpty()) return@Canvas
+        val barWidth = size.width / modules.size.toFloat()
+        for (i in modules.indices) {
+            if (modules[i]) {
+                drawRect(
+                    color = Color(0xFF0F172A),
+                    topLeft = Offset(i * barWidth, 0f),
+                    size = Size(barWidth + 0.35f, size.height)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SepaQrSectionCard(
+    i18n: LocalizationEngine,
+    item: VaultItemPayload
+) {
+    var expanded by remember(item.id) { mutableStateOf(false) }
+    var amountInput by remember(item.id) { mutableStateOf("") }
+    var purposeInput by remember(item.id) { mutableStateOf("") }
+
+    val iban = remember(item) { item.fieldValue(CanonicalFieldKeys.IBAN) }
+    val holder = remember(item) {
+        item.fieldValue(CanonicalFieldKeys.ACCOUNT_HOLDER).ifBlank { item.title }
+    }
+    val bic = remember(item) { item.fieldValue(CanonicalFieldKeys.BIC) }
+
+    val epcPayload = remember(holder, iban, bic, amountInput, purposeInput) {
+        EpcSepaAndQrEngine.buildEpcSepaQrPayload(
+            holderName = holder,
+            iban = iban,
+            bic = bic,
+            amountEur = amountInput,
+            remittanceText = purposeInput
+        )
+    } ?: return
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = i18n.t("sepa_qr_title"),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = i18n.t("sepa_qr_subtitle"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                SmoothPrimaryButton(onClick = { expanded = !expanded }) {
+                    Text(i18n.t(if (expanded) "sepa_qr_hide_btn" else "sepa_qr_show_btn"))
+                }
+            }
+
+            if (expanded) {
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OfflineQrCodeCanvas(payload = epcPayload, sizeDp = 144.dp)
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = holder,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (bic.isNotBlank()) "$iban • $bic" else iban,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = amountInput,
+                            onValueChange = { amountInput = it },
+                            label = { Text(i18n.t("sepa_qr_amount_label")) },
+                            placeholder = { Text("25.00") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = purposeInput,
+                            onValueChange = { purposeInput = it.take(40) },
+                            label = { Text(i18n.t("sepa_qr_purpose_label")) },
+                            placeholder = { Text("Dinner / Invoice") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PassPresentationDialog(
+    i18n: LocalizationEngine,
+    item: VaultItemPayload,
+    onDismiss: () -> Unit
+) {
+    var activeTab by remember(item.id) { mutableStateOf("digital") }
+    var useQrMode by remember(item.id) {
+        mutableStateOf(item.cardTheme?.barcodeFormat == BarcodeFormat.QR_CODE)
+    }
+
+    val iban = remember(item) { item.fieldValue(CanonicalFieldKeys.IBAN) }
+    val holder = remember(item) {
+        item.fieldValue(CanonicalFieldKeys.ACCOUNT_HOLDER).ifBlank { item.title }
+    }
+    val bic = remember(item) { item.fieldValue(CanonicalFieldKeys.BIC) }
+    val epcBankPayload = remember(item, holder, iban, bic) {
+        if (item.category == VaultCategory.BANK_ACCOUNT) {
+            EpcSepaAndQrEngine.buildEpcSepaQrPayload(holderName = holder, iban = iban, bic = bic)
+        } else null
+    }
+    val readableValue = remember(item, iban) {
+        listOf(
+            item.fieldValue(CanonicalFieldKeys.BARCODE_VALUE),
+            item.fieldValue(CanonicalFieldKeys.MEMBERSHIP_ID),
+            item.fieldValue(CanonicalFieldKeys.INSURANCE_NUMBER),
+            item.fieldValue(CanonicalFieldKeys.DOCUMENT_NUMBER),
+            iban,
+            item.fieldValue(CanonicalFieldKeys.CARD_NUMBER)
+        ).firstOrNull { it.isNotBlank() }.orEmpty()
+    }
+    val readAloudBlocks = remember(readableValue) {
+        EpcSepaAndQrEngine.buildReadAloudBlocks(readableValue, groupSize = 4)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 560.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 28.dp),
+            shape = RoundedCornerShape(22.dp),
+            color = Color(0xFF0F172A),
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(22.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = i18n.t("present_wake_lock_active"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.75f)
+                        )
+                    }
+                    SmoothPrimaryButton(onClick = onDismiss) {
+                        Text(i18n.t("present_close_btn"))
+                    }
+                }
+
+                if (readAloudBlocks.isNotEmpty()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SmoothFilterPill(
+                            selected = activeTab == "digital",
+                            onClick = { activeTab = "digital" },
+                            label = i18n.t("pass_tab_digital")
+                        )
+                        SmoothFilterPill(
+                            selected = activeTab == "read_aloud",
+                            onClick = { activeTab = "read_aloud" },
+                            label = i18n.t("pass_tab_read_aloud")
+                        )
+                    }
+                }
+
+                if (activeTab == "read_aloud" && readAloudBlocks.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color.White,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = i18n.t("pass_read_aloud_hint"),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color(0xFF475569)
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                readAloudBlocks.forEach { block ->
+                                    Column(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(Color(0xFFF8FAFC))
+                                            .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(10.dp))
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = "#${block.index}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = Color(0xFF64748B)
+                                        )
+                                        Text(
+                                            text = block.chars,
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color(0xFF0F172A)
+                                        )
+                                    }
+                                }
+                            }
+                            if (bic.isNotBlank()) {
+                                Text(
+                                    text = "BIC: $bic",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF334155)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    DualBrandVisualCardHero(
+                        item = item,
+                        categoryLabelText = categorySingularLabel(i18n, item.category),
+                        displaySubtitleText = i18n.resolveDisplaySubtitle(item.subtitle, item.category),
+                        flipLabelFront = i18n.t("card_flip_to_front"),
+                        flipLabelBack = i18n.t("card_flip_to_back"),
+                        reverseBadgeLabel = i18n.t("card_back_badge"),
+                        reverseEmptyHint = i18n.t("card_back_empty_hint"),
+                        cvvLabelText = i18n.t("field_cvv")
+                    )
+
+                    if (readableValue.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color.White,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                if (epcBankPayload == null) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        SmoothFilterPill(
+                                            selected = !useQrMode,
+                                            onClick = { useQrMode = false },
+                                            label = i18n.t("barcode_format_code128")
+                                        )
+                                        SmoothFilterPill(
+                                            selected = useQrMode,
+                                            onClick = { useQrMode = true },
+                                            label = i18n.t("barcode_format_qr")
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        text = i18n.t("sepa_qr_title"),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF334155)
+                                    )
+                                }
+
+                                if (epcBankPayload != null || useQrMode) {
+                                    OfflineQrCodeCanvas(
+                                        payload = epcBankPayload ?: readableValue,
+                                        sizeDp = 168.dp
+                                    )
+                                } else {
+                                    OfflineCode128Canvas(payload = readableValue)
+                                }
+
+                                Text(
+                                    text = readableValue,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F172A)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

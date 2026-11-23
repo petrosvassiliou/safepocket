@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 /// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.7 (Build 12) with 100% Cross-Platform Parity.
 struct MacVaultSplitView: View {
@@ -9,6 +11,7 @@ struct MacVaultSplitView: View {
     @State private var confirmDeleteSamples = false
     @State private var revealedFieldIds: Set<String> = []
     @State private var flippedEntryIds: Set<String> = []
+    @State private var presentingPassEntry: MacVaultEntry? = nil
     @State private var unlockPasswordInput: String = ""
     @State private var unlockError: Bool = false
     @State private var unlockShakeOffset: CGFloat = 0
@@ -80,11 +83,20 @@ struct MacVaultSplitView: View {
                 .searchable(text: $vaultState.searchQuery, placement: .toolbar, prompt: vaultState.t("search_placeholder"))
             }
         }
+        .overlay(alignment: .bottom) {
+            if !vaultState.isLocked {
+                macClipboardToastOverlay
+                    .padding(.bottom, 34)
+            }
+        }
         .sheet(isPresented: $vaultState.presentSettingsSheet) {
             MacSettingsModalWindow(vaultState: vaultState, updater: updater)
         }
         .sheet(isPresented: $vaultState.presentEditorSheet) {
             MacSmartItemEditorSheet(vaultState: vaultState, existing: vaultState.editingEntry)
+        }
+        .sheet(item: $presentingPassEntry) { passEntry in
+            MacPassPresentationSheet(vaultState: vaultState, entry: passEntry)
         }
         .confirmationDialog(
             vaultState.t("delete_example_data_confirm", ["count": String(vaultState.sampleEntriesCount)]),
@@ -229,7 +241,7 @@ struct MacVaultSplitView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .center, spacing: 5) {
                 Divider()
                 HStack(alignment: .center, spacing: 6) {
                     Button {
@@ -259,11 +271,9 @@ struct MacVaultSplitView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-
-                    Spacer(minLength: 0)
                 }
-                .padding(.leading, 8)
-                .padding(.trailing, 10)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 10)
                 .padding(.top, 5)
 
                 HStack(spacing: 5) {
@@ -274,10 +284,9 @@ struct MacVaultSplitView: View {
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Spacer(minLength: 0)
                 }
-                .padding(.leading, 8)
-                .padding(.trailing, 10)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 10)
                 .padding(.bottom, 6)
             }
             .background(.bar)
@@ -287,8 +296,14 @@ struct MacVaultSplitView: View {
 
     // MARK: - Column 2: Native Inset Vault List with Aligned Toolbar Title & Banners
 
+    private var showPinnedWalletDeck: Bool {
+        vaultState.selectedCategory == "all"
+            && vaultState.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && vaultState.entries.contains(where: { $0.pinned })
+    }
+
     private var hasListTopBanners: Bool {
-        vaultState.lastErrorBanner != nil || vaultState.statusNotice != nil || vaultState.sampleEntriesCount > 0
+        vaultState.lastErrorBanner != nil || vaultState.statusNotice != nil || vaultState.sampleEntriesCount > 0 || showPinnedWalletDeck
     }
 
     private var vaultListContent: some View {
@@ -457,11 +472,146 @@ struct MacVaultSplitView: View {
                         .padding(.vertical, 8)
                         .background(Color.red.opacity(0.06))
                     }
+
+                    if showPinnedWalletDeck {
+                        macPinnedWalletDeck
+                    }
                     Divider()
                 }
             }
         }
         .navigationSplitViewColumnWidth(min: 280, ideal: 328, max: 420)
+    }
+
+    @ViewBuilder
+    private var macPinnedWalletDeck: some View {
+        let pinnedItems = vaultState.entries.filter { $0.pinned }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(vaultState.t("wallet_deck_pinned_title"), systemImage: "pin.fill")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(pinnedItems.count)")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(pinnedItems.prefix(8)) { item in
+                        let inst = MacSmartIntelligence.resolveInstitution(for: item)
+                        let cardColor = MacSmartIntelligence.colorFromHex(item.customColorHex ?? inst?.primaryHex)
+                            ?? vaultState.materialAccent.swiftUIColor
+                        let compactVal = item.primaryValue.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "-", with: "")
+                        let tail = compactVal.count >= 4 ? "•• \(compactVal.suffix(4))" : MacSmartIntelligence.resolveNetworkBadge(for: item)
+                        let isSel = vaultState.selectedEntryId == item.id
+
+                        Button {
+                            vaultState.selectedEntryId = item.id
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 4) {
+                                    Text(item.title)
+                                        .font(.system(size: 11.5, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    Image(systemName: "pin.fill")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.white.opacity(0.85))
+                                }
+                                HStack {
+                                    Text(tail)
+                                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(.white.opacity(0.92))
+                                    Spacer(minLength: 4)
+                                    Text(MacSmartIntelligence.resolveNetworkBadge(for: item))
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(.white.opacity(0.80))
+                                }
+                            }
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 8)
+                            .frame(width: 142, alignment: .leading)
+                            .background(
+                                LinearGradient(
+                                    colors: [cardColor, cardColor.opacity(0.76)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .strokeBorder(isSel ? Color.white : Color.white.opacity(0.24), lineWidth: isSel ? 2 : 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    @ViewBuilder
+    private var macClipboardToastOverlay: some View {
+        if let secs = vaultState.clipboardCountdownSeconds {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.24), lineWidth: 2.6)
+                        .frame(width: 24, height: 24)
+                    Circle()
+                        .trim(from: 0, to: max(0.03, CGFloat(secs) / 30.0))
+                        .stroke(
+                            vaultState.materialAccent.swiftUIColor,
+                            style: StrokeStyle(lineWidth: 2.6, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 24, height: 24)
+                    Text("\(secs)")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                }
+                Text(vaultState.t("clipboard_hygiene_active", ["seconds": String(secs)]))
+                    .font(.system(size: 12, weight: .medium))
+                Button(vaultState.t("action_clear_now")) {
+                    vaultState.scrubClipboardNow()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(vaultState.materialAccent.swiftUIColor.opacity(0.35), lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+        } else if vaultState.clipboardClearedFlash {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.shield.fill")
+                    .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                Text(vaultState.t("clipboard_hygiene_cleared"))
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(color: .black.opacity(0.16), radius: 12, y: 5)
+        } else if let plainMsg = vaultState.plainCopiedBanner {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                Text(plainMsg)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(color: .black.opacity(0.14), radius: 10, y: 4)
+        }
     }
 
     // MARK: - Column 3: Aligned Detail Inspector + Slim Non-Overlapping Bottom Status Bar
@@ -511,6 +661,10 @@ struct MacVaultSplitView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         macVisualBrandCard(for: selected)
+
+                        if selected.category == "BANK_ACCOUNT" {
+                            MacSepaQrSectionCard(vaultState: vaultState, entry: selected)
+                        }
 
                         HStack(alignment: .center, spacing: 8) {
                             Button(vaultState.t("action_edit")) {
@@ -663,6 +817,9 @@ struct MacVaultSplitView: View {
             },
             onEditEntry: {
                 vaultState.openEditEditor(entry)
+            },
+            onPresentPass: {
+                presentingPassEntry = entry
             }
         )
     }
@@ -676,6 +833,7 @@ struct MacFlippableVisualCard: View {
     var onToggleFlip: (() -> Void)? = nil
     var onCopyPrimary: (() -> Void)? = nil
     var onEditEntry: (() -> Void)? = nil
+    var onPresentPass: (() -> Void)? = nil
 
     @State private var isCvvRevealed: Bool = false
     @State private var isPinRevealed: Bool = false
@@ -1170,9 +1328,416 @@ struct MacFlippableVisualCard: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
+
+                    if let onPresentPass {
+                        Spacer(minLength: 0)
+                        Button {
+                            onPresentPass()
+                        } label: {
+                            Label(vaultState.t("action_present_card"), systemImage: "viewfinder")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
                 }
             }
         }
+    }
+}
+
+// MARK: - Phase 2: Offline EPC SEPA GiroCode, CoreImage QR/Code128 & Counter Pass / Read-Aloud Sheet
+
+enum MacEpcSepaAndBarcode {
+    struct ReadAloudBlock: Identifiable {
+        let id: Int
+        let chars: String
+    }
+
+    static func buildEpcSepaQrPayload(
+        holderName: String,
+        iban: String,
+        bic: String = "",
+        amountEur: String = "",
+        remittanceText: String = ""
+    ) -> String? {
+        let cleanIban = iban
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .uppercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleanIban.range(of: #"^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+
+        let cleanHolder = String(
+            holderName
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(70)
+        )
+        let effectiveHolder = cleanHolder.isEmpty ? "Account Holder" : cleanHolder
+
+        let rawBic = bic.replacingOccurrences(of: " ", with: "").uppercased()
+        let cleanBic = rawBic.range(of: #"^[A-Z0-9]{8}([A-Z0-9]{3})?$"#, options: .regularExpression) != nil ? rawBic : ""
+
+        let amtNormalized = amountEur
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: ".")
+            .filter { "0123456789.".contains($0) }
+        var formattedAmount = ""
+        if let val = Double(amtNormalized), val > 0, val <= 999_999_999.99 {
+            formattedAmount = String(format: "EUR%.2f", val)
+        }
+
+        let cleanRemit = String(
+            remittanceText
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(40)
+        )
+
+        var lines = [
+            "BCD",
+            "002",
+            "1",
+            "SCT",
+            cleanBic,
+            effectiveHolder,
+            cleanIban,
+            formattedAmount,
+            "",
+            "",
+            cleanRemit
+        ]
+        while lines.count > 7 && lines.last == "" {
+            lines.removeLast()
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func buildReadAloudBlocks(_ rawValue: String, groupSize: Int = 4) -> [ReadAloudBlock] {
+        let compact = rawValue
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !compact.isEmpty else { return [] }
+        let chars = Array(compact)
+        let step = max(2, groupSize)
+        var out: [ReadAloudBlock] = []
+        var idx = 1
+        var offset = 0
+        while offset < chars.count {
+            let end = min(chars.count, offset + step)
+            out.append(ReadAloudBlock(id: idx, chars: String(chars[offset..<end])))
+            idx += 1
+            offset += step
+        }
+        return out
+    }
+
+    static func renderQrImage(payload: String, scale: CGFloat = 6) -> NSImage? {
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+        guard let outputImage = filter.outputImage else { return nil }
+        let scaled = outputImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        guard let cgImg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return NSImage(cgImage: cgImg, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
+    }
+
+    static func renderCode128Image(payload: String, scaleX: CGFloat = 2.6, scaleY: CGFloat = 3.2) -> NSImage? {
+        guard payload.canBeConverted(to: .ascii) else { return nil }
+        let context = CIContext()
+        let filter = CIFilter.code128BarcodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.quietSpace = 7
+        guard let outputImage = filter.outputImage else { return nil }
+        let scaled = outputImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        guard let cgImg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return NSImage(cgImage: cgImg, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
+    }
+}
+
+struct MacSepaQrSectionCard: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+    let entry: MacVaultEntry
+    @State private var isExpanded: Bool = false
+    @State private var amountInput: String = ""
+    @State private var purposeInput: String = ""
+
+    private func fieldVal(_ key: String) -> String {
+        entry.fields.first(where: { $0.labelKey == key })?.value.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    var body: some View {
+        let iban = fieldVal("field_iban")
+        let holder = fieldVal("field_account_holder").isEmpty ? entry.title : fieldVal("field_account_holder")
+        let bic = fieldVal("field_bic")
+
+        if let payload = MacEpcSepaAndBarcode.buildEpcSepaQrPayload(
+            holderName: holder,
+            iban: iban,
+            bic: bic,
+            amountEur: amountInput,
+            remittanceText: purposeInput
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(vaultState.t("sepa_qr_title"), systemImage: "qrcode")
+                            .font(.subheadline.weight(.bold))
+                        Text(vaultState.t("sepa_qr_subtitle"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isExpanded.toggle()
+                        }
+                    } label: {
+                        Label(
+                            vaultState.t(isExpanded ? "sepa_qr_hide_btn" : "sepa_qr_show_btn"),
+                            systemImage: "qrcode"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+
+                if isExpanded {
+                    Divider()
+                    HStack(alignment: .center, spacing: 18) {
+                        if let qrImg = MacEpcSepaAndBarcode.renderQrImage(payload: payload, scale: 5.5) {
+                            Image(nsImage: qrImg)
+                                .interpolation(.none)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 148, height: 148)
+                                .padding(10)
+                                .background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .strokeBorder(Color.black.opacity(0.12), lineWidth: 1)
+                                )
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(holder)
+                                    .font(.caption.weight(.bold))
+                                Text(bic.isEmpty ? iban : "\(iban) • \(bic)")
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+
+                            HStack(spacing: 10) {
+                                MacLabeledTextField(
+                                    label: vaultState.t("sepa_qr_amount_label"),
+                                    placeholder: "25.00",
+                                    text: $amountInput
+                                )
+                                MacLabeledTextField(
+                                    label: vaultState.t("sepa_qr_purpose_label"),
+                                    placeholder: "Dinner / Invoice",
+                                    text: $purposeInput
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .background(
+                Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.09), lineWidth: 1)
+            )
+        }
+    }
+}
+
+struct MacPassPresentationSheet: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+    let entry: MacVaultEntry
+    @Environment(\.dismiss) private var dismiss
+
+    private enum PassTab: String, CaseIterable {
+        case digital
+        case readAloud
+    }
+
+    @State private var activeTab: PassTab = .digital
+    @State private var useQrCode: Bool = false
+    @State private var isCardFlipped: Bool = false
+
+    private func fieldVal(_ key: String) -> String {
+        entry.fields.first(where: { $0.labelKey == key })?.value.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    var body: some View {
+        let iban = fieldVal("field_iban")
+        let holder = fieldVal("field_account_holder").isEmpty ? entry.title : fieldVal("field_account_holder")
+        let bic = fieldVal("field_bic")
+        let epcPayload = entry.category == "BANK_ACCOUNT"
+            ? MacEpcSepaAndBarcode.buildEpcSepaQrPayload(holderName: holder, iban: iban, bic: bic)
+            : nil
+        let readableValue = [
+            fieldVal("field_barcode_value"),
+            fieldVal("field_membership_id"),
+            fieldVal("field_insurance_number"),
+            fieldVal("field_document_number"),
+            iban,
+            fieldVal("field_card_number")
+        ].first(where: { !$0.isEmpty }) ?? entry.primaryValue
+        let blocks = MacEpcSepaAndBarcode.buildReadAloudBlocks(readableValue, groupSize: 4)
+        let effectiveQrMode = useQrCode || epcPayload != nil || !readableValue.canBeConverted(to: .ascii)
+        let qrPayload = epcPayload ?? readableValue
+
+        VStack(spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.title)
+                        .font(.title3.weight(.bold))
+                    Text(vaultState.t("present_wake_lock_active"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(vaultState.t("present_close_btn")) {
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.cancelAction)
+            }
+
+            if !blocks.isEmpty {
+                Picker("", selection: $activeTab) {
+                    Text(vaultState.t("pass_tab_digital")).tag(PassTab.digital)
+                    Text(vaultState.t("pass_tab_read_aloud")).tag(PassTab.readAloud)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 320)
+            }
+
+            ScrollView {
+                VStack(spacing: 16) {
+                    if activeTab == .readAloud && !blocks.isEmpty {
+                        VStack(spacing: 14) {
+                            Text(vaultState.t("pass_read_aloud_hint"))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.black.opacity(0.65))
+
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 86), spacing: 10)], spacing: 10) {
+                                ForEach(blocks) { block in
+                                    VStack(spacing: 3) {
+                                        Text("#\(block.id)")
+                                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(Color.black.opacity(0.50))
+                                        Text(block.chars)
+                                            .font(.system(size: 22, weight: .heavy, design: .monospaced))
+                                            .foregroundStyle(Color.black)
+                                    }
+                                    .padding(.vertical, 8)
+                                    .padding(.horizontal, 10)
+                                    .frame(maxWidth: .infinity)
+                                    .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(Color.black.opacity(0.14), lineWidth: 1)
+                                    )
+                                }
+                            }
+
+                            if !bic.isEmpty {
+                                Text("BIC: \(bic)")
+                                    .font(.system(size: 13.5, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(Color.black.opacity(0.78))
+                            }
+                        }
+                        .padding(20)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    } else {
+                        MacFlippableVisualCard(
+                            vaultState: vaultState,
+                            entry: entry,
+                            isFlipped: isCardFlipped,
+                            onToggleFlip: {
+                                withAnimation(.spring(response: 0.46, dampingFraction: 0.82)) {
+                                    isCardFlipped.toggle()
+                                }
+                            },
+                            onCopyPrimary: {
+                                if !entry.primaryValue.isEmpty {
+                                    vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
+                                }
+                            }
+                        )
+
+                        if !readableValue.isEmpty {
+                            VStack(spacing: 12) {
+                                if epcPayload == nil && readableValue.canBeConverted(to: .ascii) {
+                                    HStack(spacing: 8) {
+                                        Button(vaultState.t("barcode_format_code128")) {
+                                            useQrCode = false
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+
+                                        Button(vaultState.t("barcode_format_qr")) {
+                                            useQrCode = true
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    }
+                                } else if epcPayload != nil {
+                                    Text(vaultState.t("sepa_qr_title"))
+                                        .font(.system(size: 11.5, weight: .bold))
+                                        .foregroundStyle(Color.black.opacity(0.68))
+                                }
+
+                                if effectiveQrMode, let qrImg = MacEpcSepaAndBarcode.renderQrImage(payload: qrPayload, scale: 6.2) {
+                                    Image(nsImage: qrImg)
+                                        .interpolation(.none)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: 176, height: 176)
+                                } else if let c128Img = MacEpcSepaAndBarcode.renderCode128Image(payload: readableValue) {
+                                    Image(nsImage: c128Img)
+                                        .interpolation(.none)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(maxWidth: 380, maxHeight: 84)
+                                }
+
+                                Text(readableValue)
+                                    .font(.system(size: 16, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(Color.black)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(20)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.black.opacity(0.10), lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 22)
+        .frame(width: 560, height: 640)
     }
 }
 

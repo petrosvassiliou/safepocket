@@ -44,7 +44,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.5.0-beta.3 (Build 18) Feature Suite', () => {
+describe('SafePocket v0.5.0-beta.4 (Build 19) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -315,9 +315,9 @@ describe('SafePocket v0.5.0-beta.3 (Build 18) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.5.0-beta.3 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.3');
-    expect(APP_BUILD_INFO.versionCode).toBe(18);
+  it('7. Cross-Platform v0.5.0-beta.4 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.4');
+    expect(APP_BUILD_INFO.versionCode).toBe(19);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -401,7 +401,7 @@ describe('SafePocket v0.5.0-beta.3 (Build 18) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.5.0-beta.3 (Build 18)');
+    expect(macApp).toContain('SafePocket v0.5.0-beta.4 (Build 19)');
     expect(macApp).toContain('NSApplication.shared.applicationIconImage = appIcon');
     expect(macApp).toContain('noteFileSystemChanged(destApp.path)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
@@ -931,11 +931,11 @@ describe('SafePocket v0.5.0-beta.3 (Build 18) Feature Suite', () => {
     expect(ktSync).toContain('resp.status.value == 401 && forceRefreshTokenProvider != null');
     expect(macCloud).not.toContain('application/x-www-form-urlencoded');
     expect(androidShell).toContain('windowInsets = WindowInsets(0, 0, 0, 0)');
-    expect(androidShell).toContain('Arrangement.spacedBy(6.dp, Alignment.Start)');
+    expect(androidShell).toContain('Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)');
     expect(androidShell).not.toContain('if (!isVaultLocked && widthDp >= 600)');
-    expect(macSplit).toContain('.padding(.leading, 8)');
+    expect(macSplit).toContain('.frame(maxWidth: .infinity, alignment: .center)');
     expect(pwaCss).toContain('padding: 14px 10px 6px 8px;');
-    expect(pwaCss).toContain('justify-content: flex-start;');
+    expect(pwaCss).toContain('justify-content: center;');
   });
 
   it('14. v0.3.7 Five-Point UX & Cross-Platform Parity (Centered Icons, +New Category Menu, 2-Column Storage Cards, Elevated Modal Footers & Top-Anchored Hover Context Menus)', () => {
@@ -981,11 +981,17 @@ describe('SafePocket v0.5.0-beta.3 (Build 18) Feature Suite', () => {
       fs.readFileSync(path.join(repoRoot, 'i18n/de.arb.json'), 'utf-8')
     ) as Record<string, string>;
 
-    // 1) Centered sidebar footer icons
+    // 1) Centered sidebar footer icons relative to divider line
     expect(smoothComponents).toContain('CenteredThemeContrastIcon');
     expect(smoothComponents).toContain('CenteredLockOutlineIcon');
     expect(smoothComponents).toContain('withCenteredMetrics');
+    expect(androidShell).toContain(
+      'horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)'
+    );
     expect(pwaCss).toContain('width: 34px;');
+    expect(pwaCss).toContain(
+      '.sp-sidebar-bottom-bar {\n  display: flex;\n  align-items: center;\n  justify-content: center;'
+    );
 
     // 2) + New category dropdown in middle pane top bar & category-free item dialog
     expect(androidShell).toContain('NewItemCategoryDropdownButton');
@@ -1399,6 +1405,104 @@ describe('SafePocket v0.5.0-beta.3 (Build 18) Feature Suite', () => {
     );
     expect(macCloud).toContain('safepocket_keybag_v2.enc');
     expect(macCloud).toContain('hardwarePlatformUUID');
+  });
+
+  it('17. Phase 2 Signature Wallet UX: EPC069-12 SEPA GiroCode, Read-Aloud Dictation Blocks, 30s Radial Clipboard Ring & Pinned Wallet Deck across PWA, macOS & Android', async () => {
+    const { buildEpcSepaQrPayload, buildReadAloudBlocks } = await import(
+      '../scanner/epcSepaQr'
+    );
+    const { encodeQrSvg } = await import('../scanner/barcodeRenderer');
+
+    // 1) EPC069-12 v002 SEPA GiroCode payload & offline QR SVG generation
+    const basicEpc = buildEpcSepaQrPayload({
+      holderName: 'Clara Sofia Müller',
+      iban: 'DE89 3704 0044 0532 0130 00',
+      bic: 'DEUTDEFFXXX'
+    });
+    expect(basicEpc).toBe(
+      'BCD\n002\n1\nSCT\nDEUTDEFFXXX\nClara Sofia Müller\nDE89370400440532013000'
+    );
+
+    const withAmountAndPurpose = buildEpcSepaQrPayload({
+      holderName: 'Clara Sofia Müller',
+      iban: 'DE89 3704 0044 0532 0130 00',
+      bic: 'INGDDEFFXXX',
+      amountEur: '25,5',
+      remittanceText: 'Dinner Split'
+    });
+    expect(withAmountAndPurpose).toBe(
+      'BCD\n002\n1\nSCT\nINGDDEFFXXX\nClara Sofia Müller\nDE89370400440532013000\nEUR25.50\n\n\nDinner Split'
+    );
+    expect(encodeQrSvg(withAmountAndPurpose!)).toContain('<svg');
+    expect(
+      buildEpcSepaQrPayload({ holderName: 'Test', iban: 'INVALID' })
+    ).toBeNull();
+
+    // 2) Read-Aloud 4-character dictation chunking
+    const blocks = buildReadAloudBlocks('DE89 3704 0044 0532 0130 00', 4);
+    expect(blocks).toEqual([
+      { index: 1, chars: 'DE89' },
+      { index: 2, chars: '3704' },
+      { index: 3, chars: '0044' },
+      { index: 4, chars: '0532' },
+      { index: 5, chars: '0130' },
+      { index: 6, chars: '00' }
+    ]);
+
+    // 3) Cross-platform Phase 2 UI wiring across PWA, macOS & Android/Shared
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const pwaShell = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/ui/appShell.ts'),
+      'utf-8'
+    );
+    const pwaCss = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/styles/m3-expressive.css'),
+      'utf-8'
+    );
+    const macApp = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const sharedSepaKt = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'shared/src/commonMain/kotlin/com/safepocket/shared/scanner/EpcSepaAndQrEngine.kt'
+      ),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+
+    expect(pwaCss).toContain('.sp-clipboard-ring-svg');
+    expect(pwaCss).toContain('.sp-wallet-deck');
+    expect(pwaCss).toContain('.sp-sepa-qr-card');
+    expect(pwaCss).toContain('.sp-read-aloud-grid');
+    expect(pwaShell).toContain('renderPinnedWalletDeck');
+    expect(pwaShell).toContain('renderSepaQrSection');
+    expect(pwaShell).toContain('data-present-tab=');
+
+    expect(macApp).toContain('clipboardCountdownSeconds');
+    expect(macApp).toContain('func scrubClipboardNow()');
+    expect(macSplit).toContain('macPinnedWalletDeck');
+    expect(macSplit).toContain('MacSepaQrSectionCard');
+    expect(macSplit).toContain('MacPassPresentationSheet');
+
+    expect(sharedSepaKt).toContain('object EpcSepaAndQrEngine');
+    expect(sharedSepaKt).toContain('fun buildEpcSepaQrPayload');
+    expect(sharedSepaKt).toContain('fun encodeQrMatrix');
+    expect(androidShell).toContain('PinnedWalletDeckStrip');
+    expect(androidShell).toContain('ClipboardCountdownToastPill');
+    expect(androidShell).toContain('SepaQrSectionCard');
+    expect(androidShell).toContain('PassPresentationDialog');
   });
 });
 

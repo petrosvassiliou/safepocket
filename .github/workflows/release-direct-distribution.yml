@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       version_name:
-        description: 'Semantic release version (current: 0.5.0-beta.3)'
+        description: 'Semantic release version (current: 0.5.0-beta.4)'
         required: false
-        default: '0.5.0-beta.3'
+        default: '0.5.0-beta.4'
       version_code:
-        description: 'Monotonic integer build number (current: 18)'
+        description: 'Monotonic integer build number (current: 19)'
         required: false
-        default: '18'
+        default: '19'
 
 permissions:
   contents: write
@@ -72,12 +72,14 @@ jobs:
               VER_CODE="17"
             elif [[ "${RAW_TAG}" == "0.5.0-beta.3" ]]; then
               VER_CODE="18"
+            elif [[ "${RAW_TAG}" == "0.5.0-beta.4" ]]; then
+              VER_CODE="19"
             else
-              VER_CODE="${GITHUB_RUN_NUMBER:-18}"
+              VER_CODE="${GITHUB_RUN_NUMBER:-19}"
             fi
           else
-            VER_NAME="${{ inputs.version_name || '0.5.0-beta.3' }}"
-            VER_CODE="${{ inputs.version_code || '18' }}"
+            VER_NAME="${{ inputs.version_name || '0.5.0-beta.4' }}"
+            VER_CODE="${{ inputs.version_code || '19' }}"
           fi
           echo "version_name=${VER_NAME}" >> "${GITHUB_OUTPUT}"
           echo "version_code=${VER_CODE}" >> "${GITHUB_OUTPUT}"

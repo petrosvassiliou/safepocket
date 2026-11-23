@@ -24,7 +24,14 @@ import {
 } from '../error/errorHandler';
 import { FirebaseVaultService } from '../firebase/firebaseVaultService';
 import { SafePocketI18n, SUPPORTED_LOCALES } from '../i18n/l10n';
-import { renderScannableBarcodeSvg } from '../scanner/barcodeRenderer';
+import {
+  encodeQrSvg,
+  renderScannableBarcodeSvg
+} from '../scanner/barcodeRenderer';
+import {
+  buildEpcSepaQrPayload,
+  buildReadAloudBlocks
+} from '../scanner/epcSepaQr';
 import {
   analyzeMrzRegionFromCanvas,
   type CameraScanMode,
@@ -255,7 +262,11 @@ export class SafePocketAppShell {
   private presentationState: {
     itemId: string;
     formatOverride?: BarcodeFormat;
+    tab?: 'digital' | 'read_aloud' | 'scans';
   } | null = null;
+  private sepaQrExpandedIds = new Set<string>();
+  private sepaAmountByItemId: Record<string, string> = {};
+  private sepaPurposeByItemId: Record<string, string> = {};
   private wakeLockSentinel: { release: () => Promise<void> } | null = null;
   private cameraModalState: {
     mode: CameraScanMode;
@@ -1290,6 +1301,9 @@ export class SafePocketAppShell {
     this.revealedFieldIds.clear();
     this.flippedCardIds.clear();
     this.revealedCardSecretKeys.clear();
+    this.sepaQrExpandedIds.clear();
+    this.sepaAmountByItemId = {};
+    this.sepaPurposeByItemId = {};
     this.settingsModalOpen = false;
     this.editorDraft = null;
     this.restoreModalState = null;
@@ -2422,6 +2436,12 @@ export class SafePocketAppShell {
               : ''
           }
 
+          ${
+            this.selectedNav === 'ALL' && !this.searchQuery.trim()
+              ? this.renderPinnedWalletDeck(selectedItem?.id ?? null)
+              : ''
+          }
+
           <div class="sp-items-scroll">
             ${
               filtered.length === 0
@@ -2751,14 +2771,24 @@ export class SafePocketAppShell {
       )}</span></div>`;
     }
     if (this.clipboardSecondsLeft !== null) {
+      const circumference = 2 * Math.PI * 10;
+      const fraction = Math.max(0, Math.min(1, this.clipboardSecondsLeft / 30));
+      const dashOffset = (circumference * (1 - fraction)).toFixed(2);
       return `
         <div class="sp-clipboard-banner" role="status">
-          <span style="display:inline-flex;align-items:center;gap:7px;">${renderIconSvg('shield', 14)} ${this.escape(
+          <span class="sp-clipboard-ring-wrap" aria-hidden="true">
+            <svg class="sp-clipboard-ring-svg" width="26" height="26" viewBox="0 0 26 26">
+              <circle cx="13" cy="13" r="10" fill="none" stroke="rgba(148,163,184,0.28)" stroke-width="2.6"/>
+              <circle cx="13" cy="13" r="10" fill="none" stroke="var(--accent-primary)" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="${circumference.toFixed(2)}" stroke-dashoffset="${dashOffset}"/>
+            </svg>
+            <span class="sp-clipboard-ring-num">${this.clipboardSecondsLeft}</span>
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:7px;">${this.escape(
             this.i18n.t('clipboard_hygiene_active', {
               seconds: this.clipboardSecondsLeft
             })
           )}</span>
-          <button type="button" id="sp-scrub-now-btn" class="sp-btn" style="padding:3px 9px;min-height:26px;font-size:11.5px;">
+          <button type="button" id="sp-scrub-now-btn" class="sp-btn sp-btn-tonal" style="padding:3px 10px;min-height:26px;font-size:11.5px;border-radius:999px;">
             ${this.escape(this.i18n.t('action_clear_now'))}
           </button>
         </div>
@@ -3003,6 +3033,7 @@ export class SafePocketAppShell {
       </div>
 
       ${showVisualCard ? this.renderVisualCardHero(item) : ''}
+      ${item.category === 'BANK_ACCOUNT' ? this.renderSepaQrSection(item) : ''}
 
       <div class="sp-fields-list">
         ${item.fields.map((field) => this.renderFieldRow(item, field)).join('')}
@@ -4021,7 +4052,7 @@ export class SafePocketAppShell {
         : this.i18n.t('scan_side_front');
 
     return `
-      <div class="sp-overlay" id="sp-preview-backdrop">
+      <div class="sp-overlay" id="sp-preview-backdrop" style="z-index:975;">
         <div class="sp-preview-modal-card">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
             <div>
@@ -4062,6 +4093,165 @@ export class SafePocketAppShell {
     `;
   }
 
+  private renderPinnedWalletDeck(selectedId: string | null): string {
+    const pinnedItems = this.items.filter((i) => i.pinned);
+    if (pinnedItems.length === 0) return '';
+
+    const cardsHtml = pinnedItems
+      .slice(0, 8)
+      .map((item) => {
+        const resolved = resolveDualBrand(item);
+        const brandHex =
+          item.cardTheme?.paletteId === 'custom'
+            ? item.cardTheme.customColorHex ?? resolved.effectiveColorHex
+            : resolved.effectiveColorHex ?? '#0f766e';
+        const styleObj = buildCustomCardStyle(brandHex || '#0f766e');
+        const primaryVal =
+          item.fields.find((f) => f.labelKey === 'field_card_number')?.value ||
+          item.fields.find((f) => f.labelKey === 'field_iban')?.value ||
+          item.fields.find((f) => f.labelKey === 'field_membership_id')?.value ||
+          item.fields.find((f) => f.labelKey === 'field_insurance_number')?.value ||
+          item.fields.find((f) => f.labelKey === 'field_document_number')?.value ||
+          '';
+        const compactTail = primaryVal.replace(/[\s-]+/g, '');
+        const tailBadge =
+          compactTail.length >= 4 ? `•• ${compactTail.slice(-4)}` : resolved.networkDisplayLabel;
+
+        return `
+          <button
+            type="button"
+            class="sp-wallet-deck-card ${selectedId === item.id ? 'is-selected' : ''}"
+            style="${this.escape(styleObj.inlineStyleAttr)}"
+            data-deck-select="${this.escape(item.id)}"
+          >
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;">
+              <span style="font-size:11.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${this.escape(
+                item.title
+              )}</span>
+              ${renderIconSvg('pin', 11)}
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;font-family:var(--font-mono);font-size:10.5px;opacity:0.9;">
+              <span>${this.escape(tailBadge)}</span>
+              <span style="font-size:9.5px;opacity:0.8;">${this.escape(
+                resolved.networkDisplayLabel
+              )}</span>
+            </div>
+          </button>
+        `;
+      })
+      .join('');
+
+    return `
+      <div class="sp-wallet-deck" role="region" aria-label="${this.escape(
+        this.i18n.t('wallet_deck_pinned_title')
+      )}">
+        <div class="sp-wallet-deck-header">
+          <span style="display:inline-flex;align-items:center;gap:5px;">
+            ${renderIconSvg('pin', 12)}
+            <span>${this.escape(this.i18n.t('wallet_deck_pinned_title'))}</span>
+          </span>
+          <span>${pinnedItems.length}</span>
+        </div>
+        <div class="sp-wallet-deck-scroll">
+          ${cardsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderSepaQrSection(item: VaultItem): string {
+    const iban =
+      item.fields.find((f) => f.labelKey === 'field_iban')?.value?.trim() ?? '';
+    const holder =
+      item.fields.find((f) => f.labelKey === 'field_account_holder')?.value?.trim() ||
+      item.title;
+    const bic =
+      item.fields.find((f) => f.labelKey === 'field_bic')?.value?.trim() ?? '';
+
+    const amountVal = this.sepaAmountByItemId[item.id] ?? '';
+    const purposeVal = this.sepaPurposeByItemId[item.id] ?? '';
+    const epcPayload = buildEpcSepaQrPayload({
+      holderName: holder,
+      iban,
+      bic,
+      amountEur: amountVal,
+      remittanceText: purposeVal
+    });
+    if (!epcPayload) return '';
+
+    const isExpanded = this.sepaQrExpandedIds.has(item.id);
+    const qrSvg = encodeQrSvg(epcPayload, { sizePx: 156 });
+
+    return `
+      <div class="sp-sepa-qr-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:700;font-size:14px;display:flex;align-items:center;gap:7px;">
+              ${renderIconSvg('qrCode', 15)}
+              <span>${this.escape(this.i18n.t('sepa_qr_title'))}</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+              ${this.escape(this.i18n.t('sepa_qr_subtitle'))}
+            </div>
+          </div>
+          <button
+            type="button"
+            id="sp-toggle-sepa-qr-btn"
+            class="sp-btn ${isExpanded ? 'sp-btn-tonal' : 'sp-btn-primary'}"
+            data-sepa-item="${this.escape(item.id)}"
+          >
+            ${renderIconSvg('qrCode', 14)}
+            <span>${this.escape(
+              this.i18n.t(isExpanded ? 'sepa_qr_hide_btn' : 'sepa_qr_show_btn')
+            )}</span>
+          </button>
+        </div>
+
+        ${
+          isExpanded
+            ? `<div class="sp-sepa-qr-body">
+                 <div class="sp-sepa-qr-pad" id="sp-sepa-qr-slot">
+                   ${qrSvg}
+                 </div>
+                 <div style="display:flex;flex-direction:column;gap:10px;width:100%;">
+                   <div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);word-break:break-all;">
+                     <strong>${this.escape(holder)}</strong><br/>
+                     ${this.escape(iban)}${bic ? ` • ${this.escape(bic)}` : ''}
+                   </div>
+                   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                     <label style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:600;color:var(--text-secondary);">
+                       <span>${this.escape(this.i18n.t('sepa_qr_amount_label'))}</span>
+                       <input
+                         type="text"
+                         id="sp-sepa-amount-input"
+                         class="sp-input"
+                         inputmode="decimal"
+                         placeholder="25.00"
+                         value="${this.escape(amountVal)}"
+                         data-sepa-item="${this.escape(item.id)}"
+                       />
+                     </label>
+                     <label style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:600;color:var(--text-secondary);">
+                       <span>${this.escape(this.i18n.t('sepa_qr_purpose_label'))}</span>
+                       <input
+                         type="text"
+                         id="sp-sepa-purpose-input"
+                         class="sp-input"
+                         maxlength="40"
+                         placeholder="Dinner / Invoice"
+                         value="${this.escape(purposeVal)}"
+                         data-sepa-item="${this.escape(item.id)}"
+                       />
+                     </label>
+                   </div>
+                 </div>
+               </div>`
+            : ''
+        }
+      </div>
+    `;
+  }
+
   private renderPresentationModal(): string {
     if (!this.presentationState) return '';
     const item = this.items.find(
@@ -4069,18 +4259,44 @@ export class SafePocketAppShell {
     );
     if (!item) return '';
 
+    const activeTab = this.presentationState.tab ?? 'digital';
+    const valOf = (k: string): string =>
+      item.fields.find((f) => f.labelKey === k)?.value?.trim() ?? '';
+
     const memberId =
-      item.fields.find((f) => f.labelKey === 'field_membership_id')?.value ??
-      item.fields.find((f) => f.labelKey === 'field_insurance_number')?.value ??
-      item.fields.find((f) => f.labelKey === 'field_document_number')?.value ??
-      '';
-    const preferredFormat =
-      this.presentationState.formatOverride ?? item.cardTheme?.barcodeFormat;
+      valOf('field_barcode_value') ||
+      valOf('field_membership_id') ||
+      valOf('field_insurance_number') ||
+      valOf('field_document_number');
+    const ibanVal = valOf('field_iban');
+    const cardNumVal = valOf('field_card_number');
+    const holderVal =
+      valOf('field_account_holder') ||
+      valOf('field_cardholder') ||
+      valOf('field_full_name') ||
+      item.title;
+    const bicVal = valOf('field_bic');
+
+    const epcBankPayload =
+      item.category === 'BANK_ACCOUNT' && ibanVal
+        ? buildEpcSepaQrPayload({
+            holderName: holderVal,
+            iban: ibanVal,
+            bic: bicVal,
+            amountEur: this.sepaAmountByItemId[item.id],
+            remittanceText: this.sepaPurposeByItemId[item.id]
+          })
+        : null;
+
+    const preferredFormat: BarcodeFormat | undefined =
+      this.presentationState.formatOverride ??
+      (epcBankPayload ? 'QR_CODE' : item.cardTheme?.barcodeFormat);
     const scannablePayload =
-      memberId ||
-      (item.category === 'BANK_ACCOUNT'
-        ? item.fields.find((f) => f.labelKey === 'field_iban')?.value ?? ''
-        : '');
+      (preferredFormat === 'QR_CODE' && epcBankPayload
+        ? epcBankPayload
+        : memberId || ibanVal || cardNumVal) || '';
+    const displayReadableValue = memberId || ibanVal || cardNumVal;
+
     const barcodeRendered = scannablePayload
       ? renderScannableBarcodeSvg(scannablePayload, preferredFormat, {
           heightPx: 84,
@@ -4088,6 +4304,8 @@ export class SafePocketAppShell {
           qrSizePx: 196
         })
       : null;
+
+    const readAloudBlocks = buildReadAloudBlocks(displayReadableValue, 4);
 
     return `
       <div class="sp-presentation-overlay" id="sp-presentation-backdrop" role="dialog" aria-modal="true">
@@ -4097,50 +4315,149 @@ export class SafePocketAppShell {
               <div style="font-weight:700;font-size:17px;">${this.escape(
                 item.title
               )}</div>
-              <div style="font-size:11.5px;opacity:0.78;">🔆 ${this.escape(
-                this.i18n.t('present_wake_lock_active')
-              )}</div>
+              <div style="font-size:11.5px;opacity:0.78;display:inline-flex;align-items:center;gap:5px;">
+                ${renderIconSvg('sun', 13)}
+                <span>${this.escape(this.i18n.t('present_wake_lock_active'))}</span>
+              </div>
             </div>
             <button type="button" id="sp-close-presentation-btn" class="sp-btn sp-btn-primary">
-              ✕ ${this.escape(this.i18n.t('present_close_btn'))}
+              ${renderIconSvg('close', 13)}
+              <span>${this.escape(this.i18n.t('present_close_btn'))}</span>
             </button>
           </div>
 
-          ${this.renderVisualCardHero(item, true)}
+          <div class="sp-pass-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected="${activeTab === 'digital'}"
+              class="sp-pass-tab-btn ${activeTab === 'digital' ? 'is-active' : ''}"
+              data-present-tab="digital"
+            >${this.escape(this.i18n.t('pass_tab_digital'))}</button>
+            ${
+              readAloudBlocks.length > 0
+                ? `<button
+                     type="button"
+                     role="tab"
+                     aria-selected="${activeTab === 'read_aloud'}"
+                     class="sp-pass-tab-btn ${
+                       activeTab === 'read_aloud' ? 'is-active' : ''
+                     }"
+                     data-present-tab="read_aloud"
+                   >${this.escape(this.i18n.t('pass_tab_read_aloud'))}</button>`
+                : ''
+            }
+            ${
+              item.attachments.length > 0
+                ? `<button
+                     type="button"
+                     role="tab"
+                     aria-selected="${activeTab === 'scans'}"
+                     class="sp-pass-tab-btn ${
+                       activeTab === 'scans' ? 'is-active' : ''
+                     }"
+                     data-present-tab="scans"
+                   >${this.escape(this.i18n.t('pass_tab_scans'))} (${
+                     item.attachments.length
+                   })</button>`
+                : ''
+            }
+          </div>
 
           ${
-            barcodeRendered
+            activeTab === 'read_aloud'
               ? `<div class="sp-scanner-pad">
-                   <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;">
-                     ${(['CODE_128', 'EAN_13', 'QR_CODE'] as BarcodeFormat[])
+                   <div style="font-size:12px;font-weight:600;color:#475569;">
+                     ${this.escape(this.i18n.t('pass_read_aloud_hint'))}
+                   </div>
+                   <div class="sp-read-aloud-grid">
+                     ${readAloudBlocks
                        .map(
-                         (fmt) => `<button
-                           type="button"
-                           class="sp-btn ${
-                             barcodeRendered.format === fmt
-                               ? 'sp-btn-primary'
-                               : ''
-                           }"
-                           style="min-height:26px;padding:3px 10px;font-size:11px;"
-                           data-present-format="${fmt}"
-                         >${this.escape(
-                           fmt === 'CODE_128'
-                             ? this.i18n.t('barcode_format_code128')
-                             : fmt === 'EAN_13'
-                               ? this.i18n.t('barcode_format_ean13')
-                               : this.i18n.t('barcode_format_qr')
-                         )}</button>`
+                         (b) => `
+                           <div class="sp-read-aloud-block">
+                             <span class="sp-read-aloud-idx">#${b.index}</span>
+                             <span class="sp-read-aloud-chars">${this.escape(
+                               b.chars
+                             )}</span>
+                           </div>
+                         `
                        )
                        .join('')}
                    </div>
-                   <div style="width:100%;display:flex;justify-content:center;padding:6px 0;">
-                     ${barcodeRendered.svg}
-                   </div>
-                   <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;letter-spacing:0.1em;color:#0f172a;word-break:break-all;">
-                     ${this.escape(scannablePayload)}
-                   </div>
+                   ${
+                     bicVal
+                       ? `<div style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:#334155;">BIC: ${this.escape(
+                           bicVal
+                         )}</div>`
+                       : ''
+                   }
                  </div>`
-              : ''
+              : activeTab === 'scans'
+                ? `<div class="sp-scanner-pad" style="align-items:stretch;text-align:left;">
+                     ${item.attachments
+                       .map(
+                         (att) => `
+                           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;">
+                             <div>
+                               <div style="font-weight:700;font-size:13.5px;color:#0f172a;">${this.escape(
+                                 att.fileName
+                               )}</div>
+                               <div style="font-size:11.5px;color:#64748b;">${this.escape(
+                                 att.side === 'back'
+                                   ? this.i18n.t('scan_side_back')
+                                   : this.i18n.t('scan_side_front')
+                               )} • ${this.escape(this.i18n.formatBytes(att.sizeBytes))}</div>
+                             </div>
+                             <button
+                               type="button"
+                               class="sp-btn sp-btn-primary"
+                               data-preview-att="${this.escape(att.id)}"
+                             >${renderIconSvg('eye', 13)} ${this.escape(
+                               this.i18n.t('action_preview_scan')
+                             )}</button>
+                           </div>
+                         `
+                       )
+                       .join('')}
+                   </div>`
+                : `
+                  ${this.renderVisualCardHero(item, true)}
+                  ${
+                    barcodeRendered
+                      ? `<div class="sp-scanner-pad">
+                           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;">
+                             ${(['CODE_128', 'EAN_13', 'QR_CODE'] as BarcodeFormat[])
+                               .map(
+                                 (fmt) => `<button
+                                   type="button"
+                                   class="sp-btn ${
+                                     barcodeRendered.format === fmt
+                                       ? 'sp-btn-primary'
+                                       : ''
+                                   }"
+                                   style="min-height:26px;padding:3px 10px;font-size:11px;"
+                                   data-present-format="${fmt}"
+                                 >${this.escape(
+                                   fmt === 'CODE_128'
+                                     ? this.i18n.t('barcode_format_code128')
+                                     : fmt === 'EAN_13'
+                                       ? this.i18n.t('barcode_format_ean13')
+                                       : epcBankPayload
+                                         ? this.i18n.t('sepa_qr_title')
+                                         : this.i18n.t('barcode_format_qr')
+                                 )}</button>`
+                               )
+                               .join('')}
+                           </div>
+                           <div style="width:100%;display:flex;justify-content:center;padding:6px 0;">
+                             ${barcodeRendered.svg}
+                           </div>
+                           <div style="font-family:var(--font-mono);font-size:17px;font-weight:700;letter-spacing:0.08em;color:#0f172a;word-break:break-all;">
+                             ${this.escape(displayReadableValue)}
+                           </div>
+                         </div>`
+                      : ''
+                  }`
           }
         </div>
       </div>
@@ -7487,6 +7804,90 @@ export class SafePocketAppShell {
             .presentFormat as BarcodeFormat;
           this.render();
         });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-present-tab]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (!this.presentationState) return;
+          this.presentationState.tab = btn.dataset.presentTab as
+            | 'digital'
+            | 'read_aloud'
+            | 'scans';
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-deck-select]')
+      .forEach((cardBtn) => {
+        cardBtn.addEventListener('click', () => {
+          const id = cardBtn.dataset.deckSelect;
+          if (!id) return;
+          this.selectedItemId = id;
+          this.mobileDetailOpen = true;
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelector<HTMLElement>('#sp-toggle-sepa-qr-btn')
+      ?.addEventListener('click', (e) => {
+        const itemId = (e.currentTarget as HTMLElement).dataset.sepaItem ?? '';
+        if (!itemId) return;
+        if (this.sepaQrExpandedIds.has(itemId)) {
+          this.sepaQrExpandedIds.delete(itemId);
+        } else {
+          this.sepaQrExpandedIds.add(itemId);
+        }
+        this.render();
+      });
+
+    const refreshLiveSepaQr = (itemId: string) => {
+      const target = this.items.find((i) => i.id === itemId);
+      const slot = this.root.querySelector<HTMLElement>('#sp-sepa-qr-slot');
+      if (!target || !slot) return;
+      const iban =
+        target.fields.find((f) => f.labelKey === 'field_iban')?.value?.trim() ??
+        '';
+      const holder =
+        target.fields
+          .find((f) => f.labelKey === 'field_account_holder')
+          ?.value?.trim() || target.title;
+      const bic =
+        target.fields.find((f) => f.labelKey === 'field_bic')?.value?.trim() ??
+        '';
+      const payload = buildEpcSepaQrPayload({
+        holderName: holder,
+        iban,
+        bic,
+        amountEur: this.sepaAmountByItemId[itemId],
+        remittanceText: this.sepaPurposeByItemId[itemId]
+      });
+      if (payload) {
+        slot.innerHTML = encodeQrSvg(payload, { sizePx: 156 });
+      }
+    };
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-sepa-amount-input')
+      ?.addEventListener('input', (e) => {
+        const el = e.currentTarget as HTMLInputElement;
+        const itemId = el.dataset.sepaItem ?? '';
+        if (!itemId) return;
+        this.sepaAmountByItemId[itemId] = el.value;
+        refreshLiveSepaQr(itemId);
+      });
+
+    this.root
+      .querySelector<HTMLInputElement>('#sp-sepa-purpose-input')
+      ?.addEventListener('input', (e) => {
+        const el = e.currentTarget as HTMLInputElement;
+        const itemId = el.dataset.sepaItem ?? '';
+        if (!itemId) return;
+        this.sepaPurposeByItemId[itemId] = el.value;
+        refreshLiveSepaQr(itemId);
       });
 
     // Inspector CRUD actions: Pin, Favorite, Edit, Duplicate, Delete

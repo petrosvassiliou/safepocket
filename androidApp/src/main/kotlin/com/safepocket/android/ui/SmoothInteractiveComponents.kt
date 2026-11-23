@@ -80,7 +80,7 @@ private val CenteredButtonLineHeightStyle = LineHeightStyle(
     trim = LineHeightStyle.Trim.Both
 )
 
-private fun TextStyle.withCenteredMetrics(): TextStyle = copy(
+internal fun TextStyle.withCenteredMetrics(): TextStyle = copy(
     platformStyle = PlatformTextStyle(includeFontPadding = false),
     lineHeightStyle = CenteredButtonLineHeightStyle
 )
