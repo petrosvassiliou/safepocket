@@ -2,6 +2,8 @@ import Foundation
 import CryptoKit
 import CommonCrypto
 import Security
+import IOKit
+import Darwin
 
 // MARK: - Zero-Knowledge Cloud Sync & Keychain Session (100% Compatible with Android & ChromeOS PWA)
 
@@ -211,24 +213,90 @@ extension MacVaultEntry {
 }
 
 enum MacKeychainStore {
-    private static let service = "com.safepocket.mac.zkvault"
+    private static let legacyService = "com.safepocket.mac.zkvault"
+    private static let keybagAAD = Data("safepocket:mac:keybag:v2".utf8)
+    private static let lock = NSLock()
+    private static var cachedEntries: [String: String]? = nil
 
-    static func saveData(_ data: Data, account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
-        var attrs = query
-        attrs[kSecValueData as String] = data
-        SecItemAdd(attrs as CFDictionary, nil)
+    private static var appSupportDirectory: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("SafePocket", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(
+                at: dir,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
+        return dir
     }
 
-    static func loadData(account: String) -> Data? {
+    private static var keybagFileURL: URL {
+        appSupportDirectory.appendingPathComponent("safepocket_keybag_v2.enc")
+    }
+
+    private static func hardwarePlatformUUID() -> String {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
+        guard service != 0 else { return "mac-fallback-platform-id" }
+        defer { IOObjectRelease(service) }
+        if let cfProp = IORegistryEntryCreateCFProperty(service, kIOPlatformUUIDKey as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String,
+           !cfProp.isEmpty {
+            return cfProp
+        }
+        return "mac-fallback-platform-id"
+    }
+
+    private static func deriveKeybagKey() -> SymmetricKey {
+        let ikm = Data("safepocket-mac-keybag-v2:\(hardwarePlatformUUID()):\(getuid())".utf8)
+        let salt = Data("com.safepocket.mac.keybag.salt.v2".utf8)
+        let info = Data("safepocket-aes256gcm-keybag".utf8)
+        return HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: ikm),
+            salt: salt,
+            info: info,
+            outputByteCount: 32
+        )
+    }
+
+    private static func persistEntriesUnlocked(_ dict: [String: String]) {
+        guard let plain = try? JSONEncoder().encode(dict),
+              let sealed = try? AES.GCM.seal(plain, using: deriveKeybagKey(), authenticating: keybagAAD),
+              let combined = sealed.combined else {
+            return
+        }
+        var url = keybagFileURL
+        try? combined.write(to: url, options: .atomic)
+        _ = chmod(url.path, 0o600)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
+    }
+
+    private static func legacyAccountNamesPresent() -> Set<String> {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: legacyService,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let list = result as? [[String: Any]] else {
+            return []
+        }
+        var names: Set<String> = []
+        for attrs in list {
+            if let acc = attrs[kSecAttrAccount as String] as? String {
+                names.insert(acc)
+            }
+        }
+        return names
+    }
+
+    private static func loadLegacyKeychainItem(account: String) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: legacyService,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
@@ -240,13 +308,74 @@ enum MacKeychainStore {
         return item as? Data
     }
 
+    private static func loadOrMigrateUnlocked() -> [String: String] {
+        if let existing = cachedEntries {
+            return existing
+        }
+
+        let url = keybagFileURL
+        if FileManager.default.fileExists(atPath: url.path),
+           let raw = try? Data(contentsOf: url),
+           let box = try? AES.GCM.SealedBox(combined: raw),
+           let plain = try? AES.GCM.open(box, using: deriveKeybagKey(), authenticating: keybagAAD),
+           let decoded = try? JSONDecoder().decode([String: String].self, from: plain) {
+            cachedEntries = decoded
+            return decoded
+        }
+
+        // One-time seamless migration from legacy per-item Keychain (ad-hoc cdhash ACLs) -> single encrypted keybag
+        var migrated: [String: String] = [:]
+        let localVaultExists = FileManager.default.fileExists(
+            atPath: appSupportDirectory.appendingPathComponent("safepocket_local_vault.enc").path
+        ) || FileManager.default.fileExists(
+            atPath: appSupportDirectory.appendingPathComponent("safepocket_cloud_mirror.enc").path
+        )
+
+        if localVaultExists {
+            let present = legacyAccountNamesPresent()
+            for acc in ["secret_key", "master_password", "cloud_session", "embedded_cloud_users_v1"] where present.contains(acc) {
+                if let data = loadLegacyKeychainItem(account: acc) {
+                    migrated[acc] = data.base64EncodedString()
+                }
+            }
+            if !present.isEmpty {
+                let cleanupQuery: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: legacyService
+                ]
+                SecItemDelete(cleanupQuery as CFDictionary)
+            }
+        }
+
+        cachedEntries = migrated
+        persistEntriesUnlocked(migrated)
+        return migrated
+    }
+
+    static func saveData(_ data: Data, account: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        var dict = loadOrMigrateUnlocked()
+        dict[account] = data.base64EncodedString()
+        cachedEntries = dict
+        persistEntriesUnlocked(dict)
+    }
+
+    static func loadData(account: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        let dict = loadOrMigrateUnlocked()
+        guard let b64 = dict[account] else { return nil }
+        return Data(base64Encoded: b64)
+    }
+
     static func delete(account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
+        lock.lock()
+        defer { lock.unlock() }
+        var dict = loadOrMigrateUnlocked()
+        dict.removeValue(forKey: account)
+        cachedEntries = dict
+        persistEntriesUnlocked(dict)
     }
 }
 

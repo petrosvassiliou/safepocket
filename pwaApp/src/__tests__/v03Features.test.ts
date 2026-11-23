@@ -44,7 +44,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.5.0-beta.2 (Build 17) Feature Suite', () => {
+describe('SafePocket v0.5.0-beta.3 (Build 18) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -315,9 +315,9 @@ describe('SafePocket v0.5.0-beta.2 (Build 17) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.5.0-beta.2 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.2');
-    expect(APP_BUILD_INFO.versionCode).toBe(17);
+  it('7. Cross-Platform v0.5.0-beta.3 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.3');
+    expect(APP_BUILD_INFO.versionCode).toBe(18);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -401,7 +401,7 @@ describe('SafePocket v0.5.0-beta.2 (Build 17) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.5.0-beta.2 (Build 17)');
+    expect(macApp).toContain('SafePocket v0.5.0-beta.3 (Build 18)');
     expect(macApp).toContain('NSApplication.shared.applicationIconImage = appIcon');
     expect(macApp).toContain('noteFileSystemChanged(destApp.path)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
@@ -1392,6 +1392,13 @@ describe('SafePocket v0.5.0-beta.2 (Build 17) Feature Suite', () => {
     expect(macSplit).toContain('editor_more_fields_toggle');
     expect(androidShell).toContain('editor_live_preview_label');
     expect(androidShell).toContain('editor_more_fields_toggle');
+
+    const macCloud = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/CloudSyncAndPortability.swift'),
+      'utf-8'
+    );
+    expect(macCloud).toContain('safepocket_keybag_v2.enc');
+    expect(macCloud).toContain('hardwarePlatformUUID');
   });
 });
 
