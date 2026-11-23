@@ -118,6 +118,11 @@ import {
   verifyWebsiteExists,
   type WebsiteVerificationResult
 } from './smartFieldIntelligence';
+import {
+  categoryIconName,
+  renderIconSvg,
+  type VectorIconName
+} from './vectorIcons';
 
 const THEME_STORAGE_KEY = 'safepocket.theme_mode';
 const MATERIAL_ACCENT_STORAGE_KEY = 'safepocket.material_accent';
@@ -222,6 +227,11 @@ export class SafePocketAppShell {
   private items: VaultItem[] = [];
   private selectedNav: NavSelection = 'ALL';
   private settingsModalOpen = false;
+  private settingsTab: 'appearance' | 'security' | 'sync' | 'data' | 'updates' =
+    'appearance';
+  private flippedCardIds = new Set<string>();
+  private onboardingStep: 1 | 2 | 3 = 1;
+  private editorMoreFieldsExpanded = false;
   private selectedItemId: string | null;
   private searchQuery = '';
   private revealedFieldIds = new Set<string>();
@@ -1548,22 +1558,7 @@ export class SafePocketAppShell {
   }
 
   private categoryMenuGlyph(category: VaultCategory): string {
-    switch (category) {
-      case 'PAYMENT_CARD':
-        return '💳';
-      case 'BANK_ACCOUNT':
-        return '🏦';
-      case 'INSURANCE_CARD':
-        return '🛡';
-      case 'MEMBERSHIP_CARD':
-        return '🎟';
-      case 'IDENTITY':
-        return '🪪';
-      case 'OFFICIAL_DOCUMENT':
-        return '🛂';
-      case 'SECURE_NOTE':
-        return '📝';
-    }
+    return renderIconSvg(categoryIconName(category), 15);
   }
 
   private openCreateItemModal(explicitCategory?: VaultCategory): void {
@@ -1574,6 +1569,7 @@ export class SafePocketAppShell {
         : 'PAYMENT_CARD');
 
     this.newItemDropdownOpen = false;
+    this.editorMoreFieldsExpanded = false;
     this.customDropdownOpenKeys.clear();
     this.phoneDialCodes = {};
     this.lastAutofillNotice = '';
@@ -1652,6 +1648,10 @@ export class SafePocketAppShell {
         this.phoneDialCodes[tf.key] = parsed.dialCode;
       }
     }
+
+    this.editorMoreFieldsExpanded = templates
+      .slice(6)
+      .some((tf) => Boolean(standardFieldValues[tf.key]?.trim()));
 
     this.editorDraft = {
       editingItemId: item.id,
@@ -2208,7 +2208,7 @@ export class SafePocketAppShell {
                     locale: this.i18n.detectedSystemLocale.toUpperCase()
                   })
                 )}"
-              >🌐</button>
+              >${renderIconSvg('globe', 13)}</button>
               ${SUPPORTED_LOCALES.map(
                 (loc) => `
                 <button
@@ -2256,7 +2256,7 @@ export class SafePocketAppShell {
         <section class="sp-list-pane" aria-label="Vault Item List">
           <div class="sp-list-header">
             <div class="sp-search-wrap">
-              <span class="sp-search-icon" aria-hidden="true">⌕</span>
+              <span class="sp-search-icon" aria-hidden="true">${renderIconSvg('search', 15)}</span>
               <input
                 id="sp-global-search"
                 class="sp-search-input"
@@ -2324,8 +2324,9 @@ export class SafePocketAppShell {
                     aria-haspopup="menu"
                     aria-expanded="${this.newItemDropdownOpen}"
                   >
-                    <span>+ ${this.escape(this.i18n.t('action_new_item'))}</span>
-                    <span aria-hidden="true" style="font-size:10px;opacity:0.9;">▾</span>
+                    ${renderIconSvg('plus', 14)}
+                    <span>${this.escape(this.i18n.t('action_new_item'))}</span>
+                    ${renderIconSvg('chevronDown', 12)}
                   </button>
                   ${
                     this.newItemDropdownOpen
@@ -2355,7 +2356,7 @@ export class SafePocketAppShell {
                   title="${this.escape(this.i18n.t('nav_settings'))}"
                   aria-label="${this.escape(this.i18n.t('nav_settings'))}"
                   style="width:34px;padding:0;"
-                >⚙</button>
+                >${renderIconSvg('settings', 15)}</button>
               </div>
             </div>
             ${
@@ -2391,13 +2392,13 @@ export class SafePocketAppShell {
           ${
             sampleCount > 0
               ? `<div class="sp-sample-banner" role="region" aria-label="Example Data">
-                   <span>🧪 ${this.escape(
+                   <span style="display:inline-flex;align-items:center;gap:6px;">${renderIconSvg('sparkles', 14)} ${this.escape(
                      this.i18n.t('action_delete_example_data', {
                        count: sampleCount
                      })
                    )}</span>
                    <button type="button" id="sp-banner-delete-samples-btn" class="sp-btn sp-btn-danger" style="padding:3px 9px;min-height:26px;font-size:11px;">
-                     ✕ ${this.escape(this.i18n.t('action_delete'))}
+                     ${renderIconSvg('trash', 12)} ${this.escape(this.i18n.t('action_delete'))}
                    </button>
                  </div>`
               : ''
@@ -2407,7 +2408,7 @@ export class SafePocketAppShell {
             this.selectedNav === 'EXPIRING' &&
             expirySummary.totalAttentionCount > 0
               ? `<div class="sp-expiry-banner" role="status">
-                   <span>⏱ ${this.escape(
+                   <span style="display:inline-flex;align-items:center;gap:6px;">${renderIconSvg('clock', 14)} ${this.escape(
                      this.i18n.t('expiry_summary_banner', {
                        expired: expirySummary.expiredCount,
                        critical: expirySummary.criticalCount,
@@ -2484,6 +2485,7 @@ export class SafePocketAppShell {
   private renderOnboardingWizardModal(): string {
     const entropy = estimateMasterPasswordEntropy(this.onboardingPassword);
     const pct = Math.min(100, Math.max(12, Math.round((entropy.bits / 110) * 100)));
+    const step = this.onboardingStep;
 
     return `
       <div class="sp-overlay">
@@ -2524,72 +2526,104 @@ export class SafePocketAppShell {
             </div>
           </div>
 
-          <div style="font-size:12.5px;color:var(--text-secondary);background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 12px;">
-            ✓ <strong>${this.escape(this.i18n.t('storage_mode_local_only_title'))}</strong> — ${this.escape(
-              this.i18n.t('storage_mode_local_only_desc')
-            )}
-          </div>
-
-          <label style="font-size:12px;color:var(--text-secondary);">
-            ${this.escape(this.i18n.t('security_master_password'))}
-            <input
-              id="sp-onboarding-password"
-              type="password"
-              class="sp-input"
-              value="${this.escape(this.onboardingPassword)}"
-              required
-              minlength="8"
-              style="margin-top:4px;"
-            />
-            <div class="sp-entropy-bar">
-              <div class="sp-entropy-fill" style="width:${pct}%"></div>
-            </div>
-            <div id="sp-onboarding-entropy-label" style="font-size:11px;font-family:var(--font-mono);color:var(--accent-primary);margin-top:4px;">
-              ${this.escape(
-                this.i18n.t('onboarding_password_strength', {
-                  bits: entropy.bits,
-                  rating: entropy.rating
-                })
-              )}
-            </div>
-          </label>
-
-          <div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:11px 12px;display:flex;flex-direction:column;gap:8px;">
-            <div style="font-size:11.5px;font-weight:600;color:var(--text-secondary);">
-              ${this.escape(this.i18n.t('security_secret_key'))}
-            </div>
-            <div style="font-family:var(--font-mono);font-size:13px;font-weight:650;color:var(--accent-primary);word-break:break-all;">
-              ${this.escape(this.demoSecretKey)}
-            </div>
-            <input
-              id="sp-onboard-kit-hint"
-              type="text"
-              class="sp-input"
-              value="${this.escape(this.emergencyKitHintDraft)}"
-              placeholder="${this.escape(
-                this.i18n.t('emergency_kit_hint_placeholder')
-              )}"
-              style="font-size:12px;"
-            />
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button type="button" id="sp-onboard-print-kit" class="sp-btn sp-btn-tonal">
-                🖨 ${this.escape(this.i18n.t('emergency_kit_print_btn'))}
-              </button>
-              <button type="button" id="sp-onboard-download-kit" class="sp-btn">
-                ⬇ ${this.escape(
-                  this.i18n.t('onboarding_download_emergency_kit')
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
-            <button type="button" id="sp-onboard-quick-sample" class="sp-btn sp-btn-primary" style="width:100%;min-height:40px;">
-              ⚡ ${this.escape(this.i18n.t('onboarding_quick_demo'))}
+          <div class="sp-stepper-bar" role="tablist">
+            <button type="button" class="sp-stepper-pill ${step === 1 ? 'is-active' : 'is-done'}" data-onboard-step="1">
+              1. ${this.escape(this.i18n.t('onboarding_step_password'))}
             </button>
-            <button type="submit" class="sp-btn" style="width:100%;">
+            <button type="button" class="sp-stepper-pill ${step === 2 ? 'is-active' : step > 2 ? 'is-done' : ''}" data-onboard-step="2">
+              2. ${this.escape(this.i18n.t('onboarding_step_kit'))}
+            </button>
+            <button type="button" class="sp-stepper-pill ${step === 3 ? 'is-active' : ''}" data-onboard-step="3">
+              3. ${this.escape(this.i18n.t('onboarding_step_finish'))}
+            </button>
+          </div>
+
+          <div style="${step === 1 ? '' : 'display:none;'}">
+            <label style="font-size:12px;color:var(--text-secondary);display:block;">
+              ${this.escape(this.i18n.t('security_master_password'))}
+              <input
+                id="sp-onboarding-password"
+                type="password"
+                class="sp-input"
+                value="${this.escape(this.onboardingPassword)}"
+                required
+                minlength="8"
+                style="margin-top:6px;"
+              />
+              <div class="sp-entropy-bar">
+                <div class="sp-entropy-fill" style="width:${pct}%"></div>
+              </div>
+              <div id="sp-onboarding-entropy-label" style="font-size:11px;font-family:var(--font-mono);color:var(--accent-primary);margin-top:4px;">
+                ${this.escape(
+                  this.i18n.t('onboarding_password_strength', {
+                    bits: entropy.bits,
+                    rating: entropy.rating
+                  })
+                )}
+              </div>
+            </label>
+          </div>
+
+          <div style="${step === 2 ? 'display:flex;flex-direction:column;gap:8px;' : 'display:none;'}">
+            <div style="background:var(--bg-canvas);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:11.5px;font-weight:600;color:var(--text-secondary);display:inline-flex;align-items:center;gap:6px;">
+                ${renderIconSvg('key', 14)}
+                <span>${this.escape(this.i18n.t('security_secret_key'))}</span>
+              </div>
+              <div style="font-family:var(--font-mono);font-size:13px;font-weight:650;color:var(--accent-primary);word-break:break-all;">
+                ${this.escape(this.demoSecretKey)}
+              </div>
+              <input
+                id="sp-onboard-kit-hint"
+                type="text"
+                class="sp-input"
+                value="${this.escape(this.emergencyKitHintDraft)}"
+                placeholder="${this.escape(
+                  this.i18n.t('emergency_kit_hint_placeholder')
+                )}"
+                style="font-size:12px;"
+              />
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="button" id="sp-onboard-print-kit" class="sp-btn sp-btn-tonal">
+                  ${renderIconSvg('print', 14)} ${this.escape(this.i18n.t('emergency_kit_print_btn'))}
+                </button>
+                <button type="button" id="sp-onboard-download-kit" class="sp-btn">
+                  ${renderIconSvg('download', 14)} ${this.escape(
+                    this.i18n.t('onboarding_download_emergency_kit')
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div style="${step === 3 ? 'display:flex;flex-direction:column;gap:10px;' : 'display:none;'}">
+            <div style="font-size:12.5px;color:var(--text-secondary);background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:12px 14px;display:flex;align-items:flex-start;gap:10px;">
+              ${renderIconSvg('shield', 18)}
+              <div>
+                <strong style="color:var(--text-primary);">${this.escape(this.i18n.t('storage_mode_local_only_title'))}</strong> — ${this.escape(
+                  this.i18n.t('storage_mode_local_only_desc')
+                )}
+              </div>
+            </div>
+            <button type="button" id="sp-onboard-quick-sample" class="sp-btn sp-btn-primary" style="width:100%;min-height:40px;">
+              ${renderIconSvg('sparkles', 15)} ${this.escape(this.i18n.t('onboarding_quick_demo'))}
+            </button>
+            <button type="submit" class="sp-btn sp-btn-tonal" style="width:100%;">
               ${this.escape(this.i18n.t('onboarding_create_vault'))}
             </button>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding-top:4px;border-top:1px solid var(--border-subtle);">
+            ${
+              step > 1
+                ? `<button type="button" id="sp-onboard-prev-btn" class="sp-btn">${renderIconSvg('arrowLeft', 14)} ${this.escape(this.i18n.t('action_prev_step'))}</button>`
+                : `<button type="button" id="sp-onboard-quick-skip" class="sp-btn sp-btn-tonal" style="font-size:12px;">${renderIconSvg('sparkles', 13)} ${this.escape(this.i18n.t('onboarding_quick_demo'))}</button>`
+            }
+            ${
+              step < 3
+                ? `<button type="button" id="sp-onboard-next-btn" class="sp-btn sp-btn-primary">${this.escape(this.i18n.t('action_next_step'))} ${renderIconSvg('chevronRight', 14)}</button>`
+                : ''
+            }
           </div>
         </form>
       </div>
@@ -2611,6 +2645,36 @@ export class SafePocketAppShell {
             btn.dataset.onboardLocale as SupportedLocale
           );
         });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-onboard-step]')
+      .forEach((pill) => {
+        pill.addEventListener('click', () => {
+          const next = Number(pill.dataset.onboardStep) as 1 | 2 | 3;
+          if (next === 1 || next === 2 || next === 3) {
+            this.onboardingStep = next;
+            this.render();
+          }
+        });
+      });
+
+    this.root
+      .querySelector('#sp-onboard-prev-btn')
+      ?.addEventListener('click', () => {
+        if (this.onboardingStep > 1) {
+          this.onboardingStep = (this.onboardingStep - 1) as 1 | 2;
+          this.render();
+        }
+      });
+
+    this.root
+      .querySelector('#sp-onboard-next-btn')
+      ?.addEventListener('click', () => {
+        if (this.onboardingStep < 3) {
+          this.onboardingStep = (this.onboardingStep + 1) as 2 | 3;
+          this.render();
+        }
       });
 
     const pwInput = this.root.querySelector<HTMLInputElement>(
@@ -2655,12 +2719,17 @@ export class SafePocketAppShell {
         this.downloadEmergencyKit();
       });
 
+    const launchQuickSample = async () => {
+      const pw = pwInput?.value.trim() || DEMO_DEFAULT_PASSWORD;
+      await this.initializeVaultFromOnboarding(pw, true);
+    };
+
     this.root
       .querySelector('#sp-onboard-quick-sample')
-      ?.addEventListener('click', async () => {
-        const pw = pwInput?.value.trim() || DEMO_DEFAULT_PASSWORD;
-        await this.initializeVaultFromOnboarding(pw, true);
-      });
+      ?.addEventListener('click', launchQuickSample);
+    this.root
+      .querySelector('#sp-onboard-quick-skip')
+      ?.addEventListener('click', launchQuickSample);
 
     this.root
       .querySelector<HTMLFormElement>('#sp-onboarding-form')
@@ -2674,20 +2743,20 @@ export class SafePocketAppShell {
 
   private renderClipboardBanner(): string {
     if (this.toastMessage) {
-      return `<div class="sp-clipboard-banner" role="status"><span>✓ ${this.escape(
+      return `<div class="sp-clipboard-banner" role="status"><span style="display:inline-flex;align-items:center;gap:7px;">${renderIconSvg('check', 14)} ${this.escape(
         this.toastMessage
       )}</span></div>`;
     }
     if (this.clipboardSecondsLeft !== null) {
       return `
         <div class="sp-clipboard-banner" role="status">
-          <span>🛡 ${this.escape(
+          <span style="display:inline-flex;align-items:center;gap:7px;">${renderIconSvg('shield', 14)} ${this.escape(
             this.i18n.t('clipboard_hygiene_active', {
               seconds: this.clipboardSecondsLeft
             })
           )}</span>
           <button type="button" id="sp-scrub-now-btn" class="sp-btn" style="padding:3px 9px;min-height:26px;font-size:11.5px;">
-            Clear Now
+            ${this.escape(this.i18n.t('action_clear_now'))}
           </button>
         </div>
       `;
@@ -2695,11 +2764,19 @@ export class SafePocketAppShell {
     if (this.clipboardJustCleared) {
       return `
         <div class="sp-clipboard-banner" role="status">
-          <span>✓ ${this.escape(this.i18n.t('clipboard_hygiene_cleared'))}</span>
+          <span style="display:inline-flex;align-items:center;gap:7px;">${renderIconSvg('check', 14)} ${this.escape(this.i18n.t('clipboard_hygiene_cleared'))}</span>
         </div>
       `;
     }
     return '';
+  }
+
+  private navIconForSelection(id: NavSelection): VectorIconName {
+    if (id === 'ALL') return 'allItems';
+    if (id === 'FAVORITES') return 'favorites';
+    if (id === 'EXPIRING') return 'expiring';
+    if (id === 'SETTINGS') return 'settings';
+    return categoryIconName(id);
   }
 
   private renderNavBtn(
@@ -2722,7 +2799,10 @@ export class SafePocketAppShell {
         class="sp-nav-btn ${active}"
         data-nav="${id}"
       >
-        <span class="sp-nav-label">${this.escape(label)}</span>
+        <span class="sp-nav-label">
+          ${renderIconSvg(this.navIconForSelection(id), 15)}
+          <span>${this.escape(label)}</span>
+        </span>
         ${count !== undefined ? `<span class="sp-nav-count">${count}</span>` : ''}
       </button>
     `;
@@ -2734,7 +2814,7 @@ export class SafePocketAppShell {
     const miniLogoHtml = renderInstitutionLogoHtml(item, resolved, 28);
     let badgeHtml = '';
     if (exp.severity === 'critical') {
-      badgeHtml = `<span class="sp-badge sp-badge-critical">⚡ ${this.escape(
+      badgeHtml = `<span class="sp-badge sp-badge-critical">${renderIconSvg('clock', 11)} ${this.escape(
         this.i18n.plural('expiry_critical', exp.daysRemaining, {
           days: exp.daysRemaining
         })
@@ -2774,7 +2854,7 @@ export class SafePocketAppShell {
             title="${this.escape(
               this.i18n.t(item.pinned ? 'context_unpin' : 'context_pin')
             )}"
-          >📌 ${this.escape(
+          >${renderIconSvg('pin', 12)} ${this.escape(
             this.i18n.t(item.pinned ? 'action_unpin' : 'action_pin')
           )}</button>
         </div>
@@ -2783,17 +2863,17 @@ export class SafePocketAppShell {
             type="button"
             class="sp-swipe-action-btn is-edit"
             data-swipe-edit="${this.escape(item.id)}"
-          >✎ ${this.escape(this.i18n.t('action_edit'))}</button>
+          >${renderIconSvg('edit', 12)} ${this.escape(this.i18n.t('action_edit'))}</button>
           <button
             type="button"
             class="sp-swipe-action-btn is-copy"
             data-swipe-copy="${this.escape(item.id)}"
-          >📋 ${this.escape(this.i18n.t('action_copy'))}</button>
+          >${renderIconSvg('copy', 12)} ${this.escape(this.i18n.t('action_copy'))}</button>
           <button
             type="button"
             class="sp-swipe-action-btn is-delete"
             data-swipe-delete="${this.escape(item.id)}"
-          >🗑 ${this.escape(this.i18n.t('action_delete'))}</button>
+          >${renderIconSvg('trash', 12)} ${this.escape(this.i18n.t('action_delete'))}</button>
         </div>
         <button
           type="button"
@@ -2805,9 +2885,11 @@ export class SafePocketAppShell {
             <div style="display:flex;align-items:center;gap:10px;min-width:0;">
               ${miniLogoHtml}
               <div style="min-width:0;display:flex;flex-direction:column;gap:2px;">
-                <span class="sp-item-title">${item.pinned ? '📌 ' : ''}${
-                  item.favorite ? '★ ' : ''
-                }${this.escape(item.title)}</span>
+                <span class="sp-item-title" style="display:inline-flex;align-items:center;gap:5px;">${
+                  item.pinned ? renderIconSvg('pin', 12) : ''
+                }${
+                  item.favorite ? renderIconSvg('starFilled', 12) : ''
+                }<span>${this.escape(item.title)}</span></span>
                 <span class="sp-item-subtitle">${this.escape(
                   this.i18n.resolveDisplaySubtitle(item.subtitle, item.category)
                 )}</span>
@@ -2821,10 +2903,10 @@ export class SafePocketAppShell {
                 role="button"
                 tabindex="0"
                 data-entry-menu-btn="${this.escape(item.id)}"
-                style="padding:2px 5px;border-radius:6px;color:var(--text-muted);font-size:13px;line-height:1;"
+                class="sp-item-quick-menu-btn"
                 title="${this.escape(this.i18n.t('action_edit'))}"
                 aria-label="${this.escape(this.i18n.t('action_edit'))}"
-              >⋮</span>
+              >${renderIconSvg('moreVertical', 14)}</span>
             </div>
           </div>
           ${badgeHtml ? `<div style="padding-left:38px;">${badgeHtml}</div>` : ''}
@@ -2838,25 +2920,25 @@ export class SafePocketAppShell {
     const expiryField = item.fields.find((f) => f.labelKey === 'field_expiry_date');
     let expiryBadge = '';
     if (exp.severity === 'critical') {
-      expiryBadge = `<span class="sp-badge sp-badge-critical">⚡ ${this.escape(
+      expiryBadge = `<span class="sp-badge sp-badge-critical">${renderIconSvg('clock', 12)} ${this.escape(
         this.i18n.plural('expiry_critical', exp.daysRemaining, {
           days: exp.daysRemaining
         })
       )}</span>`;
     } else if (exp.severity === 'warning') {
-      expiryBadge = `<span class="sp-badge sp-badge-warn">⚠ ${this.escape(
+      expiryBadge = `<span class="sp-badge sp-badge-warn">${renderIconSvg('alertTriangle', 12)} ${this.escape(
         this.i18n.plural('expiry_warning', exp.daysRemaining, {
           days: exp.daysRemaining
         })
       )}</span>`;
     } else if (exp.severity === 'expired') {
-      expiryBadge = `<span class="sp-badge sp-badge-expired">⚠ ${this.escape(
+      expiryBadge = `<span class="sp-badge sp-badge-expired">${renderIconSvg('alertTriangle', 12)} ${this.escape(
         this.i18n.plural('expiry_expired', Math.abs(exp.daysRemaining), {
           days: Math.abs(exp.daysRemaining)
         })
       )}</span>`;
     } else if (exp.severity === 'valid' && expiryField) {
-      expiryBadge = `<span class="sp-badge sp-badge-ok">${this.escape(
+      expiryBadge = `<span class="sp-badge sp-badge-ok">${renderIconSvg('check', 12)} ${this.escape(
         this.i18n.t('expiry_valid', {
           date: this.i18n.formatDate(expiryField.value)
         })
@@ -2874,13 +2956,14 @@ export class SafePocketAppShell {
     return `
       <div>
         <button type="button" id="sp-mobile-back" class="sp-btn" style="margin-bottom:12px;display:none;">
-          ← ${this.escape(this.i18n.t('nav_all_items'))}
+          ${renderIconSvg('arrowLeft', 14)} ${this.escape(this.i18n.t('nav_all_items'))}
         </button>
         <div class="sp-inspector-header">
           <div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span style="font-size:11.5px;font-weight:650;color:var(--accent-primary);text-transform:uppercase;letter-spacing:0.05em;">
-                ${this.escape(this.i18n.resolveCategorySingularName(item.category))}
+              <span style="font-size:11.5px;font-weight:650;color:var(--accent-primary);text-transform:uppercase;letter-spacing:0.05em;display:inline-flex;align-items:center;gap:5px;">
+                ${renderIconSvg(categoryIconName(item.category), 13)}
+                <span>${this.escape(this.i18n.resolveCategorySingularName(item.category))}</span>
               </span>
               ${expiryBadge}
             </div>
@@ -2894,21 +2977,23 @@ export class SafePocketAppShell {
             <button type="button" id="sp-toggle-pin" class="sp-btn ${
               item.pinned ? 'sp-btn-tonal' : ''
             }">
-              📌 ${this.escape(
+              ${renderIconSvg('pin', 14)} ${this.escape(
                 this.i18n.t(item.pinned ? 'action_unpin' : 'action_pin')
               )}
             </button>
-            <button type="button" id="sp-toggle-fav" class="sp-btn">
-              ${item.favorite ? '★' : '☆'} ${this.escape(this.i18n.t('action_favorite'))}
+            <button type="button" id="sp-toggle-fav" class="sp-btn ${
+              item.favorite ? 'sp-btn-tonal' : ''
+            }">
+              ${renderIconSvg(item.favorite ? 'starFilled' : 'favorites', 14)} ${this.escape(this.i18n.t('action_favorite'))}
             </button>
             <button type="button" id="sp-edit-item-btn" class="sp-btn sp-btn-primary">
-              ✎ ${this.escape(this.i18n.t('action_edit'))}
+              ${renderIconSvg('edit', 14)} ${this.escape(this.i18n.t('action_edit'))}
             </button>
             <button type="button" id="sp-duplicate-item-btn" class="sp-btn">
-              ⧉ ${this.escape(this.i18n.t('context_duplicate'))}
+              ${renderIconSvg('duplicate', 14)} ${this.escape(this.i18n.t('context_duplicate'))}
             </button>
             <button type="button" id="sp-delete-item-btn" class="sp-btn sp-btn-danger">
-              ✕ ${this.escape(this.i18n.t('action_delete'))}
+              ${renderIconSvg('trash', 14)} ${this.escape(this.i18n.t('action_delete'))}
             </button>
           </div>
         </div>
@@ -2943,7 +3028,163 @@ export class SafePocketAppShell {
     `;
   }
 
-  private renderVisualCardHero(item: VaultItem, isPresentation = false): string {
+  private renderVisualCardBackFace(
+    item: VaultItem,
+    palette: string,
+    customStyleAttr: string,
+    instDisplayName: string,
+    isPresentation: boolean
+  ): string {
+    const valOf = (key: string): string =>
+      item.fields.find((f) => f.labelKey === key)?.value?.trim() ?? '';
+
+    const cvv = valOf('field_cvv');
+    const pin = valOf('field_pin');
+    const bic = valOf('field_bic');
+    const routing = valOf('field_routing_code');
+    const hotline =
+      valOf('field_emergency_phone') || valOf('field_support_phone');
+    const domain = valOf('field_institution_domain');
+    const validFrom = valOf('field_valid_from') || valOf('field_issue_date');
+    const insurerId = valOf('field_insurer_id') || valOf('field_group_number');
+    const authority =
+      valOf('field_issuing_authority') || valOf('field_issuing_country');
+
+    const cells: Array<{ label: string; value: string }> = [];
+    if (pin) {
+      cells.push({
+        label: this.i18n.resolveFieldLabel('field_pin', false, item.category),
+        value: isPresentation ? pin : '••••'
+      });
+    }
+    if (bic) {
+      cells.push({
+        label: this.i18n.resolveFieldLabel('field_bic', false, item.category),
+        value: bic
+      });
+    }
+    if (routing) {
+      cells.push({
+        label: this.i18n.resolveFieldLabel(
+          'field_routing_code',
+          false,
+          item.category
+        ),
+        value: routing
+      });
+    }
+    if (insurerId) {
+      cells.push({
+        label: this.i18n.resolveFieldLabel(
+          'field_insurer_id',
+          false,
+          item.category
+        ),
+        value: insurerId
+      });
+    }
+    if (authority) {
+      cells.push({
+        label: this.i18n.resolveFieldLabel(
+          'field_issuing_authority',
+          false,
+          item.category
+        ),
+        value: authority
+      });
+    }
+    if (hotline) {
+      cells.push({
+        label: this.i18n.resolveFieldLabel(
+          'field_support_phone',
+          false,
+          item.category
+        ),
+        value: hotline
+      });
+    }
+    if (validFrom && cells.length < 4) {
+      cells.push({
+        label: this.i18n.resolveFieldLabel(
+          'field_valid_from',
+          false,
+          item.category
+        ),
+        value: this.i18n.formatDate(validFrom)
+      });
+    }
+    if (domain && cells.length < 4) {
+      cells.push({
+        label: this.i18n.resolveFieldLabel(
+          'field_institution_domain',
+          false,
+          item.category
+        ),
+        value: domain.replace(/^https?:\/\/(www\.)?/, '')
+      });
+    }
+
+    const backScan = item.attachments.find((a) => a.side === 'back');
+
+    return `
+      <div class="sp-visual-card sp-card-face-back" data-palette="${palette}"${customStyleAttr}>
+        ${
+          item.category === 'PAYMENT_CARD'
+            ? `<div class="sp-card-magstripe" aria-hidden="true"></div>
+               <div class="sp-card-cvv-strip">
+                 <span style="font-size:10px;opacity:0.65;letter-spacing:0.06em;">AUTHORIZED SIGNATURE • ${this.escape(
+                   this.i18n.t('field_cvv')
+                 )}</span>
+                 <span>${this.escape(cvv || '•••')}</span>
+               </div>`
+            : `<div class="sp-card-top-row">
+                 <span style="font-weight:700;font-size:13px;opacity:0.92;">${this.escape(
+                   instDisplayName
+                 )}</span>
+                 <span class="sp-card-pill">${this.escape(
+                   this.i18n.t('card_back_badge')
+                 )}</span>
+               </div>`
+        }
+
+        ${
+          cells.length > 0
+            ? `<div class="sp-card-back-grid">
+                 ${cells
+                   .slice(0, 4)
+                   .map(
+                     (c) => `
+                   <div class="sp-card-back-cell">
+                     <span class="sp-card-back-label">${this.escape(c.label)}</span>
+                     <span class="sp-card-back-val">${this.escape(c.value)}</span>
+                   </div>`
+                   )
+                   .join('')}
+               </div>`
+            : `<div style="font-size:12px;opacity:0.8;z-index:1;">
+                 ${this.escape(this.i18n.t('card_back_empty_hint'))}
+               </div>`
+        }
+
+        <div class="sp-card-bottom-row" style="font-size:11px;opacity:0.82;z-index:1;">
+          <span>${this.escape(item.title)}</span>
+          <span>${
+            backScan
+              ? `✓ ${this.escape(this.i18n.t('scan_side_back'))}: ${this.escape(
+                  backScan.fileName
+                )}`
+              : this.escape(this.i18n.t('card_back_badge'))
+          }</span>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderVisualCardHero(
+    item: VaultItem,
+    isPresentation = false,
+    isCompactPreview = false
+  ): string {
     const resolved = resolveDualBrand(item);
     const effectiveBrandHex =
       item.cardTheme?.paletteId === 'custom'
@@ -2960,7 +3201,11 @@ export class SafePocketAppShell {
         )}"`
       : '';
 
-    const instLogoHtml = renderInstitutionLogoHtml(item, resolved, 36);
+    const instLogoHtml = renderInstitutionLogoHtml(
+      item,
+      resolved,
+      isCompactPreview ? 32 : 36
+    );
     const netLogoHtml = renderNetworkOrTypeLogoHtml(resolved);
     const instDisplayName =
       resolved.institution?.displayName ||
@@ -2970,14 +3215,9 @@ export class SafePocketAppShell {
       item.fields.find((f) => f.labelKey === 'field_organization')?.value ||
       item.title;
 
-    const presentBtn = isPresentation
-      ? ''
-      : `<button
-           type="button"
-           class="sp-btn"
-           style="padding:4px 9px;min-height:26px;font-size:11.5px;"
-           data-present-card="${this.escape(item.id)}"
-         >⛶ ${this.escape(this.i18n.t('action_present_card'))}</button>`;
+    let frontInnerHtml = '';
+    let primaryCopyValue = '';
+    let primaryCopySensitive = true;
 
     if (item.category === 'PAYMENT_CARD') {
       const pan =
@@ -2990,82 +3230,81 @@ export class SafePocketAppShell {
         item.fields.find((f) => f.labelKey === 'field_card_type')?.value ?? '';
       const panFieldId =
         item.fields.find((f) => f.labelKey === 'field_card_number')?.id ?? '';
-      const revealed = this.revealedFieldIds.has(panFieldId) || isPresentation;
-      const maskedPan = revealed
-        ? pan
-        : `•••• •••• •••• ${pan.replace(/\s+/g, '').slice(-4)}`;
+      const revealed =
+        this.revealedFieldIds.has(panFieldId) ||
+        isPresentation ||
+        isCompactPreview;
+      const cleanDigits = pan.replace(/\s+/g, '');
+      const maskedPan = cleanDigits
+        ? revealed
+          ? pan
+          : `•••• •••• •••• ${cleanDigits.slice(-4)}`
+        : '•••• •••• •••• ••••';
+      primaryCopyValue = cleanDigits;
 
-      return `
-        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
-          <div class="sp-card-top-row">
-            <div class="sp-dual-brand-left">
-              ${instLogoHtml}
-              <div style="min-width:0;">
-                <div style="font-weight:700;font-size:14px;line-height:1.2;">${this.escape(
-                  instDisplayName
-                )}</div>
-                ${
-                  cardType
-                    ? `<div style="font-size:10.5px;opacity:0.8;">${this.escape(
-                        cardType
-                      )}</div>`
-                    : ''
-                }
-              </div>
-            </div>
-            <div class="sp-dual-brand-right">
-              ${netLogoHtml}
-              ${presentBtn}
+      frontInnerHtml = `
+        <div class="sp-card-top-row">
+          <div class="sp-dual-brand-left">
+            ${instLogoHtml}
+            <div style="min-width:0;">
+              <div style="font-weight:700;font-size:14px;line-height:1.2;">${this.escape(
+                instDisplayName
+              )}</div>
+              ${
+                cardType
+                  ? `<div style="font-size:10.5px;opacity:0.82;">${this.escape(
+                      cardType
+                    )}</div>`
+                  : ''
+              }
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;">
-            <div class="sp-emv-chip" aria-hidden="true"></div>
-            <span style="font-size:14px;opacity:0.75;" aria-hidden="true">)))</span>
+          <div class="sp-dual-brand-right">
+            ${netLogoHtml}
           </div>
-          <div class="sp-card-pan">
-            <span>${this.escape(maskedPan)}</span>
-            <button
-              type="button"
-              class="sp-btn"
-              style="padding:4px 10px;min-height:28px;"
-              data-copy-value="${this.escape(pan.replace(/\s+/g, ''))}"
-              data-copy-sensitive="true"
-            >${this.escape(this.i18n.t('action_copy'))}</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="sp-emv-chip" aria-hidden="true"></div>
+          <span style="opacity:0.8;" aria-hidden="true">${renderIconSvg('contactless', 18)}</span>
+        </div>
+        <div class="sp-card-pan">
+          <span>${this.escape(maskedPan)}</span>
+        </div>
+        <div class="sp-card-bottom-row">
+          <div>
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_cardholder')
+            )}</div>
+            <div style="font-weight:600;letter-spacing:0.04em;">${this.escape(
+              holder || '—'
+            )}</div>
           </div>
-          <div class="sp-card-bottom-row">
-            <div>
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_cardholder')
-              )}</div>
-              <div style="font-weight:600;letter-spacing:0.04em;">${this.escape(
-                holder
-              )}</div>
-            </div>
-            <div style="text-align:right;">
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_expiry_date')
-              )}</div>
-              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
-                this.i18n.formatDate(expiry)
-              )}</div>
-            </div>
+          <div style="text-align:right;">
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_expiry_date')
+            )}</div>
+            <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+              expiry ? this.i18n.formatDate(expiry) : '—'
+            )}</div>
           </div>
         </div>
       `;
-    }
-
-    if (item.category === 'BANK_ACCOUNT') {
+    } else if (item.category === 'BANK_ACCOUNT') {
       const ibanField = item.fields.find((f) => f.labelKey === 'field_iban');
       const rawIban = ibanField?.value ?? '';
       const compactIban = rawIban.replace(/\s+/g, '');
       const revealed = ibanField
-        ? this.revealedFieldIds.has(ibanField.id) || isPresentation
-        : false;
-      const maskedIban = revealed
-        ? rawIban
-        : compactIban.length >= 8
-          ? `${compactIban.slice(0, 4)} •••• •••• ${compactIban.slice(-4)}`
-          : '•••• ••••';
+        ? this.revealedFieldIds.has(ibanField.id) ||
+          isPresentation ||
+          isCompactPreview
+        : isCompactPreview;
+      const maskedIban = compactIban
+        ? revealed
+          ? rawIban
+          : compactIban.length >= 8
+            ? `${compactIban.slice(0, 4)} •••• •••• ${compactIban.slice(-4)}`
+            : '•••• ••••'
+        : 'DE•• •••• •••• •••• •••• ••';
       const holder =
         item.fields.find((f) => f.labelKey === 'field_account_holder')?.value ??
         '';
@@ -3074,70 +3313,59 @@ export class SafePocketAppShell {
       const acctType =
         item.fields.find((f) => f.labelKey === 'field_account_type')?.value ??
         'SEPA';
+      primaryCopyValue = compactIban;
 
-      return `
-        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
-          <div class="sp-card-top-row">
-            <div class="sp-dual-brand-left">
-              ${instLogoHtml}
-              <span style="font-weight:700;font-size:14px;">${this.escape(
-                instDisplayName
-              )}</span>
-            </div>
-            <div class="sp-dual-brand-right">
-              ${renderNetworkOrTypeLogoHtml(resolved, acctType)}
-              ${presentBtn}
-            </div>
+      frontInnerHtml = `
+        <div class="sp-card-top-row">
+          <div class="sp-dual-brand-left">
+            ${instLogoHtml}
+            <span style="font-weight:700;font-size:14px;">${this.escape(
+              instDisplayName
+            )}</span>
           </div>
-          <div class="sp-card-pan" style="font-size:17px;letter-spacing:0.08em;">
-            <span>${this.escape(maskedIban)}</span>
-            ${
-              compactIban
-                ? `<button
-                     type="button"
-                     class="sp-btn"
-                     style="padding:4px 10px;min-height:28px;"
-                     data-copy-value="${this.escape(compactIban)}"
-                     data-copy-sensitive="true"
-                   >${this.escape(this.i18n.t('action_copy'))}</button>`
-                : ''
-            }
+          <div class="sp-dual-brand-right">
+            ${renderNetworkOrTypeLogoHtml(resolved, acctType)}
           </div>
-          <div class="sp-card-bottom-row">
-            <div>
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_account_holder')
-              )}</div>
-              <div style="font-weight:600;letter-spacing:0.03em;">${this.escape(
-                holder
-              )}</div>
-            </div>
-            <div style="text-align:right;">
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_bic')
-              )}</div>
-              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
-                bic || 'SEPA'
-              )}</div>
-            </div>
+        </div>
+        <div class="sp-card-pan" style="font-size:16.5px;letter-spacing:0.08em;">
+          <span>${this.escape(maskedIban)}</span>
+        </div>
+        <div class="sp-card-bottom-row">
+          <div>
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_account_holder')
+            )}</div>
+            <div style="font-weight:600;letter-spacing:0.03em;">${this.escape(
+              holder || '—'
+            )}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_bic')
+            )}</div>
+            <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+              bic || 'SEPA'
+            )}</div>
           </div>
         </div>
       `;
-    }
-
-    if (item.category === 'INSURANCE_CARD') {
+    } else if (item.category === 'INSURANCE_CARD') {
       const numField = item.fields.find(
         (f) => f.labelKey === 'field_insurance_number'
       );
       const rawNum = numField?.value ?? '';
       const revealed = numField
-        ? this.revealedFieldIds.has(numField.id) || isPresentation
-        : false;
-      const maskedNum = revealed
-        ? rawNum
-        : rawNum.length > 4
-          ? `${rawNum.slice(0, 1)}•••••${rawNum.slice(-3)}`
-          : '••••••';
+        ? this.revealedFieldIds.has(numField.id) ||
+          isPresentation ||
+          isCompactPreview
+        : isCompactPreview;
+      const maskedNum = rawNum
+        ? revealed
+          ? rawNum
+          : rawNum.length > 4
+            ? `${rawNum.slice(0, 1)}•••••${rawNum.slice(-3)}`
+            : '••••••'
+        : '••••••••••';
       const holder =
         item.fields.find((f) => f.labelKey === 'field_full_name')?.value ?? '';
       const ik =
@@ -3147,65 +3375,53 @@ export class SafePocketAppShell {
         resolved.networkDisplayLabel;
       const expiry =
         item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
+      primaryCopyValue = rawNum;
 
-      return `
-        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
-          <div class="sp-card-top-row">
-            <div class="sp-dual-brand-left">
-              ${instLogoHtml}
-              <div>
-                <div style="font-weight:700;font-size:14px;">${this.escape(
-                  instDisplayName
-                )}</div>
-                ${
-                  ik
-                    ? `<div style="font-size:10.5px;font-family:var(--font-mono);opacity:0.78;">IK / ID: ${this.escape(
-                        ik
-                      )}</div>`
-                    : ''
-                }
-              </div>
-            </div>
-            <div class="sp-dual-brand-right">
-              ${renderNetworkOrTypeLogoHtml(resolved, plan)}
-              ${presentBtn}
-            </div>
-          </div>
-          <div class="sp-card-pan">
-            <span>${this.escape(maskedNum)}</span>
-            ${
-              rawNum
-                ? `<button
-                     type="button"
-                     class="sp-btn"
-                     style="padding:4px 10px;min-height:28px;"
-                     data-copy-value="${this.escape(rawNum)}"
-                     data-copy-sensitive="true"
-                   >${this.escape(this.i18n.t('action_copy'))}</button>`
-                : ''
-            }
-          </div>
-          <div class="sp-card-bottom-row">
+      frontInnerHtml = `
+        <div class="sp-card-top-row">
+          <div class="sp-dual-brand-left">
+            ${instLogoHtml}
             <div>
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_full_name')
+              <div style="font-weight:700;font-size:14px;">${this.escape(
+                instDisplayName
               )}</div>
-              <div style="font-weight:600;">${this.escape(holder)}</div>
+              ${
+                ik
+                  ? `<div style="font-size:10.5px;font-family:var(--font-mono);opacity:0.78;">IK / ID: ${this.escape(
+                      ik
+                    )}</div>`
+                  : ''
+              }
             </div>
-            <div style="text-align:right;">
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_expiry_date')
-              )}</div>
-              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
-                expiry ? this.i18n.formatDate(expiry) : '—'
-              )}</div>
-            </div>
+          </div>
+          <div class="sp-dual-brand-right">
+            ${renderNetworkOrTypeLogoHtml(resolved, plan)}
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="sp-emv-chip" aria-hidden="true"></div>
+        </div>
+        <div class="sp-card-pan">
+          <span>${this.escape(maskedNum)}</span>
+        </div>
+        <div class="sp-card-bottom-row">
+          <div>
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_full_name')
+            )}</div>
+            <div style="font-weight:600;">${this.escape(holder || '—')}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_expiry_date')
+            )}</div>
+            <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+              expiry ? this.i18n.formatDate(expiry) : '—'
+            )}</div>
           </div>
         </div>
       `;
-    }
-
-    if (item.category === 'MEMBERSHIP_CARD') {
+    } else if (item.category === 'MEMBERSHIP_CARD') {
       const memberName =
         item.fields.find((f) => f.labelKey === 'field_member_name')?.value ?? '';
       const memberId =
@@ -3223,63 +3439,49 @@ export class SafePocketAppShell {
       const renderedCode = renderScannableBarcodeSvg(
         barcodePayload,
         item.cardTheme?.barcodeFormat,
-        { heightPx: 44, maxWidthPx: 340, qrSizePx: 112 }
+        { heightPx: isCompactPreview ? 34 : 42, maxWidthPx: 330, qrSizePx: 96 }
       );
+      primaryCopyValue = memberId || barcodePayload;
+      primaryCopySensitive = false;
 
-      return `
-        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
-          <div class="sp-card-top-row">
-            <div class="sp-dual-brand-left">
-              ${instLogoHtml}
-              <span style="font-weight:700;font-size:14px;">${this.escape(
-                instDisplayName
-              )}</span>
-            </div>
-            <div class="sp-dual-brand-right">
-              ${renderNetworkOrTypeLogoHtml(resolved, tier)}
-              ${presentBtn}
-            </div>
+      frontInnerHtml = `
+        <div class="sp-card-top-row">
+          <div class="sp-dual-brand-left">
+            ${instLogoHtml}
+            <span style="font-weight:700;font-size:14px;">${this.escape(
+              instDisplayName
+            )}</span>
           </div>
-          <div class="sp-card-pan" style="font-size:17.5px;">
-            <span>${this.escape(memberId || barcodePayload)}</span>
-            ${
-              memberId || barcodePayload
-                ? `<button
-                     type="button"
-                     class="sp-btn"
-                     style="padding:4px 10px;min-height:28px;"
-                     data-copy-value="${this.escape(memberId || barcodePayload)}"
-                     data-copy-sensitive="false"
-                   >${this.escape(this.i18n.t('action_copy'))}</button>`
-                : ''
-            }
+          <div class="sp-dual-brand-right">
+            ${renderNetworkOrTypeLogoHtml(resolved, tier)}
           </div>
-          <div class="sp-barcode-strip">
-            ${renderedCode.svg}
+        </div>
+        <div class="sp-card-pan" style="font-size:17px;">
+          <span>${this.escape(memberId || barcodePayload)}</span>
+        </div>
+        <div class="sp-barcode-strip">
+          ${renderedCode.svg}
+        </div>
+        <div class="sp-card-bottom-row">
+          <div>
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_member_name')
+            )}</div>
+            <div style="font-weight:600;">${this.escape(memberName || '—')}</div>
           </div>
-          <div class="sp-card-bottom-row">
-            <div>
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_member_name')
-              )}</div>
-              <div style="font-weight:600;">${this.escape(memberName)}</div>
-            </div>
-            <div style="text-align:right;">
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_expiry_date')
-              )}</div>
-              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
-                expiry ? this.i18n.formatDate(expiry) : '—'
-              )}</div>
-            </div>
+          <div style="text-align:right;">
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_expiry_date')
+            )}</div>
+            <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+              expiry ? this.i18n.formatDate(expiry) : '—'
+            )}</div>
           </div>
         </div>
       `;
-    }
-
-    if (item.category === 'IDENTITY') {
+    } else if (item.category === 'IDENTITY') {
       const fullName =
-        item.fields.find((f) => f.labelKey === 'field_full_name')?.value ??
+        item.fields.find((f) => f.labelKey === 'field_full_name')?.value ||
         item.title;
       const birthdate =
         item.fields.find((f) => f.labelKey === 'field_birthdate')?.value ?? '';
@@ -3288,8 +3490,10 @@ export class SafePocketAppShell {
         item.fields.find((f) => f.labelKey === 'field_ssn');
       const rawId = idField?.value ?? '';
       const revealed = idField
-        ? this.revealedFieldIds.has(idField.id) || isPresentation
-        : false;
+        ? this.revealedFieldIds.has(idField.id) ||
+          isPresentation ||
+          isCompactPreview
+        : isCompactPreview;
       const maskedId = rawId
         ? revealed
           ? rawId
@@ -3301,77 +3505,65 @@ export class SafePocketAppShell {
         item.fields.find((f) => f.labelKey === 'field_email')?.value ??
         item.fields.find((f) => f.labelKey === 'field_phone')?.value ??
         this.i18n.resolveDisplaySubtitle(item.subtitle, item.category);
+      primaryCopyValue = rawId;
 
-      return `
-        <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
-          <div class="sp-card-top-row">
-            <div class="sp-dual-brand-left">
-              ${instLogoHtml}
-              <span style="font-weight:700;font-size:14px;">${this.escape(
-                fullName
-              )}</span>
-            </div>
-            <div class="sp-dual-brand-right">
-              ${renderNetworkOrTypeLogoHtml(
-                resolved,
-                this.i18n.t('category_identity')
-              )}
-              ${presentBtn}
-            </div>
+      frontInnerHtml = `
+        <div class="sp-card-top-row">
+          <div class="sp-dual-brand-left">
+            ${instLogoHtml}
+            <span style="font-weight:700;font-size:14px;">${this.escape(
+              fullName
+            )}</span>
           </div>
-          <div class="sp-card-pan" style="font-size:17px;">
-            <span>${this.escape(maskedId)}</span>
-            ${
-              rawId
-                ? `<button
-                     type="button"
-                     class="sp-btn"
-                     style="padding:4px 10px;min-height:28px;"
-                     data-copy-value="${this.escape(rawId)}"
-                     data-copy-sensitive="true"
-                   >${this.escape(this.i18n.t('action_copy'))}</button>`
-                : ''
-            }
+          <div class="sp-dual-brand-right">
+            ${renderNetworkOrTypeLogoHtml(
+              resolved,
+              this.i18n.t('category_identity')
+            )}
           </div>
-          <div class="sp-card-bottom-row">
-            <div>
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_email')
-              )}</div>
-              <div style="font-weight:600;">${this.escape(contact)}</div>
-            </div>
-            <div style="text-align:right;">
-              <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
-                this.i18n.t('field_birthdate')
-              )}</div>
-              <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
-                birthdate ? this.i18n.formatDate(birthdate) : '—'
-              )}</div>
-            </div>
+        </div>
+        <div class="sp-card-pan" style="font-size:17px;">
+          <span>${this.escape(maskedId)}</span>
+        </div>
+        <div class="sp-card-bottom-row">
+          <div>
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_email')
+            )}</div>
+            <div style="font-weight:600;">${this.escape(contact)}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:10px;opacity:0.72;text-transform:uppercase;">${this.escape(
+              this.i18n.t('field_birthdate')
+            )}</div>
+            <div style="font-family:var(--font-mono);font-weight:600;">${this.escape(
+              birthdate ? this.i18n.formatDate(birthdate) : '—'
+            )}</div>
           </div>
         </div>
       `;
-    }
+    } else {
+      const docNumField = item.fields.find(
+        (f) => f.labelKey === 'field_document_number'
+      );
+      const authority =
+        item.fields.find((f) => f.labelKey === 'field_issuing_authority')
+          ?.value ?? '';
+      const expiry =
+        item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
+      const isRevealed = docNumField
+        ? this.revealedFieldIds.has(docNumField.id) ||
+          isPresentation ||
+          isCompactPreview
+        : isCompactPreview;
+      const docNumText = docNumField?.value
+        ? isRevealed
+          ? docNumField.value
+          : `•••••${docNumField.value.slice(-3)}`
+        : '•••••••••';
+      primaryCopyValue = docNumField?.value ?? '';
 
-    const docNumField = item.fields.find(
-      (f) => f.labelKey === 'field_document_number'
-    );
-    const authority =
-      item.fields.find((f) => f.labelKey === 'field_issuing_authority')?.value ??
-      '';
-    const expiry =
-      item.fields.find((f) => f.labelKey === 'field_expiry_date')?.value ?? '';
-    const isRevealed = docNumField
-      ? this.revealedFieldIds.has(docNumField.id) || isPresentation
-      : false;
-    const docNumText = docNumField
-      ? isRevealed
-        ? docNumField.value
-        : `•••••${docNumField.value.slice(-3)}`
-      : '';
-
-    return `
-      <div class="sp-visual-card" data-palette="${palette}"${customStyleAttr}>
+      frontInnerHtml = `
         <div class="sp-card-top-row">
           <div class="sp-dual-brand-left">
             ${instLogoHtml}
@@ -3384,35 +3576,104 @@ export class SafePocketAppShell {
           </div>
           <div class="sp-dual-brand-right">
             ${netLogoHtml}
-            ${presentBtn}
           </div>
         </div>
         <div class="sp-card-pan">
           <span>${this.escape(docNumText)}</span>
-          ${
-            docNumField
-              ? `<button
-                   type="button"
-                   class="sp-btn"
-                   style="padding:4px 10px;min-height:28px;"
-                   data-copy-value="${this.escape(docNumField.value)}"
-                   data-copy-sensitive="true"
-                 >${this.escape(this.i18n.t('action_copy'))}</button>`
-              : ''
-          }
         </div>
         <div class="sp-card-bottom-row">
-          <div style="font-family:var(--font-mono);font-size:11.5px;opacity:0.75;">
-            P&lt;UTO&lt;&lt;SAFEPOCKET&lt;&lt;ZERO&lt;KNOWLEDGE&lt;&lt;&lt;&lt;&lt;&lt;&lt;
+          <div style="font-family:var(--font-mono);font-size:11px;opacity:0.75;">
+            P&lt;UTO&lt;&lt;SAFEPOCKET&lt;&lt;ZERO&lt;KNOWLEDGE&lt;&lt;&lt;&lt;&lt;
           </div>
           <div>
             <span style="opacity:0.72;font-size:11px;">${this.escape(
               this.i18n.t('field_expiry_date')
             )}: </span>
             <strong style="font-family:var(--font-mono);">${this.escape(
-              this.i18n.formatDate(expiry)
+              expiry ? this.i18n.formatDate(expiry) : '—'
             )}</strong>
           </div>
+        </div>
+      `;
+    }
+
+    if (isCompactPreview) {
+      return `
+        <div class="sp-visual-card is-compact-preview" data-palette="${palette}"${customStyleAttr}>
+          ${frontInnerHtml}
+        </div>
+      `;
+    }
+
+    const flipKey = isPresentation ? `present:${item.id}` : item.id;
+    const isFlipped = this.flippedCardIds.has(flipKey);
+    const backFaceHtml = this.renderVisualCardBackFace(
+      item,
+      palette,
+      customStyleAttr,
+      instDisplayName,
+      isPresentation
+    );
+
+    return `
+      <div class="sp-card-stage">
+        <div
+          class="sp-card-3d-flipper ${isFlipped ? 'is-flipped' : ''}"
+          data-flip-card="${this.escape(flipKey)}"
+          role="button"
+          tabindex="0"
+          aria-label="${this.escape(
+            this.i18n.t(isFlipped ? 'card_flip_to_front' : 'card_flip_to_back')
+          )}"
+        >
+          <div class="sp-visual-card sp-card-face-front" data-palette="${palette}"${customStyleAttr}>
+            ${frontInnerHtml}
+          </div>
+          ${backFaceHtml}
+        </div>
+        <div class="sp-card-toolbar">
+          <div class="sp-card-toolbar-group">
+            <button
+              type="button"
+              class="sp-btn sp-btn-tonal"
+              style="min-height:30px;padding:4px 11px;font-size:12px;"
+              data-flip-card="${this.escape(flipKey)}"
+            >
+              ${renderIconSvg('flipCard', 14)}
+              <span>${this.escape(
+                this.i18n.t(
+                  isFlipped ? 'card_flip_to_front' : 'card_flip_to_back'
+                )
+              )}</span>
+            </button>
+            ${
+              primaryCopyValue
+                ? `<button
+                     type="button"
+                     class="sp-btn"
+                     style="min-height:30px;padding:4px 11px;font-size:12px;"
+                     data-copy-value="${this.escape(primaryCopyValue)}"
+                     data-copy-sensitive="${String(primaryCopySensitive)}"
+                   >
+                     ${renderIconSvg('copy', 13)}
+                     <span>${this.escape(this.i18n.t('action_copy'))}</span>
+                   </button>`
+                : ''
+            }
+          </div>
+          ${
+            !isPresentation
+              ? `<button
+                   type="button"
+                   class="sp-btn"
+                   style="min-height:30px;padding:4px 11px;font-size:12px;"
+                   data-present-card="${this.escape(item.id)}"
+                 >
+                   ${renderIconSvg('present', 13)}
+                   <span>${this.escape(this.i18n.t('action_present_card'))}</span>
+                 </button>`
+              : ''
+          }
         </div>
       </div>
     `;
@@ -3477,7 +3738,7 @@ export class SafePocketAppShell {
                    type="button"
                    class="sp-btn"
                    data-toggle-reveal="${this.escape(field.id)}"
-                 >${this.escape(
+                 >${renderIconSvg(isRevealed ? 'eyeOff' : 'eye', 13)} ${this.escape(
                    isRevealed
                      ? this.i18n.t('action_hide')
                      : this.i18n.t('action_reveal')
@@ -3489,7 +3750,7 @@ export class SafePocketAppShell {
             class="sp-btn sp-btn-tonal"
             data-copy-value="${this.escape(field.value)}"
             data-copy-sensitive="${String(isSensitive)}"
-          >${this.escape(this.i18n.t('action_copy'))}</button>
+          >${renderIconSvg('copy', 13)} ${this.escape(this.i18n.t('action_copy'))}</button>
         </div>
       </div>
     `;
@@ -3557,7 +3818,7 @@ export class SafePocketAppShell {
               id="sp-camera-capture-doc-btn"
               class="sp-btn sp-btn-primary"
               style="min-height:28px;padding:3px 10px;font-size:11.5px;"
-            >📷 ${this.escape(this.i18n.t('camera_capture_photo_btn'))}</button>
+            >${renderIconSvg('camera', 13)} ${this.escape(this.i18n.t('camera_capture_photo_btn'))}</button>
             <button
               type="button"
               class="sp-btn ${
@@ -3584,13 +3845,13 @@ export class SafePocketAppShell {
                 ? this.i18n.t('scan_side_back')
                 : this.i18n.t('scan_side_front');
             const syncPill = att.blobSynced
-              ? `<span class="sp-badge" style="background:rgba(16,185,129,0.14);color:#059669;">☁️ EU .enc</span>`
-              : `<span class="sp-badge" style="background:var(--bg-canvas);border:1px solid var(--border-subtle);color:var(--text-secondary);">🔒 Local .enc</span>`;
+              ? `<span class="sp-badge" style="background:rgba(16,185,129,0.14);color:#059669;">${renderIconSvg('cloud', 11)} EU .enc</span>`
+              : `<span class="sp-badge" style="background:var(--bg-canvas);border:1px solid var(--border-subtle);color:var(--text-secondary);">${renderIconSvg('shield', 11)} Local .enc</span>`;
             return `
               <div class="sp-field-card" style="padding:10px 14px;">
                 <div class="sp-field-meta">
                   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                    <span class="sp-field-value" style="font-size:13px;font-weight:560;">📄 ${this.escape(
+                    <span class="sp-field-value" style="font-size:13px;font-weight:560;display:inline-flex;align-items:center;gap:6px;">${renderIconSvg('fileText', 14)} ${this.escape(
                       att.fileName
                     )}</span>
                     <span class="sp-badge" style="background:var(--accent-tonal);color:var(--accent-primary);">
@@ -3609,13 +3870,13 @@ export class SafePocketAppShell {
                     type="button"
                     class="sp-btn sp-btn-tonal"
                     data-preview-att="${this.escape(att.id)}"
-                  >👁 ${this.escape(this.i18n.t('action_preview_scan'))}</button>
+                  >${renderIconSvg('eye', 13)} ${this.escape(this.i18n.t('action_preview_scan'))}</button>
                   <button
                     type="button"
                     class="sp-btn sp-btn-danger"
                     data-delete-att="${this.escape(att.id)}"
                     title="${this.escape(this.i18n.t('action_delete'))}"
-                  >✕</button>
+                  >${renderIconSvg('trash', 13)}</button>
                 </div>
               </div>
             `;
@@ -3624,7 +3885,7 @@ export class SafePocketAppShell {
 
         <label class="sp-dropzone" id="sp-scan-dropzone">
           <input type="file" id="sp-scan-file-input" accept="image/*,application/pdf" multiple style="display:none;" />
-          <div>📎 ${this.escape(this.i18n.t('dropzone_hint'))}</div>
+          <div style="display:inline-flex;align-items:center;gap:7px;">${renderIconSvg('paperclip', 15)} ${this.escape(this.i18n.t('dropzone_hint'))}</div>
         </label>
       </div>
     `;
@@ -3658,9 +3919,9 @@ export class SafePocketAppShell {
                 download="${this.escape(this.activePreview.fileName)}"
                 class="sp-btn sp-btn-tonal"
                 style="text-decoration:none;"
-              >⬇ Download</a>
+              >${renderIconSvg('download', 13)} Download</a>
               <button type="button" id="sp-close-preview-btn" class="sp-btn sp-btn-primary">
-                ✕ ${this.escape(this.i18n.t('action_close_preview'))}
+                ${renderIconSvg('close', 13)} ${this.escape(this.i18n.t('action_close_preview'))}
               </button>
             </div>
           </div>
@@ -4061,12 +4322,79 @@ export class SafePocketAppShell {
             class="sp-btn"
             aria-label="${this.escape(this.i18n.t('action_close'))}"
             title="${this.escape(this.i18n.t('action_close'))}"
-          >✕</button>
+          >${renderIconSvg('close', 15)}</button>
         </div>
       </div>
 
-      <!-- 0. Appearance & Material Theme (Light Default / Dark / Use Device Theme + Material Accent) -->
-      <section class="sp-settings-section">
+      <div class="sp-settings-tabs" role="tablist" aria-label="${this.escape(
+        this.i18n.t('nav_settings')
+      )}">
+        <button
+          type="button"
+          role="tab"
+          aria-selected="${this.settingsTab === 'appearance'}"
+          class="sp-settings-tab-btn ${
+            this.settingsTab === 'appearance' ? 'is-active' : ''
+          }"
+          data-settings-tab="appearance"
+        >
+          ${renderIconSvg('sun', 14)}
+          <span>${this.escape(this.i18n.t('settings_tab_appearance'))}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected="${this.settingsTab === 'security'}"
+          class="sp-settings-tab-btn ${
+            this.settingsTab === 'security' ? 'is-active' : ''
+          }"
+          data-settings-tab="security"
+        >
+          ${renderIconSvg('shield', 14)}
+          <span>${this.escape(this.i18n.t('settings_tab_security'))}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected="${this.settingsTab === 'sync'}"
+          class="sp-settings-tab-btn ${
+            this.settingsTab === 'sync' ? 'is-active' : ''
+          }"
+          data-settings-tab="sync"
+        >
+          ${renderIconSvg('cloud', 14)}
+          <span>${this.escape(this.i18n.t('settings_tab_sync'))}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected="${this.settingsTab === 'data'}"
+          class="sp-settings-tab-btn ${
+            this.settingsTab === 'data' ? 'is-active' : ''
+          }"
+          data-settings-tab="data"
+        >
+          ${renderIconSvg('database', 14)}
+          <span>${this.escape(this.i18n.t('settings_tab_data'))}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected="${this.settingsTab === 'updates'}"
+          class="sp-settings-tab-btn ${
+            this.settingsTab === 'updates' ? 'is-active' : ''
+          }"
+          data-settings-tab="updates"
+        >
+          ${renderIconSvg('refresh', 14)}
+          <span>${this.escape(this.i18n.t('settings_tab_updates'))}</span>
+        </button>
+      </div>
+
+      <!-- TAB 1: Appearance & Language -->
+      <section class="sp-settings-section" style="${
+        this.settingsTab === 'appearance' ? '' : 'display:none;'
+      }">
         <h2>${this.escape(this.i18n.t('settings_theme_title'))}</h2>
         <div class="sp-theme-segmented" role="group" aria-label="${this.escape(
           this.i18n.t('settings_theme_title')
@@ -4078,7 +4406,7 @@ export class SafePocketAppShell {
               this.themeMode === 'light' ? 'sp-btn-primary' : ''
             }"
             data-set-theme="light"
-          >☀ ${this.escape(this.i18n.t('theme_light'))}</button>
+          >${renderIconSvg('sun', 14)} ${this.escape(this.i18n.t('theme_light'))}</button>
           <button
             type="button"
             id="sp-theme-dark-btn"
@@ -4086,7 +4414,7 @@ export class SafePocketAppShell {
               this.themeMode === 'dark' ? 'sp-btn-primary' : ''
             }"
             data-set-theme="dark"
-          >☾ ${this.escape(this.i18n.t('theme_dark'))}</button>
+          >${renderIconSvg('moon', 14)} ${this.escape(this.i18n.t('theme_dark'))}</button>
           <button
             type="button"
             id="sp-theme-system-btn"
@@ -4094,7 +4422,7 @@ export class SafePocketAppShell {
               this.themeMode === 'system' ? 'sp-btn-primary' : ''
             }"
             data-set-theme="system"
-          >◐ ${this.escape(this.i18n.t('theme_system'))}</button>
+          >${renderIconSvg('contrast', 14)} ${this.escape(this.i18n.t('theme_system'))}</button>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px;padding-top:4px;border-top:1px solid var(--border-subtle);">
@@ -4154,7 +4482,9 @@ export class SafePocketAppShell {
       </section>
 
       <!-- 1. Self-Update & Version Management -->
-      <section class="sp-settings-section">
+      <section class="sp-settings-section" style="${
+        this.settingsTab === 'updates' ? '' : 'display:none;'
+      }">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
           <div>
             <h2>${this.escape(this.i18n.t('update_section_title'))}</h2>
@@ -4163,7 +4493,7 @@ export class SafePocketAppShell {
             </div>
           </div>
           <button type="button" id="sp-check-updates-btn" class="sp-btn sp-btn-primary">
-            ↻ ${this.escape(this.i18n.t('update_check_btn'))}
+            ${renderIconSvg('refresh', 14)} ${this.escape(this.i18n.t('update_check_btn'))}
           </button>
         </div>
 
@@ -4188,14 +4518,16 @@ export class SafePocketAppShell {
       </section>
 
       <!-- 2. Localization & Regional Templates -->
-      <section class="sp-settings-section">
+      <section class="sp-settings-section" style="${
+        this.settingsTab === 'appearance' ? '' : 'display:none;'
+      }">
         <h2>${this.escape(this.i18n.t('settings_language_title'))}</h2>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
           <button
             type="button"
             class="sp-btn ${this.i18n.isUsingSystemLocale ? 'sp-btn-tonal' : ''}"
             data-set-locale="__system__"
-          >🌐 ${this.escape(
+          >${renderIconSvg('globe', 14)} ${this.escape(
             this.i18n.t('settings_language_system', {
               locale: this.i18n.detectedSystemLocale.toUpperCase()
             })
@@ -4217,8 +4549,10 @@ export class SafePocketAppShell {
         </div>
       </section>
 
-      <!-- 3. Database & Sync (Side-by-Side 2-Column Lokale DB vs Cloud-Sync Cards) & Portability -->
-      <section class="sp-settings-section">
+      <!-- 3. Database & Sync (Side-by-Side 2-Column Lokale DB vs Cloud-Sync Cards) -->
+      <section class="sp-settings-section" style="${
+        this.settingsTab === 'sync' ? '' : 'display:none;'
+      }">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <h2 style="display:inline-flex;align-items:center;gap:8px;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"></path><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"></path></svg>
@@ -4475,23 +4809,25 @@ export class SafePocketAppShell {
                 }
               </span>
               <button type="button" id="sp-sync-now-btn" class="sp-btn sp-btn-tonal">
-                ⇄ ${this.escape(this.i18n.t('sync_now'))}
+                ${renderIconSvg('refresh', 14)} ${this.escape(this.i18n.t('sync_now'))}
               </button>
             </div>`
             : ''
         }
+      </section>
 
-        <div style="border-top:1px solid var(--border-subtle);padding-top:12px;display:flex;flex-direction:column;gap:10px;">
-          <div style="font-size:12.5px;font-weight:700;color:var(--text-primary);">
-            ${this.escape(this.i18n.t('portability_section_title'))}
-          </div>
-
+      <!-- 3b. Backup, Restore & Portability -->
+      <section class="sp-settings-section" style="${
+        this.settingsTab === 'data' ? '' : 'display:none;'
+      }">
+        <h2>${this.escape(this.i18n.t('portability_section_title'))}</h2>
+        <div style="display:flex;flex-direction:column;gap:12px;">
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button type="button" id="sp-export-safepocket" class="sp-btn sp-btn-primary">
-              ⬇ ${this.escape(this.i18n.t('backup_export_encrypted'))}
+              ${renderIconSvg('download', 14)} ${this.escape(this.i18n.t('backup_export_encrypted'))}
             </button>
             <label class="sp-btn sp-btn-tonal" style="cursor:pointer;">
-              ⬆ ${this.escape(this.i18n.t('backup_restore_encrypted'))}
+              ${renderIconSvg('upload', 14)} ${this.escape(this.i18n.t('backup_restore_encrypted'))}
               <input type="file" id="sp-restore-safepocket" accept=".safepocket,application/json" style="display:none;" />
             </label>
             <button
@@ -4502,7 +4838,7 @@ export class SafePocketAppShell {
                 this.items.some((i) => isBuiltInSampleItem(i)) ? '' : 'disabled'
               }
             >
-              🗑 ${this.escape(
+              ${renderIconSvg('trash', 14)} ${this.escape(
                 this.i18n.t('action_delete_example_data', {
                   count: this.items.filter((i) => isBuiltInSampleItem(i)).length
                 })
@@ -4522,7 +4858,7 @@ export class SafePocketAppShell {
 
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <label class="sp-btn sp-btn-tonal" style="cursor:pointer;">
-              📥 ${this.escape(this.i18n.t('import_1password_btn'))}
+              ${renderIconSvg('upload', 14)} ${this.escape(this.i18n.t('import_1password_btn'))}
               <input
                 type="file"
                 id="sp-import-1password"
@@ -4531,7 +4867,7 @@ export class SafePocketAppShell {
               />
             </label>
             <label class="sp-btn sp-btn-tonal" style="cursor:pointer;">
-              📥 ${this.escape(this.i18n.t('import_csv_btn'))}
+              ${renderIconSvg('upload', 14)} ${this.escape(this.i18n.t('import_csv_btn'))}
               <input
                 type="file"
                 id="sp-import-csv"
@@ -4543,23 +4879,25 @@ export class SafePocketAppShell {
 
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button type="button" id="sp-export-1pux-btn" class="sp-btn">
-              📤 ${this.escape(this.i18n.t('export_1password_1pux_btn'))}
+              ${renderIconSvg('download', 14)} ${this.escape(this.i18n.t('export_1password_1pux_btn'))}
             </button>
             <button type="button" id="sp-export-1p-csv-btn" class="sp-btn">
-              📤 ${this.escape(this.i18n.t('export_1password_csv_btn'))}
+              ${renderIconSvg('download', 14)} ${this.escape(this.i18n.t('export_1password_csv_btn'))}
             </button>
             <button type="button" id="sp-export-sp-csv-btn" class="sp-btn">
-              📤 ${this.escape(this.i18n.t('export_csv_btn'))}
+              ${renderIconSvg('download', 14)} ${this.escape(this.i18n.t('export_csv_btn'))}
             </button>
             <button type="button" id="sp-export-plain-csv" class="sp-btn">
-              ${this.escape(this.i18n.t('export_json_btn'))}
+              ${renderIconSvg('fileText', 14)} ${this.escape(this.i18n.t('export_json_btn'))}
             </button>
           </div>
         </div>
       </section>
 
       <!-- 4. Zero-Knowledge Security, Expiry Window, Auto-Lock & Emergency Kit v2 -->
-      <section class="sp-settings-section">
+      <section class="sp-settings-section" style="${
+        this.settingsTab === 'security' ? '' : 'display:none;'
+      }">
         <h2>${this.escape(this.i18n.t('security_section_title'))}</h2>
         <div style="font-size:12.5px;font-family:var(--font-mono);color:var(--accent-primary);">
           ${this.escape(this.i18n.t('security_kdf_badge'))}
@@ -4680,25 +5018,27 @@ export class SafePocketAppShell {
           />
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button type="button" id="sp-enroll-passkey" class="sp-btn">
-              🔑 ${this.escape(this.i18n.t('security_biometrics_toggle'))}
+              ${renderIconSvg('key', 14)} ${this.escape(this.i18n.t('security_biometrics_toggle'))}
             </button>
             <button type="button" id="sp-settings-print-kit" class="sp-btn sp-btn-primary">
-              🖨 ${this.escape(this.i18n.t('emergency_kit_print_btn'))}
+              ${renderIconSvg('print', 14)} ${this.escape(this.i18n.t('emergency_kit_print_btn'))}
             </button>
             <button type="button" id="sp-settings-emergency-kit" class="sp-btn sp-btn-tonal">
-              ⬇ ${this.escape(this.i18n.t('onboarding_download_emergency_kit'))}
+              ${renderIconSvg('download', 14)} ${this.escape(this.i18n.t('onboarding_download_emergency_kit'))}
             </button>
           </div>
         </div>
       </section>
 
       <!-- 5. Privacy-Scrubbed Diagnostics & Error Log -->
-      <section class="sp-settings-section" id="sp-diagnostics-section">
+      <section class="sp-settings-section" id="sp-diagnostics-section" style="${
+        this.settingsTab === 'updates' ? '' : 'display:none;'
+      }">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <h2>${this.escape(this.i18n.t('err_diagnostics_title'))}</h2>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button type="button" id="sp-copy-diagnostics-btn" class="sp-btn sp-btn-tonal" style="min-height:28px;padding:4px 10px;font-size:11.5px;">
-              📋 ${this.escape(this.i18n.t('action_copy'))}
+              ${renderIconSvg('copy', 13)} ${this.escape(this.i18n.t('action_copy'))}
             </button>
             <button type="button" id="sp-clear-diagnostics-btn" class="sp-btn" style="min-height:28px;padding:4px 10px;font-size:11.5px;">
               ${this.escape(this.i18n.t('err_clear_log'))}
@@ -4816,16 +5156,16 @@ export class SafePocketAppShell {
   }
 
   private renderMobileBottomNav(): string {
-    const tabs: Array<{ id: NavSelection; icon: string; label: string }> = [
-      { id: 'ALL', icon: '▤', label: this.i18n.t('nav_all_items') },
-      { id: 'PAYMENT_CARD', icon: '💳', label: this.i18n.t('nav_payment_cards') },
-      { id: 'IDENTITY', icon: '🪪', label: this.i18n.t('nav_identities') },
+    const tabs: Array<{ id: NavSelection; icon: VectorIconName; label: string }> = [
+      { id: 'ALL', icon: 'allItems', label: this.i18n.t('nav_all_items') },
+      { id: 'PAYMENT_CARD', icon: 'paymentCard', label: this.i18n.t('nav_payment_cards') },
+      { id: 'IDENTITY', icon: 'identity', label: this.i18n.t('nav_identities') },
       {
         id: 'OFFICIAL_DOCUMENT',
-        icon: '🛂',
+        icon: 'officialDocument',
         label: this.i18n.t('nav_official_documents')
       },
-      { id: 'SETTINGS', icon: '⚙', label: this.i18n.t('nav_settings') }
+      { id: 'SETTINGS', icon: 'settings', label: this.i18n.t('nav_settings') }
     ];
     return `
       <nav class="sp-mobile-bottom-nav" aria-label="Compact Navigation">
@@ -4846,7 +5186,7 @@ export class SafePocketAppShell {
             data-nav="${t.id}"
             style="flex-direction:column;justify-content:center;padding:4px;font-size:10.5px;text-align:center;gap:2px;"
           >
-            <span>${t.icon}</span>
+            ${renderIconSvg(t.icon, 16)}
             <span>${this.escape(t.label)}</span>
           </button>
         `
@@ -4854,6 +5194,52 @@ export class SafePocketAppShell {
           .join('')}
       </nav>
     `;
+  }
+
+  private buildEditorPreviewItem(draft: ItemEditorDraft): VaultItem {
+    const previewResolved = resolveDualBrandFromFields(
+      draft.category,
+      draft.title,
+      draft.subtitle,
+      draft.standardFieldValues,
+      {
+        paletteId: draft.paletteId,
+        customColorHex: draft.customColorHex,
+        autoBrandColor: draft.autoBrandColor,
+        institutionLogoDataUri: draft.institutionLogoDataUri
+      }
+    );
+    const templates = this.defaultTemplateFields(draft.category);
+    const fields: VaultField[] = templates
+      .map((tf, idx) => ({
+        id: `pv-${idx}`,
+        labelKey: tf.key,
+        value: draft.standardFieldValues[tf.key] ?? '',
+        valueType: tf.valueType
+      }))
+      .filter((f) => f.value.trim().length > 0);
+
+    return {
+      schemaVersion: 1,
+      id: 'preview',
+      category: draft.category,
+      title: draft.title || this.i18n.resolveCategorySingularName(draft.category),
+      subtitle: draft.subtitle,
+      favorite: false,
+      tags: [],
+      cardTheme: {
+        paletteId: draft.paletteId,
+        customColorHex:
+          previewResolved.effectiveColorHex ?? draft.customColorHex,
+        autoBrandColor: draft.autoBrandColor,
+        barcodeFormat: draft.barcodeFormat,
+        institutionLogoDataUri: draft.institutionLogoDataUri
+      },
+      fields,
+      attachments: [],
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0
+    };
   }
 
   private renderItemEditorModal(): string {
@@ -4887,26 +5273,7 @@ export class SafePocketAppShell {
         institutionLogoDataUri: draft.institutionLogoDataUri
       }
     );
-    const previewDummyItem: VaultItem = {
-      schemaVersion: 1,
-      id: 'preview',
-      category: draft.category,
-      title: draft.title || 'SafePocket',
-      subtitle: draft.subtitle,
-      favorite: false,
-      tags: [],
-      cardTheme: {
-        paletteId: draft.paletteId,
-        customColorHex:
-          previewResolved.effectiveColorHex ?? draft.customColorHex,
-        autoBrandColor: draft.autoBrandColor,
-        institutionLogoDataUri: draft.institutionLogoDataUri
-      },
-      fields: [],
-      attachments: [],
-      createdAtEpochMs: 0,
-      updatedAtEpochMs: 0
-    };
+    const previewDummyItem = this.buildEditorPreviewItem(draft);
 
     const customSwatchStyle =
       draft.paletteId === 'custom'
@@ -4917,7 +5284,7 @@ export class SafePocketAppShell {
 
     return `
       <div class="sp-overlay" id="sp-modal-backdrop">
-        <form class="sp-modal-card" id="sp-item-editor-form" style="max-width:580px;">
+        <form class="sp-modal-card" id="sp-item-editor-form" style="max-width:600px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
             <h2 style="margin:0;font-size:18px;">${this.escape(
               draft.editingItemId
@@ -4930,6 +5297,19 @@ export class SafePocketAppShell {
               )}
             </span>
           </div>
+
+          ${
+            showPalette
+              ? `<div class="sp-editor-live-preview-wrap">
+                   <div style="font-size:11px;font-weight:650;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">
+                     ${this.escape(this.i18n.t('editor_live_preview_label'))}
+                   </div>
+                   <div id="sp-editor-live-card-slot">
+                     ${this.renderVisualCardHero(previewDummyItem, false, true)}
+                   </div>
+                 </div>`
+              : ''
+          }
 
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
             <label style="font-size:12px;color:var(--text-secondary);">
@@ -5142,8 +5522,25 @@ export class SafePocketAppShell {
               .join('')}
           </datalist>
 
+          <div style="font-size:11.5px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-top:2px;">
+            ${this.escape(this.i18n.t('editor_essential_fields_title'))}
+          </div>
+
           ${templateFields
-            .map((tf) => {
+            .map((tf, tfIndex) => {
+              const openDisclosure =
+                tfIndex === 6
+                  ? `<div class="sp-disclosure-card">
+                       <button type="button" class="sp-disclosure-toggle" id="sp-toggle-editor-more" aria-expanded="${this.editorMoreFieldsExpanded}">
+                         <span>${this.escape(this.i18n.t('editor_more_fields_toggle'))} (${templateFields.length - 6})</span>
+                         ${renderIconSvg(this.editorMoreFieldsExpanded ? 'chevronDown' : 'chevronRight', 15)}
+                       </button>
+                       <div class="sp-disclosure-body" style="${this.editorMoreFieldsExpanded ? '' : 'display:none;'}">`
+                  : '';
+              const closeDisclosure =
+                tfIndex >= 6 && tfIndex === templateFields.length - 1
+                  ? `</div></div>`
+                  : '';
               const val = draft.standardFieldValues[tf.key] ?? '';
               let validationHint = '';
               if (tf.key === 'field_card_number' && val.trim().length > 0) {
@@ -5183,7 +5580,7 @@ export class SafePocketAppShell {
                 const hasExactMatch =
                   !val.trim() ||
                   dropdownOptions.some((opt) => opt.value === val);
-                return `
+                return `${openDisclosure}
                   <label style="font-size:12px;color:var(--text-secondary);">
                     <span>${this.escape(
                       this.i18n.resolveFieldLabel(tf.key, false, draft.category)
@@ -5215,7 +5612,7 @@ export class SafePocketAppShell {
                         this.i18n.t('option_custom_value')
                       )}</option>
                     </select>
-                  </label>
+                  </label>${closeDisclosure}
                 `;
               }
 
@@ -5229,7 +5626,7 @@ export class SafePocketAppShell {
                 );
                 const activeDial =
                   this.phoneDialCodes[tf.key] ?? parsedPhone.dialCode;
-                return `
+                return `${openDisclosure}
                   <label style="font-size:12px;color:var(--text-secondary);">
                     <span>${this.escape(
                       this.i18n.resolveFieldLabel(tf.key, false, draft.category)
@@ -5257,7 +5654,7 @@ export class SafePocketAppShell {
                         placeholder="${this.escape(tf.placeholder)}"
                       />
                     </div>
-                  </label>
+                  </label>${closeDisclosure}
                 `;
               }
 
@@ -5265,23 +5662,23 @@ export class SafePocketAppShell {
                 const wv = this.websiteVerification;
                 let statusHtml = '';
                 if (wv.status === 'checking') {
-                  statusHtml = `<span class="sp-website-status is-checking">⏳ ${this.escape(
+                  statusHtml = `<span class="sp-website-status is-checking">${renderIconSvg('clock', 12)} ${this.escape(
                     this.i18n.t('website_status_checking')
                   )}</span>`;
                 } else if (wv.status === 'reachable') {
-                  statusHtml = `<span class="sp-website-status is-ok">✓ ${this.escape(
+                  statusHtml = `<span class="sp-website-status is-ok">${renderIconSvg('check', 12)} ${this.escape(
                     this.i18n.t('website_status_reachable', {
                       host: wv.hostname || wv.normalizedUrl
                     })
                   )}</span>`;
                 } else if (wv.status === 'unreachable') {
-                  statusHtml = `<span class="sp-website-status is-warn">⚠ ${this.escape(
+                  statusHtml = `<span class="sp-website-status is-warn">${renderIconSvg('alertTriangle', 12)} ${this.escape(
                     this.i18n.t('website_status_unreachable', {
                       host: wv.hostname || wv.normalizedUrl
                     })
                   )}</span>`;
                 }
-                return `
+                return `${openDisclosure}
                   <label style="font-size:12px;color:var(--text-secondary);">
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
                       <span>${this.escape(
@@ -5307,13 +5704,13 @@ export class SafePocketAppShell {
                         id="sp-verify-website-btn"
                         class="sp-btn sp-btn-tonal"
                         style="padding:6px 10px;white-space:nowrap;"
-                      >🌐 HTTPS</button>
+                      >${renderIconSvg('globe', 13)} HTTPS</button>
                     </div>
-                  </label>
+                  </label>${closeDisclosure}
                 `;
               }
 
-              return `
+              return `${openDisclosure}
                 <label style="font-size:12px;color:var(--text-secondary);">
                   <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
                     <span>${this.escape(
@@ -5345,7 +5742,7 @@ export class SafePocketAppShell {
                           tf.placeholder
                         )}" style="margin-top:4px;" />`
                   }
-                </label>
+                </label>${closeDisclosure}
               `;
             })
             .join('')}
@@ -5918,30 +6315,30 @@ export class SafePocketAppShell {
           ${
             primary
               ? `<button type="button" class="sp-context-item" id="sp-ctx-copy-primary">
-                   📋 ${this.escape(this.i18n.t('context_copy_primary'))}
+                   ${renderIconSvg('copy', 14)} <span>${this.escape(this.i18n.t('context_copy_primary'))}</span>
                  </button>`
               : ''
           }
           <button type="button" class="sp-context-item" id="sp-ctx-edit">
-            ✎ ${this.escape(this.i18n.t('context_edit'))}
+            ${renderIconSvg('edit', 14)} <span>${this.escape(this.i18n.t('context_edit'))}</span>
           </button>
           <button type="button" class="sp-context-item" id="sp-ctx-pin">
-            📌 ${this.escape(
+            ${renderIconSvg('pin', 14)} <span>${this.escape(
               this.i18n.t(target?.pinned ? 'context_unpin' : 'context_pin')
-            )}
+            )}</span>
           </button>
           <button type="button" class="sp-context-item" id="sp-ctx-fav">
-            ${target?.favorite ? '★' : '☆'} ${this.escape(
+            ${renderIconSvg(target?.favorite ? 'starFilled' : 'favorites', 14)} <span>${this.escape(
               this.i18n.t(
                 target?.favorite ? 'context_unfavorite' : 'context_favorite'
               )
-            )}
+            )}</span>
           </button>
           <button type="button" class="sp-context-item" id="sp-ctx-duplicate">
-            ⧉ ${this.escape(this.i18n.t('context_duplicate'))}
+            ${renderIconSvg('duplicate', 14)} <span>${this.escape(this.i18n.t('context_duplicate'))}</span>
           </button>
           <button type="button" class="sp-context-item is-danger" id="sp-ctx-delete">
-            ✕ ${this.escape(this.i18n.t('context_delete'))}
+            ${renderIconSvg('trash', 14)} <span>${this.escape(this.i18n.t('context_delete'))}</span>
           </button>
         </div>
       `;
@@ -5954,12 +6351,12 @@ export class SafePocketAppShell {
         style="left:${leftPx}px;top:${topPx}px;"
       >
         <button type="button" class="sp-context-item" id="sp-ctx-quick-copy">
-          📋 ${this.escape(
+          ${renderIconSvg('copy', 14)} <span>${this.escape(
             this.i18n.t('context_quick_copy', { field: this.contextMenu.label })
-          )}
+          )}</span>
         </button>
         <button type="button" class="sp-context-item" id="sp-ctx-duplicate">
-          ⧉ ${this.escape(this.i18n.t('context_duplicate'))}
+          ${renderIconSvg('duplicate', 14)} <span>${this.escape(this.i18n.t('context_duplicate'))}</span>
         </button>
       </div>
     `;
@@ -5967,20 +6364,39 @@ export class SafePocketAppShell {
 
   private renderLockScreen(): string {
     const isDemo = localStorage.getItem('safepocket.demo_mode') === 'true';
+    const shakeClass = this.unlockError ? 'is-error-shake' : '';
     return `
       <div class="sp-overlay">
-        <form class="sp-modal-card" id="sp-unlock-form">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-              <img src="/icons/icon.svg" alt="" class="sp-logo-mark-img" aria-hidden="true" />
-              <div>
-                <h1 style="margin:0;font-size:18px;">${this.escape(
-                  this.i18n.t('app_name')
-                )}</h1>
-                <div style="font-size:12px;color:var(--text-secondary);">${this.escape(
-                  this.i18n.t('app_tagline')
-                )}</div>
-              </div>
+        <form class="sp-modal-card ${shakeClass}" id="sp-unlock-form" style="max-width:440px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div class="sp-lang-quick" role="group" aria-label="${this.escape(
+              this.i18n.t('settings_language_title')
+            )}">
+              <button
+                type="button"
+                class="sp-lang-pill ${this.i18n.isUsingSystemLocale ? 'is-active' : ''}"
+                data-lock-locale="__system__"
+                title="${this.escape(
+                  this.i18n.t('settings_language_system', {
+                    locale: this.i18n.detectedSystemLocale.toUpperCase()
+                  })
+                )}"
+              >${renderIconSvg('globe', 13)}</button>
+              ${SUPPORTED_LOCALES.map(
+                (loc) => `
+                <button
+                  type="button"
+                  class="sp-lang-pill ${
+                    !this.i18n.isUsingSystemLocale &&
+                    this.i18n.activeLocale === loc.code
+                      ? 'is-active'
+                      : ''
+                  }"
+                  data-lock-locale="${loc.code}"
+                  title="${this.escape(loc.nativeName)}"
+                >${loc.flag} ${loc.code.toUpperCase()}</button>
+              `
+              ).join('')}
             </div>
             <button
               type="button"
@@ -5990,48 +6406,30 @@ export class SafePocketAppShell {
             >${this.renderThemeToggleIconSvg()}</button>
           </div>
 
-          <div class="sp-lang-quick" role="group" aria-label="${this.escape(
-            this.i18n.t('settings_language_title')
-          )}" style="padding-top:2px;">
-            <button
-              type="button"
-              class="sp-lang-pill ${this.i18n.isUsingSystemLocale ? 'is-active' : ''}"
-              data-lock-locale="__system__"
-              title="${this.escape(
-                this.i18n.t('settings_language_system', {
-                  locale: this.i18n.detectedSystemLocale.toUpperCase()
-                })
-              )}"
-            >🌐</button>
-            ${SUPPORTED_LOCALES.map(
-              (loc) => `
-              <button
-                type="button"
-                class="sp-lang-pill ${
-                  !this.i18n.isUsingSystemLocale &&
-                  this.i18n.activeLocale === loc.code
-                    ? 'is-active'
-                    : ''
-                }"
-                data-lock-locale="${loc.code}"
-                title="${this.escape(loc.nativeName)}"
-              >${loc.flag} ${loc.code.toUpperCase()}</button>
-            `
-            ).join('')}
+          <div class="sp-vault-shield-hero">
+            <div class="sp-vault-shield-badge" aria-hidden="true">
+              ${renderIconSvg('shield', 28)}
+            </div>
+            <h1 style="margin:0;font-size:20px;font-weight:700;">${this.escape(
+              this.i18n.t('app_name')
+            )}</h1>
+            <div style="font-size:12.5px;color:var(--text-secondary);">${this.escape(
+              this.i18n.t('app_tagline')
+            )}</div>
           </div>
 
           ${
             this.wasAutoLocked
-              ? `<div class="sp-badge sp-badge-warn" style="padding:7px 11px;border-radius:var(--radius-sm);">
-                   ⏱ ${this.escape(this.i18n.t('autolock_locked_reason'))}
+              ? `<div class="sp-badge sp-badge-warn" style="padding:7px 11px;border-radius:var(--radius-sm);justify-content:center;">
+                   ${renderIconSvg('clock', 13)} ${this.escape(this.i18n.t('autolock_locked_reason'))}
                  </div>`
               : ''
           }
 
           ${
             this.unlockError
-              ? `<div class="sp-badge sp-badge-expired" style="padding:7px 11px;border-radius:var(--radius-sm);">
-                   ⚠ ${this.escape(this.unlockError)}
+              ? `<div class="sp-badge sp-badge-expired" style="padding:7px 11px;border-radius:var(--radius-sm);justify-content:center;">
+                   ${renderIconSvg('alertTriangle', 13)} ${this.escape(this.unlockError)}
                  </div>`
               : ''
           }
@@ -6056,7 +6454,7 @@ export class SafePocketAppShell {
                 id="sp-lock-scan-qr-btn"
                 class="sp-btn"
                 style="min-height:24px;padding:2px 8px;font-size:11px;"
-              >📷 ${this.escape(
+              >${renderIconSvg('qrCode', 12)} ${this.escape(
                 this.i18n.t('camera_scan_recovery_qr_btn')
               )}</button>
             </div>
@@ -6077,7 +6475,7 @@ export class SafePocketAppShell {
             ${
               WebAuthnBiometricUnlock.isSupported()
                 ? `<button type="button" id="sp-biometric-unlock-btn" class="sp-btn sp-btn-tonal">
-                     ${this.escape(this.i18n.t('action_unlock_biometric'))}
+                     ${renderIconSvg('key', 14)} ${this.escape(this.i18n.t('action_unlock_biometric'))}
                    </button>`
                 : ''
             }
@@ -6332,6 +6730,7 @@ export class SafePocketAppShell {
       .querySelector('#sp-error-open-diagnostics')
       ?.addEventListener('click', () => {
         this.activeErrorBanner = null;
+        this.settingsTab = 'updates';
         this.settingsModalOpen = true;
         this.render();
         this.root
@@ -6348,8 +6747,51 @@ export class SafePocketAppShell {
         ) {
           void this.runAutomaticCloudReconcile(true);
         } else {
+          this.settingsTab = 'sync';
           this.settingsModalOpen = true;
           this.render();
+        }
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-settings-tab]')
+      .forEach((tabBtn) => {
+        tabBtn.addEventListener('click', () => {
+          const nextTab = tabBtn.dataset.settingsTab as
+            | 'appearance'
+            | 'security'
+            | 'sync'
+            | 'data'
+            | 'updates';
+          if (nextTab) {
+            this.settingsTab = nextTab;
+            this.render();
+          }
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-flip-card]')
+      .forEach((flipEl) => {
+        const toggleFlip = (e: Event) => {
+          e.stopPropagation();
+          const key = flipEl.dataset.flipCard ?? '';
+          if (!key) return;
+          if (this.flippedCardIds.has(key)) {
+            this.flippedCardIds.delete(key);
+          } else {
+            this.flippedCardIds.add(key);
+          }
+          this.render();
+        };
+        flipEl.addEventListener('click', toggleFlip);
+        if (flipEl.tagName !== 'BUTTON') {
+          flipEl.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              toggleFlip(e);
+            }
+          });
         }
       });
 
@@ -6986,6 +7428,35 @@ export class SafePocketAppShell {
       ?.addEventListener('click', () => {
         this.editorDraft = null;
         this.render();
+      });
+
+    this.root
+      .querySelector('#sp-toggle-editor-more')
+      ?.addEventListener('click', () => {
+        if (!this.editorDraft) return;
+        this.syncDraftFromDom();
+        this.editorMoreFieldsExpanded = !this.editorMoreFieldsExpanded;
+        this.render();
+      });
+
+    const refreshLiveEditorCardPreview = () => {
+      if (!this.editorDraft) return;
+      this.syncDraftFromDom();
+      const slot = this.root.querySelector<HTMLElement>(
+        '#sp-editor-live-card-slot'
+      );
+      if (slot) {
+        const previewItem = this.buildEditorPreviewItem(this.editorDraft);
+        slot.innerHTML = this.renderVisualCardHero(previewItem, false, true);
+      }
+    };
+
+    this.root
+      .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+        '#sp-edit-title, #sp-edit-subtitle, [data-std-field]'
+      )
+      .forEach((inp) => {
+        inp.addEventListener('input', refreshLiveEditorCardPreview);
       });
 
     this.root

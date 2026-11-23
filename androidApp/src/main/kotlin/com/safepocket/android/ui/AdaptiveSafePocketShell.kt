@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.PersistableBundle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -1713,12 +1714,16 @@ private fun VaultDetailInspectorPane(
             }
         }
 
-        // Dual-Logo & Institution Brand Color Visual Card Hero
+        // Dual-Logo & Institution Brand Color Visual Card Hero (3D Front/Back Flippable)
         if (selectedItem.category != VaultCategory.SECURE_NOTE && selectedItem.cardTheme?.showVisualCard != false) {
             DualBrandVisualCardHero(
                 item = selectedItem,
                 categoryLabelText = categorySingularLabel(i18n, selectedItem.category),
-                displaySubtitleText = i18n.resolveDisplaySubtitle(selectedItem.subtitle, selectedItem.category)
+                displaySubtitleText = i18n.resolveDisplaySubtitle(selectedItem.subtitle, selectedItem.category),
+                flipLabelFront = i18n.t("card_flip_to_front"),
+                flipLabelBack = i18n.t("card_flip_to_back"),
+                reverseBadgeLabel = i18n.t("card_back_badge"),
+                reverseEmptyHint = i18n.t("card_back_empty_hint")
             )
         } else {
             Text(selectedItem.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
@@ -1884,6 +1889,13 @@ private fun VaultItemEditorDialog(
     }
 
     val templateSpecs = remember(category) { CategoryFieldTemplates.forCategory(category) }
+    val primarySpecs = remember(templateSpecs) { templateSpecs.take(6) }
+    val secondarySpecs = remember(templateSpecs) { templateSpecs.drop(6) }
+    var moreFieldsExpanded by remember(existingItem?.id, category) {
+        mutableStateOf(
+            secondarySpecs.any { spec -> !standardFieldValues[spec.key].isNullOrBlank() }
+        )
+    }
 
     val buildPreviewPayload: () -> VaultItemPayload = {
         val now = System.currentTimeMillis()
@@ -2006,10 +2018,17 @@ private fun VaultItemEditorDialog(
                         ) {
                             // Live Dual-Logo Card Preview
                             if (category != VaultCategory.SECURE_NOTE) {
+                                Text(
+                                    text = i18n.t("editor_live_preview_label").uppercase(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                                 DualBrandVisualCardHero(
                                     item = livePreviewItem,
                                     categoryLabelText = categorySingularLabel(i18n, category),
-                                    displaySubtitleText = i18n.resolveDisplaySubtitle(livePreviewItem.subtitle, category)
+                                    displaySubtitleText = i18n.resolveDisplaySubtitle(livePreviewItem.subtitle, category),
+                                    isCompactPreview = true
                                 )
                                 val detectedInst = liveBrand.institution
                                 if (detectedInst != null) {
@@ -2138,9 +2157,32 @@ private fun VaultItemEditorDialog(
                                 }
                             }
 
-                            // Intelligent Category-Specific Structured Fields (Dropdowns, https:// Verify, Phone Prefix, IBAN/PAN Autofill)
+                            // Intelligent Category-Specific Structured Fields (Essential + Progressive Disclosure)
                             HorizontalDivider()
-                            templateSpecs.forEach { spec ->
+                            Text(
+                                text = i18n.t("editor_essential_fields_title"),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            val applyCrossFieldAutofill: (Map<String, String>) -> List<String> = { suggestions ->
+                                val appliedNames = mutableListOf<String>()
+                                for ((targetKey, suggestedValue) in suggestions) {
+                                    if (standardFieldValues[targetKey].isNullOrBlank() && suggestedValue.isNotBlank()) {
+                                        standardFieldValues[targetKey] = suggestedValue
+                                        appliedNames += i18n.resolveFieldLabel(targetKey, false, category)
+                                    }
+                                }
+                                if (title.isBlank()) {
+                                    val bankOrOrg = standardFieldValues[CanonicalFieldKeys.ISSUING_BANK]
+                                        ?: standardFieldValues[CanonicalFieldKeys.INSURER_NAME]
+                                        ?: standardFieldValues[CanonicalFieldKeys.ORGANIZATION]
+                                    if (!bankOrOrg.isNullOrBlank()) {
+                                        title = bankOrOrg
+                                    }
+                                }
+                                appliedNames
+                            }
+                            primarySpecs.forEach { spec ->
                                 val curVal = standardFieldValues[spec.key].orEmpty()
                                 SmartStructuredFieldInput(
                                     spec = spec,
@@ -2149,26 +2191,55 @@ private fun VaultItemEditorDialog(
                                     activeLocaleCode = activeLocale.code,
                                     value = curVal,
                                     onValueChange = { standardFieldValues[spec.key] = it },
-                                    onCrossFieldAutofill = { suggestions ->
-                                        val appliedNames = mutableListOf<String>()
-                                        for ((targetKey, suggestedValue) in suggestions) {
-                                            if (standardFieldValues[targetKey].isNullOrBlank() && suggestedValue.isNotBlank()) {
-                                                standardFieldValues[targetKey] = suggestedValue
-                                                appliedNames += i18n.resolveFieldLabel(targetKey, false, category)
-                                            }
-                                        }
-                                        if (title.isBlank()) {
-                                            val bankOrOrg = standardFieldValues[CanonicalFieldKeys.ISSUING_BANK]
-                                                ?: standardFieldValues[CanonicalFieldKeys.INSURER_NAME]
-                                                ?: standardFieldValues[CanonicalFieldKeys.ORGANIZATION]
-                                            if (!bankOrOrg.isNullOrBlank()) {
-                                                title = bankOrOrg
-                                            }
-                                        }
-                                        appliedNames
-                                    },
+                                    onCrossFieldAutofill = applyCrossFieldAutofill,
                                     onVerifyWebsite = onVerifyWebsiteReachability
                                 )
+                            }
+                            if (secondarySpecs.isNotEmpty()) {
+                                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.fillMaxWidth()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { moreFieldsExpanded = !moreFieldsExpanded }
+                                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "${i18n.t("editor_more_fields_toggle")} (${secondarySpecs.size})",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                text = if (moreFieldsExpanded) "▾" else "▸",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        if (moreFieldsExpanded) {
+                                            HorizontalDivider()
+                                            Column(
+                                                modifier = Modifier.padding(14.dp),
+                                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                secondarySpecs.forEach { spec ->
+                                                    val curVal = standardFieldValues[spec.key].orEmpty()
+                                                    SmartStructuredFieldInput(
+                                                        spec = spec,
+                                                        category = category,
+                                                        i18n = i18n,
+                                                        activeLocaleCode = activeLocale.code,
+                                                        value = curVal,
+                                                        onValueChange = { standardFieldValues[spec.key] = it },
+                                                        onCrossFieldAutofill = applyCrossFieldAutofill,
+                                                        onVerifyWebsite = onVerifyWebsiteReachability
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             // Tags
@@ -2338,6 +2409,7 @@ private fun SafePocketSettingsDialog(
 
     val currentStorageMode = cloudSyncStatus?.storageMode ?: VaultStorageMode.LOCAL_ONLY
     var desiredModeTab by remember(currentStorageMode) { mutableStateOf(currentStorageMode) }
+    var activeSettingsTab by remember { mutableStateOf("appearance") }
 
     var statusFeedback by remember { mutableStateOf<String?>(null) }
     var busyOperation by remember { mutableStateOf(false) }
@@ -2487,6 +2559,30 @@ private fun SafePocketSettingsDialog(
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
 
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 24.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf(
+                                "appearance" to i18n.t("settings_tab_appearance"),
+                                "security" to i18n.t("settings_tab_security"),
+                                "sync" to i18n.t("settings_tab_sync"),
+                                "data" to i18n.t("settings_tab_data"),
+                                "updates" to i18n.t("settings_tab_updates")
+                            ).forEach { (tabId, tabTitle) ->
+                                SmoothFilterPill(
+                                    selected = activeSettingsTab == tabId,
+                                    onClick = { activeSettingsTab = tabId },
+                                    label = tabTitle
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+
                         Column(
                             modifier = Modifier
                                 .weight(1f, fill = false)
@@ -2513,7 +2609,7 @@ private fun SafePocketSettingsDialog(
                             // -----------------------------------------------------------------
                             // 1. DATABASE & SYNC (`Lokale DB` vs `Cloud-Sync` 2-Column Cards)
                             // -----------------------------------------------------------------
-                            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                            if (activeSettingsTab == "sync") OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
@@ -2837,7 +2933,7 @@ private fun SafePocketSettingsDialog(
                     // -----------------------------------------------------------------
                     // 2. ZERO-KNOWLEDGE VAULT CREDENTIALS (MASTER PASSWORD & SECRET KEY)
                     // -----------------------------------------------------------------
-                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    if (activeSettingsTab == "security") OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
                                 text = "${i18n.t("security_master_password")} & ${i18n.t("security_secret_key")}",
@@ -2941,7 +3037,7 @@ private fun SafePocketSettingsDialog(
                     // -----------------------------------------------------------------
                     // 3. GOOGLE PLAY PROTECT COMPLIANT AUTOMATED UPDATES
                     // -----------------------------------------------------------------
-                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    if (activeSettingsTab == "updates") OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
                                 text = i18n.t("update_section_title"),
@@ -3022,7 +3118,7 @@ private fun SafePocketSettingsDialog(
                     // -----------------------------------------------------------------
                     // 4. ENCRYPTED BACKUP + CSV & 1PASSWORD IMPORT / EXPORT
                     // -----------------------------------------------------------------
-                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    if (activeSettingsTab == "data") OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
                                 text = i18n.t("portability_section_title"),
@@ -3217,7 +3313,7 @@ private fun SafePocketSettingsDialog(
                     // -----------------------------------------------------------------
                     // 5. SECURITY, EXPIRY WINDOW, AUTO-LOCK & BRAND LOGO DOWNLOAD
                     // -----------------------------------------------------------------
-                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    if (activeSettingsTab == "security") OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
                                 text = i18n.t("security_section_title"),
@@ -3339,7 +3435,7 @@ private fun SafePocketSettingsDialog(
                     // -----------------------------------------------------------------
                     // 6. APPEARANCE, ACCENT COLOR & LANGUAGE (SEAM-FREE HOVER PILLS)
                     // -----------------------------------------------------------------
-                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    if (activeSettingsTab == "appearance") OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
                                 text = i18n.t("settings_theme_title"),
@@ -3433,7 +3529,7 @@ private fun SafePocketSettingsDialog(
                     // -----------------------------------------------------------------
                     // 7. PRIVACY-SCRUBBED DIAGNOSTICS & ERROR LOG
                     // -----------------------------------------------------------------
-                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    if (activeSettingsTab == "updates") OutlinedCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -3682,9 +3778,16 @@ private fun LockedVaultView(
     val coroutineScope = rememberCoroutineScope()
     var password by remember { mutableStateOf("") }
     var unlockError by remember { mutableStateOf(false) }
+    val shakeOffsetPx = remember { Animatable(0f) }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        ElevatedCard(modifier = Modifier.widthIn(max = 420.dp).padding(24.dp)) {
+        ElevatedCard(
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier
+                .widthIn(max = 420.dp)
+                .padding(24.dp)
+                .offset { IntOffset(shakeOffsetPx.value.roundToInt(), 0) }
+        ) {
             Column(
                 modifier = Modifier.padding(28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -3740,8 +3843,15 @@ private fun LockedVaultView(
                     onClick = {
                         coroutineScope.launch {
                             val ok = onUnlockWithPassword(password)
-                            if (!ok) unlockError = true
-                            else password = ""
+                            if (!ok) {
+                                unlockError = true
+                                shakeOffsetPx.animateTo(-18f, tween(55))
+                                shakeOffsetPx.animateTo(16f, tween(55))
+                                shakeOffsetPx.animateTo(-10f, tween(55))
+                                shakeOffsetPx.animateTo(0f, tween(70))
+                            } else {
+                                password = ""
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth()

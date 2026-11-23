@@ -5,6 +5,7 @@ pwaApp/dist/
 .gradle/
 build/
 **/build/
+**/.build/
 .kotlin/
 local.properties
 

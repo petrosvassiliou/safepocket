@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       version_name:
-        description: 'Semantic release version (current: 0.4.0)'
+        description: 'Semantic release version (current: 0.5.0-beta.1)'
         required: false
-        default: '0.4.0'
+        default: '0.5.0-beta.1'
       version_code:
-        description: 'Monotonic integer build number (current: 15)'
+        description: 'Monotonic integer build number (current: 16)'
         required: false
-        default: '15'
+        default: '16'
 
 permissions:
   contents: write
@@ -25,6 +25,7 @@ jobs:
     outputs:
       version_name: ${{ steps.meta.outputs.version_name }}
       version_code: ${{ steps.meta.outputs.version_code }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,43 +35,52 @@ jobs:
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             RAW_TAG="${GITHUB_REF#refs/tags/v}"
-            echo "version_name=${RAW_TAG}" >> "${GITHUB_OUTPUT}"
+            VER_NAME="${RAW_TAG}"
             if [[ "${RAW_TAG}" == "0.1" ]]; then
-              echo "version_code=1" >> "${GITHUB_OUTPUT}"
+              VER_CODE="1"
             elif [[ "${RAW_TAG}" == "0.1.1" ]]; then
-              echo "version_code=2" >> "${GITHUB_OUTPUT}"
+              VER_CODE="2"
             elif [[ "${RAW_TAG}" == "0.1.2" ]]; then
-              echo "version_code=3" >> "${GITHUB_OUTPUT}"
+              VER_CODE="3"
             elif [[ "${RAW_TAG}" == "0.2" || "${RAW_TAG}" == "0.2.0" ]]; then
-              echo "version_code=4" >> "${GITHUB_OUTPUT}"
+              VER_CODE="4"
             elif [[ "${RAW_TAG}" == "0.3" || "${RAW_TAG}" == "0.3.0" ]]; then
-              echo "version_code=5" >> "${GITHUB_OUTPUT}"
+              VER_CODE="5"
             elif [[ "${RAW_TAG}" == "0.3.1" ]]; then
-              echo "version_code=6" >> "${GITHUB_OUTPUT}"
+              VER_CODE="6"
             elif [[ "${RAW_TAG}" == "0.3.2" ]]; then
-              echo "version_code=7" >> "${GITHUB_OUTPUT}"
+              VER_CODE="7"
             elif [[ "${RAW_TAG}" == "0.3.3" ]]; then
-              echo "version_code=8" >> "${GITHUB_OUTPUT}"
+              VER_CODE="8"
             elif [[ "${RAW_TAG}" == "0.3.4" ]]; then
-              echo "version_code=9" >> "${GITHUB_OUTPUT}"
+              VER_CODE="9"
             elif [[ "${RAW_TAG}" == "0.3.5" ]]; then
-              echo "version_code=10" >> "${GITHUB_OUTPUT}"
+              VER_CODE="10"
             elif [[ "${RAW_TAG}" == "0.3.6" ]]; then
-              echo "version_code=11" >> "${GITHUB_OUTPUT}"
+              VER_CODE="11"
             elif [[ "${RAW_TAG}" == "0.3.7" ]]; then
-              echo "version_code=12" >> "${GITHUB_OUTPUT}"
+              VER_CODE="12"
             elif [[ "${RAW_TAG}" == "0.3.8" ]]; then
-              echo "version_code=13" >> "${GITHUB_OUTPUT}"
+              VER_CODE="13"
             elif [[ "${RAW_TAG}" == "0.3.9" ]]; then
-              echo "version_code=14" >> "${GITHUB_OUTPUT}"
+              VER_CODE="14"
             elif [[ "${RAW_TAG}" == "0.4" || "${RAW_TAG}" == "0.4.0" ]]; then
-              echo "version_code=15" >> "${GITHUB_OUTPUT}"
+              VER_CODE="15"
+            elif [[ "${RAW_TAG}" == "0.5.0-beta.1" ]]; then
+              VER_CODE="16"
             else
-              echo "version_code=${GITHUB_RUN_NUMBER:-15}" >> "${GITHUB_OUTPUT}"
+              VER_CODE="${GITHUB_RUN_NUMBER:-16}"
             fi
           else
-            echo "version_name=${{ inputs.version_name || '0.4.0' }}" >> "${GITHUB_OUTPUT}"
-            echo "version_code=${{ inputs.version_code || '15' }}" >> "${GITHUB_OUTPUT}"
+            VER_NAME="${{ inputs.version_name || '0.5.0-beta.1' }}"
+            VER_CODE="${{ inputs.version_code || '16' }}"
+          fi
+          echo "version_name=${VER_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "version_code=${VER_CODE}" >> "${GITHUB_OUTPUT}"
+          if [[ "${VER_NAME}" == *-* ]]; then
+            echo "is_prerelease=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "is_prerelease=false" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Setup Node.js 24 LTS
@@ -197,6 +207,7 @@ jobs:
           SAFEPOCKET_ED25519_SEED_HEX: ${{ secrets.SAFEPOCKET_ED25519_SEED_HEX }}
           SAFEPOCKET_RELEASE_VERSION: ${{ needs.build-pwa.outputs.version_name }}
           SAFEPOCKET_VERSION_CODE: ${{ needs.build-pwa.outputs.version_code }}
+          SAFEPOCKET_RELEASE_CHANNEL: ${{ needs.build-pwa.outputs.is_prerelease == 'true' && 'beta' || 'stable' }}
         run: |
           APK_FILE="$(ls dist-artifacts/SafePocket-v*-universal-arm64-x86_64.apk | head -n 1)"
           DMG_FILE="$(ls dist-artifacts/SafePocket-*-macOS-universal.dmg | head -n 1)"
@@ -210,7 +221,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: SafePocket v${{ needs.build-pwa.outputs.version_name }} (Build ${{ needs.build-pwa.outputs.version_code }})
-          make_latest: true
+          prerelease: ${{ needs.build-pwa.outputs.is_prerelease == 'true' }}
+          make_latest: ${{ needs.build-pwa.outputs.is_prerelease == 'true' && 'false' || 'true' }}
           generate_release_notes: true
           body: |
             ## SafePocket v${{ needs.build-pwa.outputs.version_name }} (Build ${{ needs.build-pwa.outputs.version_code }}) — Zero-Knowledge Personal Vault

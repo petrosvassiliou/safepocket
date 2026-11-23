@@ -2,30 +2,40 @@ package com.safepocket.android.ui
 
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -71,7 +81,12 @@ fun DualBrandVisualCardHero(
     item: VaultItemPayload,
     categoryLabelText: String,
     modifier: Modifier = Modifier,
-    displaySubtitleText: String? = null
+    displaySubtitleText: String? = null,
+    isCompactPreview: Boolean = false,
+    flipLabelFront: String = "Front",
+    flipLabelBack: String = "Reverse",
+    reverseBadgeLabel: String = "REVERSE",
+    reverseEmptyHint: String = "Secondary security & support details appear here"
 ) {
     val resolved = remember(item) { InstitutionBrandRegistry.resolveForItem(item) }
     val (gradStart, gradEnd) = remember(item.cardTheme, resolved) {
@@ -103,155 +118,339 @@ fun DualBrandVisualCardHero(
     val expiry = remember(item) { item.fieldValue(CanonicalFieldKeys.EXPIRY_DATE) }
     val resolvedSubtitle = (displaySubtitleText ?: item.subtitle).trim()
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(gradStart, gradEnd),
-                    start = Offset(0f, 0f),
-                    end = Offset(900f, 520f)
-                )
-            )
-            .border(1.dp, badgeGlassBorder, RoundedCornerShape(20.dp))
-            .padding(20.dp)
+    var isFlipped by remember(item.id) { mutableStateOf(false) }
+    val rotationYDeg by animateFloatAsState(
+        targetValue = if (!isCompactPreview && isFlipped) 180f else 0f,
+        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+        label = "card3dFlip"
+    )
+    val showingBack = rotationYDeg > 90f
+
+    val reverseCells = remember(item) {
+        buildList {
+            val pin = item.fieldValue(CanonicalFieldKeys.PIN)
+            if (pin.isNotBlank()) add("PIN" to "••••")
+            val bic = item.fieldValue(CanonicalFieldKeys.BIC)
+            if (bic.isNotBlank()) add("BIC" to bic)
+            val routing = item.fieldValue(CanonicalFieldKeys.ROUTING_CODE)
+            if (routing.isNotBlank()) add("BLZ / Routing" to routing)
+            val phone = item.fieldValue(CanonicalFieldKeys.EMERGENCY_PHONE)
+                .ifBlank { item.fieldValue(CanonicalFieldKeys.SUPPORT_PHONE) }
+            if (phone.isNotBlank()) add("Hotline" to phone)
+            val domain = item.fieldValue(CanonicalFieldKeys.INSTITUTION_DOMAIN)
+            if (domain.isNotBlank() && size < 4) {
+                add("Web" to domain.removePrefix("https://").removePrefix("www."))
+            }
+        }.take(4)
+    }
+
+    Column(
+        modifier = modifier.widthIn(max = 452.dp).fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            // Row 1: Top-Left Institution Logo + Name | Top-Right Category Pill
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    InstitutionLogoBadge(
-                        institution = resolved.institution,
-                        fallbackTitle = institutionTitle,
-                        logoDataUri = item.cardTheme?.institutionLogoDataUri,
-                        size = 38.dp
-                    )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = institutionTitle,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = fgPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = categoryLabelText,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = fgMuted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (isCompactPreview) Modifier else Modifier.aspectRatio(1.586f))
+                .graphicsLayer {
+                    rotationY = rotationYDeg
+                    cameraDistance = 14f * density
                 }
-
-                Spacer(Modifier.width(8.dp))
-
-                NetworkOrTypeLogoBadge(
-                    networkCode = resolved.networkOrTypeCode,
-                    displayLabel = item.cardTheme?.networkBrand?.takeIf { it.isNotBlank() }
-                        ?: resolved.networkDisplayLabel,
-                    isLightCard = isLightCard
-                )
-            }
-
-            // Row 2: Optional EMV Smart Chip + Contactless Icon (Cards, Insurance eGK, National ID)
-            if (item.category in setOf(
-                    VaultCategory.PAYMENT_CARD,
-                    VaultCategory.INSURANCE_CARD,
-                    VaultCategory.OFFICIAL_DOCUMENT
-                )
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    EmvSmartChipGraphic()
-                    if (item.category == VaultCategory.PAYMENT_CARD) {
-                        ContactlessWavesIcon(tint = fgMuted)
-                    }
-                }
-            }
-
-            // Row 3: Primary Card Title + Masked Identifier
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = item.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = fgPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (maskedPrimaryNumber.isNotBlank()) {
-                    Text(
-                        text = maskedPrimaryNumber,
-                        style = MaterialTheme.typography.bodyLarge.copy(letterSpacing = 1.4.sp),
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Medium,
-                        color = fgPrimary.copy(alpha = 0.94f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                .clip(RoundedCornerShape(20.dp))
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(gradStart, gradEnd),
+                        start = Offset(0f, 0f),
+                        end = Offset(900f, 520f)
                     )
-                } else if (resolvedSubtitle.isNotBlank()) {
+                )
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(Color.White.copy(alpha = 0.14f), Color.Transparent),
+                        start = Offset(0f, 0f),
+                        end = Offset(420f, 260f)
+                    )
+                )
+                .border(1.dp, badgeGlassBorder, RoundedCornerShape(20.dp))
+                .then(
+                    if (isCompactPreview) Modifier
+                    else Modifier.clickable { isFlipped = !isFlipped }
+                )
+                .padding(if (isCompactPreview) 16.dp else 20.dp)
+        ) {
+            if (showingBack) {
+                val cvv = item.fieldValue(CanonicalFieldKeys.CVV)
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { rotationY = 180f },
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (item.category == VaultCategory.PAYMENT_CARD) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(32.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFF0F172A).copy(alpha = 0.86f))
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color.White.copy(alpha = 0.92f))
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "SIGNATURE • CVV",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = Color(0xFF475569)
+                                )
+                                Text(
+                                    text = cvv.ifBlank { "•••" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F172A)
+                                )
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = institutionTitle,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = fgPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(badgeGlassBg)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = reverseBadgeLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = fgPrimary
+                                    )
+                                }
+                            }
+                        }
+
+                        if (reverseCells.isEmpty()) {
+                            Text(
+                                text = reverseEmptyHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = fgMuted
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                reverseCells.chunked(2).forEach { rowCells ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        rowCells.forEach { (lbl, value) ->
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(badgeGlassBg)
+                                                    .padding(horizontal = 9.dp, vertical = 5.dp)
+                                            ) {
+                                                Text(
+                                                    text = lbl.uppercase(),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = fgMuted,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = value,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = fgPrimary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Text(
-                        text = resolvedSubtitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontFamily = FontFamily.Monospace,
+                        text = item.title,
+                        style = MaterialTheme.typography.labelSmall,
                         color = fgMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-            }
-
-            // Row 4: Bottom Footer — Holder Name & Valid Thru
-            if (holderName.isNotBlank() || expiry.isNotBlank()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Bottom
+            } else {
+                Column(
+                    modifier = if (isCompactPreview) Modifier else Modifier.fillMaxSize(),
+                    verticalArrangement = if (isCompactPreview) Arrangement.spacedBy(10.dp) else Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        if (holderName.isNotBlank()) {
+                    // Row 1: Top-Left Institution Logo + Name | Top-Right Network Badge
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            InstitutionLogoBadge(
+                                institution = resolved.institution,
+                                fallbackTitle = institutionTitle,
+                                logoDataUri = item.cardTheme?.institutionLogoDataUri,
+                                size = if (isCompactPreview) 32.dp else 38.dp
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = institutionTitle,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = fgPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = categoryLabelText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = fgMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.width(8.dp))
+
+                        NetworkOrTypeLogoBadge(
+                            networkCode = resolved.networkOrTypeCode,
+                            displayLabel = item.cardTheme?.networkBrand?.takeIf { it.isNotBlank() }
+                                ?: resolved.networkDisplayLabel,
+                            isLightCard = isLightCard
+                        )
+                    }
+
+                    // Row 2: Optional EMV Smart Chip + Contactless Icon (Cards, Insurance eGK, National ID)
+                    if (!isCompactPreview && item.category in setOf(
+                            VaultCategory.PAYMENT_CARD,
+                            VaultCategory.INSURANCE_CARD,
+                            VaultCategory.OFFICIAL_DOCUMENT
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            EmvSmartChipGraphic()
+                            if (item.category == VaultCategory.PAYMENT_CARD) {
+                                ContactlessWavesIcon(tint = fgMuted)
+                            }
+                        }
+                    }
+
+                    // Row 3: Primary Card Title + Masked Identifier
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = item.title,
+                            style = if (isCompactPreview) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = fgPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (maskedPrimaryNumber.isNotBlank()) {
                             Text(
-                                text = holderName.uppercase(),
-                                style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.8.sp),
+                                text = maskedPrimaryNumber,
+                                style = MaterialTheme.typography.bodyLarge.copy(letterSpacing = 1.4.sp),
                                 fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.SemiBold,
-                                color = fgPrimary.copy(alpha = 0.92f),
+                                fontWeight = FontWeight.Medium,
+                                color = fgPrimary.copy(alpha = 0.94f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } else if (resolvedSubtitle.isNotBlank()) {
+                            Text(
+                                text = resolvedSubtitle,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace,
+                                color = fgMuted,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
-                    if (expiry.isNotBlank()) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(badgeGlassBg)
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
+
+                    // Row 4: Bottom Footer — Holder Name & Valid Thru
+                    if (holderName.isNotBlank() || expiry.isNotBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
                         ) {
-                            Text(
-                                text = expiry,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.SemiBold,
-                                color = fgPrimary
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                if (holderName.isNotBlank()) {
+                                    Text(
+                                        text = holderName.uppercase(),
+                                        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.8.sp),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = fgPrimary.copy(alpha = 0.92f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            if (expiry.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(badgeGlassBg)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = expiry,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = fgPrimary
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+
+        if (!isCompactPreview) {
+            SmoothFilterPill(
+                selected = isFlipped,
+                onClick = { isFlipped = !isFlipped },
+                label = "⇄ ${if (isFlipped) flipLabelFront else flipLabelBack}"
+            )
         }
     }
 }

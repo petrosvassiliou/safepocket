@@ -571,17 +571,17 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     expect(rejected.errorMessage).toContain('SHA-256 tampering detected');
   });
 
-  it('11. Version v0.4.0 (Build 15) & Real Ed25519 Manifest Signing: verifies v0.4.0 baseline and rejects forged/mutated version.json signatures', async () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.4.0');
-    expect(APP_BUILD_INFO.versionCode).toBe(15);
+  it('11. Version v0.5.0-beta.1 (Build 16) & Real Ed25519 Manifest Signing: verifies v0.5.0-beta.1 baseline and rejects forged/mutated version.json signatures', async () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(16);
 
     const publicDir = path.resolve(__dirname, '../../public');
     const signedManifest = JSON.parse(
       fs.readFileSync(path.join(publicDir, 'version.json'), 'utf-8')
     ) as RemoteUpdateManifest;
 
-    expect(signedManifest.latestVersion).toBe('0.4.0');
-    expect(signedManifest.versionCode).toBe(15);
+    expect(signedManifest.latestVersion).toBe('0.5.0-beta.1');
+    expect(signedManifest.versionCode).toBe(16);
     expect(await verifyManifestEd25519Signature(signedManifest)).toBe(true);
 
     // Mutate latestVersion without re-signing -> Ed25519 verification must fail
@@ -1511,7 +1511,7 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
     expect(css).toContain('.sp-scanner-pad');
   });
 
-  it('24. Cross-Platform Version 0.4.0 (Build 15) Alignment, Permanent Release Keystore & Modal-Only UX', () => {
+  it('24. Cross-Platform Version 0.5.0-beta.1 (Build 16) Alignment, Permanent Release Keystore & Modal-Only UX', () => {
     const repoRoot = path.resolve(__dirname, '../../..');
     const rootManifest = JSON.parse(
       fs.readFileSync(path.join(repoRoot, 'manifest/version.json'), 'utf-8')
@@ -1520,12 +1520,12 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
       fs.readFileSync(path.join(repoRoot, 'pwaApp/public/version.json'), 'utf-8')
     ) as RemoteUpdateManifest;
 
-    expect(APP_BUILD_INFO.versionName).toBe('0.4.0');
-    expect(APP_BUILD_INFO.versionCode).toBe(15);
-    expect(rootManifest.latestVersion).toBe('0.4.0');
-    expect(rootManifest.versionCode).toBe(15);
-    expect(pwaManifest.latestVersion).toBe('0.4.0');
-    expect(pwaManifest.versionCode).toBe(15);
+    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(16);
+    expect(rootManifest.latestVersion).toBe('0.5.0-beta.1');
+    expect(rootManifest.versionCode).toBe(16);
+    expect(pwaManifest.latestVersion).toBe('0.5.0-beta.1');
+    expect(pwaManifest.versionCode).toBe(16);
     expect(rootManifest.artifacts['android-universal'].signingCertSha256).toBe(
       '5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09'
     );
@@ -1534,7 +1534,7 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
       path.join(repoRoot, 'androidApp/build.gradle.kts'),
       'utf-8'
     );
-    expect(androidGradle).toContain('?: "0.4.0"');
+    expect(androidGradle).toContain('?: "0.5.0-beta.1"');
     expect(androidGradle).toContain('storeType = "PKCS12"');
     expect(androidGradle).toContain('enableV1Signing = true');
     expect(androidGradle).toContain('enableV2Signing = true');
@@ -1544,7 +1544,7 @@ describe('SafePocket v0.1 Cross-Platform Core & Milestones #1–#8 Verification 
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macAppSwift).toContain('SafePocket v0.4.0 (Build 15)');
+    expect(macAppSwift).toContain('SafePocket v0.5.0-beta.1 (Build 16)');
 
     // Verify legacy browser prompt dialog was eliminated in favor of Master-Password modal
     const appShellSource = fs.readFileSync(

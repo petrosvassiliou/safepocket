@@ -44,7 +44,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.4.0 (Build 15) Feature Suite', () => {
+describe('SafePocket v0.5.0-beta.1 (Build 16) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -315,9 +315,9 @@ describe('SafePocket v0.4.0 (Build 15) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.4.0 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.4.0');
-    expect(APP_BUILD_INFO.versionCode).toBe(15);
+  it('7. Cross-Platform v0.5.0-beta.1 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(16);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -401,7 +401,7 @@ describe('SafePocket v0.4.0 (Build 15) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.4.0 (Build 15)');
+    expect(macApp).toContain('SafePocket v0.5.0-beta.1 (Build 16)');
     expect(macApp).toContain('NSApplication.shared.applicationIconImage = appIcon');
     expect(macApp).toContain('noteFileSystemChanged(destApp.path)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
@@ -1312,6 +1312,83 @@ describe('SafePocket v0.4.0 (Build 15) Feature Suite', () => {
     expect(macCloudSwift).toContain('MacCanonicalWireVaultItem');
     expect(macCloudSwift).toContain('MacPendingTombstone');
     expect(macAppSwift).toContain('startLiveCloudSyncLoop');
+  });
+
+  it('16. Phase 1 UI/UX Overhaul: Vector Icon System, ISO ID-1 3D Flippable Cards, 5-Tab Settings & Live-Preview Progressive Editor', async () => {
+    const { categoryIconName, renderIconSvg } = await import(
+      '../ui/vectorIcons'
+    );
+    const { VAULT_CATEGORIES } = await import('../types');
+
+    // 1) Cohesive stroke SVG icons for all 7 vault categories
+    for (const cat of VAULT_CATEGORIES) {
+      const svg = renderIconSvg(categoryIconName(cat), 16);
+      expect(svg).toContain('<svg');
+      expect(svg).toContain('class="sp-svg-icon"');
+      expect(svg).toContain('stroke-width="1.85"');
+    }
+
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const pwaShell = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/ui/appShell.ts'),
+      'utf-8'
+    );
+    const pwaCss = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/styles/m3-expressive.css'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+    const androidBrandCard = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/BrandCardComposable.kt'
+      ),
+      'utf-8'
+    );
+
+    // 2) ISO ID-1 (1.586:1) 3D Front/Back Flippable Cards across PWA, macOS & Android
+    expect(pwaCss).toContain('.sp-card-3d-flipper.is-flipped');
+    expect(pwaCss).toContain('aspect-ratio: 1.586 / 1;');
+    expect(pwaShell).toContain('renderVisualCardBackFace');
+    expect(pwaShell).toContain('data-flip-card=');
+    expect(macSplit).toContain('MacFlippableVisualCard');
+    expect(macSplit).toContain('.aspectRatio(1.586, contentMode: .fit)');
+    expect(macSplit).toContain('.rotation3DEffect');
+    expect(androidBrandCard).toContain('Modifier.aspectRatio(1.586f)');
+    expect(androidBrandCard).toContain('rotationY = rotationYDeg');
+
+    // 3) 5-Tab Settings Modal across PWA, macOS & Android
+    for (const tabKey of [
+      'settings_tab_appearance',
+      'settings_tab_security',
+      'settings_tab_sync',
+      'settings_tab_data',
+      'settings_tab_updates'
+    ]) {
+      expect(pwaShell).toContain(tabKey);
+      expect(macSplit).toContain(tabKey);
+      expect(androidShell).toContain(tabKey);
+    }
+
+    // 4) Live-Preview Item Editor + Progressive Disclosure + 3-Step Onboarding / Vault Shield Lock
+    expect(pwaShell).toContain('id="sp-editor-live-card-slot"');
+    expect(pwaShell).toContain('id="sp-toggle-editor-more"');
+    expect(pwaShell).toContain('data-onboard-step=');
+    expect(pwaShell).toContain('sp-vault-shield-hero');
+    expect(macSplit).toContain('editor_live_preview_label');
+    expect(macSplit).toContain('editor_more_fields_toggle');
+    expect(androidShell).toContain('editor_live_preview_label');
+    expect(androidShell).toContain('editor_more_fields_toggle');
   });
 });
 

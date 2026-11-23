@@ -2106,5 +2106,352 @@ body {
   word-break: break-word;
 }
 
+/* ==========================================================================
+   Phase 1 Visual Foundation & Layout Overhaul:
+   - Unified Stroke Vector Icon Alignment & Tabular Numerals
+   - ISO/IEC 7810 ID-1 (1.586:1) Physical-Proportion 3D Flippable Cards
+   - 5-Tab Settings Pill Bar (Eliminates Vertical Scroll Wall)
+   - Vault Shield Lock Screen + 3-Step Onboarding Stepper
+   - Live-Preview Item Editor + Progressive Disclosure Sections
+   ========================================================================== */
+
+.sp-svg-icon {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.sp-card-pan,
+.sp-field-value.is-mono,
+.sp-nav-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 3D Physical-Proportion Card Stage & Interactive Front/Back Flip */
+.sp-card-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 452px;
+  width: 100%;
+  perspective: 1400px;
+}
+
+.sp-presentation-inner .sp-card-stage {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.sp-card-3d-flipper {
+  position: relative;
+  width: 100%;
+  display: grid;
+  transform-style: preserve-3d;
+  transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  cursor: pointer;
+}
+
+.sp-card-3d-flipper.is-flipped {
+  transform: rotateY(180deg);
+}
+
+.sp-card-face-front,
+.sp-card-face-back {
+  grid-area: 1 / 1;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  aspect-ratio: 1.586 / 1;
+  min-height: 222px;
+}
+
+.sp-card-face-back {
+  transform: rotateY(180deg);
+}
+
+.sp-visual-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 90% at 12% 0%,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(255, 255, 255, 0.03) 44%,
+    transparent 74%
+  );
+  border-radius: inherit;
+}
+
+.sp-emv-chip {
+  position: relative;
+  width: 42px;
+  height: 30px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #f3dca2 0%, #c89f53 52%, #e6c67a 100%);
+  border: 1px solid rgba(15, 23, 42, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.sp-emv-chip::before {
+  content: '';
+  position: absolute;
+  inset: 6px 9px;
+  border: 1px solid rgba(15, 23, 42, 0.24);
+  border-radius: 3px;
+}
+
+.sp-card-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sp-card-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sp-card-magstripe {
+  margin: -6px -24px 2px;
+  height: 36px;
+  background: linear-gradient(90deg, #0b0f19 0%, #1e293b 50%, #0b0f19 100%);
+  opacity: 0.88;
+}
+
+.sp-card-cvv-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sp-card-back-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  z-index: 1;
+}
+
+.sp-card-back-cell {
+  background: rgba(255, 255, 255, 0.11);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9px;
+  padding: 7px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sp-visual-card[data-palette='titanium_silver'] .sp-card-back-cell,
+.sp-visual-card[data-palette='pearl_ivory'] .sp-card-back-cell {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.15);
+}
+
+.sp-card-back-label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.78;
+}
+
+.sp-card-back-val {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Compact Live Card Preview in Item Editor */
+.sp-editor-live-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sp-visual-card.is-compact-preview {
+  min-height: 154px;
+  padding: 16px 18px;
+  gap: 12px;
+  aspect-ratio: auto;
+}
+
+.sp-visual-card.is-compact-preview .sp-card-pan {
+  font-size: 16px;
+}
+
+/* 5-Tab Settings Navigation Bar */
+.sp-settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sp-settings-tab-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 10px;
+  padding: 7px 12px;
+  min-height: 34px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 auto;
+  justify-content: center;
+  transition:
+    background-color 150ms cubic-bezier(0.2, 0, 0, 1),
+    color 150ms cubic-bezier(0.2, 0, 0, 1),
+    border-color 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sp-settings-tab-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-card-hover);
+}
+
+.sp-settings-tab-btn.is-active {
+  background: var(--surface-card);
+  color: var(--accent-primary);
+  border-color: var(--accent-border);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+/* Progressive Disclosure Section in Item Editor */
+.sp-disclosure-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.sp-disclosure-toggle {
+  appearance: none;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 11px 14px;
+  font: inherit;
+  font-size: 12.8px;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.sp-disclosure-toggle:hover {
+  background: var(--surface-card-hover);
+}
+
+.sp-disclosure-body {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Vault Shield Lock Screen & 3-Step Onboarding Stepper */
+.sp-vault-shield-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 8px 0 4px;
+}
+
+.sp-vault-shield-badge {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--accent-tonal);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-primary);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.sp-stepper-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 4px;
+}
+
+.sp-stepper-pill {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 9px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 140ms ease;
+}
+
+.sp-stepper-pill.is-active {
+  background: var(--surface-card);
+  color: var(--accent-primary);
+  border-color: var(--accent-border);
+}
+
+.sp-stepper-pill.is-done {
+  color: var(--text-primary);
+}
+
+@keyframes spShakeError {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-7px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+.sp-modal-card.is-error-shake {
+  animation: spShakeError 340ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+
 
 

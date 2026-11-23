@@ -8,8 +8,10 @@ struct MacVaultSplitView: View {
     @AppStorage("safepocket.theme_mode") private var themeMode: String = "light"
     @State private var confirmDeleteSamples = false
     @State private var revealedFieldIds: Set<String> = []
+    @State private var flippedEntryIds: Set<String> = []
     @State private var unlockPasswordInput: String = ""
     @State private var unlockError: Bool = false
+    @State private var unlockShakeOffset: CGFloat = 0
 
     private func cycleTheme() {
         switch themeMode {
@@ -95,70 +97,106 @@ struct MacVaultSplitView: View {
         }
     }
 
-    // MARK: - Lock Screen Overlay (Touch ID + Master Password + Flag Language Switcher)
+    // MARK: - Lock Screen Overlay (Vault Shield Card + Touch ID + Master Password + Flag Language Switcher)
 
-    private var macLockedOverlay: some View {
-        VStack(spacing: 16) {
-            HStack {
-                Spacer()
-                MacFlagLanguageMenu(vaultState: vaultState)
+    private func attemptPasswordUnlock() {
+        if vaultState.unlockWithMasterPassword(unlockPasswordInput) {
+            unlockPasswordInput = ""
+            unlockError = false
+        } else {
+            unlockError = true
+            withAnimation(.easeInOut(duration: 0.06)) { unlockShakeOffset = -8 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                withAnimation(.easeInOut(duration: 0.06)) { unlockShakeOffset = 7 }
             }
-            .frame(maxWidth: 360)
-
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(vaultState.materialAccent.swiftUIColor)
-
-            Text(vaultState.t("app_name"))
-                .font(.title.weight(.bold))
-
-            Text(vaultState.t("app_tagline"))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            SecureField(vaultState.t("security_master_password"), text: $unlockPasswordInput)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 280)
-                .onSubmit {
-                    if vaultState.unlockWithMasterPassword(unlockPasswordInput) {
-                        unlockPasswordInput = ""
-                        unlockError = false
-                    } else {
-                        unlockError = true
-                    }
-                }
-
-            if unlockError {
-                Text(vaultState.t("security_invalid_master_password"))
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    if vaultState.unlockWithMasterPassword(unlockPasswordInput) {
-                        unlockPasswordInput = ""
-                        unlockError = false
-                    } else {
-                        unlockError = true
-                    }
-                } label: {
-                    Text(vaultState.t("action_unlock_vault"))
-                        .frame(minWidth: 120)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button {
-                    Task { _ = await vaultState.unlockWithTouchID() }
-                } label: {
-                    Label("Touch ID", systemImage: "touchid")
-                }
-                .buttonStyle(.bordered)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.5)) { unlockShakeOffset = 0 }
             }
         }
-        .padding(36)
+    }
+
+    private var macLockedOverlay: some View {
+        ZStack {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                HStack {
+                    Spacer()
+                    MacFlagLanguageMenu(vaultState: vaultState)
+                }
+
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(vaultState.materialAccent.swiftUIColor.opacity(0.14))
+                        .frame(width: 60, height: 60)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(vaultState.materialAccent.swiftUIColor.opacity(0.32), lineWidth: 1)
+                        )
+                    Image(systemName: "lock.shield.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                }
+
+                VStack(spacing: 4) {
+                    Text(vaultState.t("app_name"))
+                        .font(.title2.weight(.bold))
+
+                    Text(vaultState.t("app_tagline"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                SecureField(vaultState.t("security_master_password"), text: $unlockPasswordInput)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
+                    .frame(maxWidth: .infinity)
+                    .onSubmit {
+                        attemptPasswordUnlock()
+                    }
+
+                if unlockError {
+                    Label(vaultState.t("security_invalid_master_password"), systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.red)
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        attemptPasswordUnlock()
+                    } label: {
+                        Text(vaultState.t("action_unlock_vault"))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+
+                    Button {
+                        Task { _ = await vaultState.unlockWithTouchID() }
+                    } label: {
+                        Label("Touch ID", systemImage: "touchid")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                }
+            }
+            .padding(28)
+            .frame(width: 400)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.16), radius: 24, y: 10)
+            .offset(x: unlockShakeOffset)
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.ultraThinMaterial)
     }
 
     // MARK: - Column 1: Native AppKit-Aligned Sidebar (Root List + SafeAreaInset Footer)
@@ -603,12 +641,90 @@ struct MacVaultSplitView: View {
 
     @ViewBuilder
     private func macVisualBrandCard(for entry: MacVaultEntry) -> some View {
-        let inst = MacSmartIntelligence.resolveInstitution(for: entry)
-        let baseColor = MacSmartIntelligence.colorFromHex(entry.customColorHex ?? inst?.primaryHex)
-            ?? vaultState.materialAccent.swiftUIColor
-        let networkBadge = MacSmartIntelligence.resolveNetworkBadge(for: entry)
+        let isFlipped = flippedEntryIds.contains(entry.id)
+        MacFlippableVisualCard(
+            vaultState: vaultState,
+            entry: entry,
+            isFlipped: isFlipped,
+            isCompactPreview: false,
+            onToggleFlip: {
+                withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+                    if flippedEntryIds.contains(entry.id) {
+                        flippedEntryIds.remove(entry.id)
+                    } else {
+                        flippedEntryIds.insert(entry.id)
+                    }
+                }
+            },
+            onCopyPrimary: {
+                if !entry.primaryValue.isEmpty {
+                    vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
+                }
+            }
+        )
+    }
+}
 
-        VStack(alignment: .leading, spacing: 16) {
+struct MacFlippableVisualCard: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+    let entry: MacVaultEntry
+    var isFlipped: Bool = false
+    var isCompactPreview: Bool = false
+    var onToggleFlip: (() -> Void)? = nil
+    var onCopyPrimary: (() -> Void)? = nil
+
+    private func fieldValue(_ key: String) -> String {
+        entry.fields.first(where: { $0.labelKey == key })?.value.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var maskedPrimary: String {
+        let raw = entry.primaryValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            return entry.category == "PAYMENT_CARD" ? "•••• •••• •••• ••••" : ""
+        }
+        if isCompactPreview { return raw }
+        if entry.category == "PAYMENT_CARD" {
+            let digits = raw.replacingOccurrences(of: " ", with: "")
+            return digits.count >= 4 ? "•••• •••• •••• \(digits.suffix(4))" : raw
+        }
+        if entry.category == "BANK_ACCOUNT" {
+            let compact = raw.replacingOccurrences(of: " ", with: "")
+            return compact.count >= 8 ? "\(compact.prefix(4)) •••• •••• \(compact.suffix(4))" : raw
+        }
+        return raw
+    }
+
+    private var holderDisplay: String {
+        let h = fieldValue("field_cardholder")
+            .isEmpty ? fieldValue("field_account_holder") : fieldValue("field_cardholder")
+        if !h.isEmpty { return h }
+        let fn = fieldValue("field_full_name")
+        if !fn.isEmpty { return fn }
+        return fieldValue("field_member_name")
+    }
+
+    private var reverseCells: [(String, String)] {
+        var out: [(String, String)] = []
+        let pin = fieldValue("field_pin")
+        if !pin.isEmpty { out.append((vaultState.resolveFieldLabel(key: "field_pin", isCustom: false, category: entry.category), "••••")) }
+        let bic = fieldValue("field_bic")
+        if !bic.isEmpty { out.append((vaultState.resolveFieldLabel(key: "field_bic", isCustom: false, category: entry.category), bic)) }
+        let routing = fieldValue("field_routing_code").isEmpty ? fieldValue("field_routing_number") : fieldValue("field_routing_code")
+        if !routing.isEmpty { out.append((vaultState.resolveFieldLabel(key: "field_routing_code", isCustom: false, category: entry.category), routing)) }
+        let phone = fieldValue("field_emergency_phone").isEmpty ? fieldValue("field_support_phone") : fieldValue("field_emergency_phone")
+        if !phone.isEmpty { out.append((vaultState.resolveFieldLabel(key: "field_support_phone", isCustom: false, category: entry.category), phone)) }
+        let domain = fieldValue("field_institution_domain")
+        if !domain.isEmpty && out.count < 4 {
+            let host = domain.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "www.", with: "")
+            out.append((vaultState.resolveFieldLabel(key: "field_institution_domain", isCustom: false, category: entry.category), host))
+        }
+        return Array(out.prefix(4))
+    }
+
+    @ViewBuilder
+    private func frontCardFace(baseColor: Color, inst: MacInstitutionProfile?, networkBadge: String) -> some View {
+        let expiry = fieldValue("field_expiry_date")
+        VStack(alignment: .leading, spacing: isCompactPreview ? 10 : 14) {
             HStack(alignment: .center) {
                 HStack(spacing: 10) {
                     if vaultState.autoDownloadLogos,
@@ -616,29 +732,33 @@ struct MacVaultSplitView: View {
                        let logoURL = URL(string: "https://www.google.com/s2/favicons?domain=\(domain)&sz=64") {
                         AsyncImage(url: logoURL) { phase in
                             if let img = phase.image {
-                                img.resizable().scaledToFit().frame(width: 28, height: 28)
+                                img.resizable().scaledToFit().frame(width: 26, height: 26)
                                     .padding(4)
-                                    .background(.white, in: RoundedRectangle(cornerRadius: 8))
+                                    .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             } else {
                                 Text(inst?.monogram ?? String(entry.title.prefix(2)).uppercased())
                                     .font(.caption.weight(.bold))
-                                    .padding(8)
-                                    .background(.white.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 34, height: 34)
+                                    .background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
                         }
                     } else {
                         Text(inst?.monogram ?? String(entry.title.prefix(2)).uppercased())
                             .font(.caption.weight(.bold))
-                            .padding(8)
-                            .background(.white.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.title)
                             .font(.headline)
                             .foregroundStyle(.white)
+                            .lineLimit(1)
                         Text(vaultState.displaySubtitle(for: entry))
                             .font(.caption)
-                            .foregroundStyle(.white.opacity(0.85))
+                            .foregroundStyle(.white.opacity(0.82))
+                            .lineLimit(1)
                     }
                 }
                 Spacer()
@@ -646,26 +766,218 @@ struct MacVaultSplitView: View {
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(.white.opacity(0.22), in: Capsule())
+                    .background(.white.opacity(0.20), in: Capsule())
                     .foregroundStyle(.white)
             }
 
-            if !entry.primaryValue.isEmpty {
-                Text(entry.primaryValue)
-                    .font(.system(.title3, design: .monospaced).weight(.semibold))
+            if !isCompactPreview && ["PAYMENT_CARD", "INSURANCE_CARD", "OFFICIAL_DOCUMENT"].contains(entry.category) {
+                HStack(spacing: 10) {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(red: 0.95, green: 0.86, blue: 0.62), Color(red: 0.78, green: 0.62, blue: 0.32)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 40, height: 28)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .strokeBorder(Color.black.opacity(0.24), lineWidth: 0.8)
+                                .padding(5)
+                        )
+                    if entry.category == "PAYMENT_CARD" {
+                        Image(systemName: "wave.3.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.82))
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            if !maskedPrimary.isEmpty {
+                Text(maskedPrimary)
+                    .font(.system(isCompactPreview ? .callout : .title3, design: .monospaced).weight(.semibold))
+                    .monospacedDigit()
                     .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+
+            if !holderDisplay.isEmpty || !expiry.isEmpty {
+                HStack(alignment: .bottom) {
+                    Text(holderDisplay.uppercased())
+                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+                    Spacer()
+                    if !expiry.isEmpty {
+                        Text(expiry)
+                            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .foregroundStyle(.white)
+                    }
+                }
             }
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(isCompactPreview ? 16 : 22)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background {
+            ZStack {
+                LinearGradient(
+                    colors: [baseColor, baseColor.opacity(0.76)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                LinearGradient(
+                    colors: [.white.opacity(0.16), .clear],
+                    startPoint: .topLeading,
+                    endPoint: .center
+                )
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func backCardFace(baseColor: Color) -> some View {
+        let cvv = fieldValue("field_cvv")
+        VStack(alignment: .leading, spacing: 12) {
+            if entry.category == "PAYMENT_CARD" {
+                Rectangle()
+                    .fill(Color.black.opacity(0.82))
+                    .frame(height: 34)
+                    .padding(.horizontal, -22)
+
+                HStack {
+                    Text("AUTHORIZED SIGNATURE • \(vaultState.t("field_cvv"))")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.black.opacity(0.65))
+                    Spacer()
+                    Text(cvv.isEmpty ? "•••" : cvv)
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.black)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            } else {
+                HStack {
+                    Text(entry.title)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(vaultState.t("card_back_badge"))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.white.opacity(0.18), in: Capsule())
+                        .foregroundStyle(.white)
+                }
+            }
+
+            if reverseCells.isEmpty {
+                Text(vaultState.t("card_back_empty_hint"))
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                    ForEach(Array(reverseCells.enumerated()), id: \.offset) { _, pair in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pair.0.uppercased())
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .lineLimit(1)
+                            Text(pair.1)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             LinearGradient(
-                colors: [baseColor, baseColor.opacity(0.76)],
+                colors: [baseColor.opacity(0.92), baseColor.opacity(0.72)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
-            in: RoundedRectangle(cornerRadius: 16)
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    var body: some View {
+        let inst = MacSmartIntelligence.resolveInstitution(for: entry)
+        let baseColor = MacSmartIntelligence.colorFromHex(entry.customColorHex ?? inst?.primaryHex)
+            ?? vaultState.materialAccent.swiftUIColor
+        let networkBadge = MacSmartIntelligence.resolveNetworkBadge(for: entry)
+
+        if isCompactPreview {
+            frontCardFace(baseColor: baseColor, inst: inst, networkBadge: networkBadge)
+                .frame(height: 152)
+                .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack {
+                    if isFlipped {
+                        backCardFace(baseColor: baseColor)
+                            .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
+                    } else {
+                        frontCardFace(baseColor: baseColor, inst: inst, networkBadge: networkBadge)
+                    }
+                }
+                .aspectRatio(1.586, contentMode: .fit)
+                .frame(maxWidth: 440)
+                .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+                .rotation3DEffect(.degrees(isFlipped ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+                .onTapGesture {
+                    onToggleFlip?()
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        onToggleFlip?()
+                    } label: {
+                        Label(
+                            vaultState.t(isFlipped ? "card_flip_to_front" : "card_flip_to_back"),
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    if !entry.primaryValue.isEmpty {
+                        Button {
+                            onCopyPrimary?()
+                        } label: {
+                            Label(vaultState.t("action_copy"), systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -858,9 +1170,47 @@ struct MacSmartItemEditorSheet: View {
     @State private var customFields: [MacVaultField] = []
     @State private var websiteStatus: String = ""
     @State private var autofillNotice: String = ""
+    @State private var moreFieldsExpanded: Bool = false
     @FocusState private var titleFocused: Bool
 
+    private var livePreviewEntry: MacVaultEntry {
+        let builtFields = MacCategoryTemplates.specs(for: category).compactMap { spec -> MacVaultField? in
+            let val = (fieldDrafts[spec.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !val.isEmpty else { return nil }
+            return MacVaultField(
+                id: "pv-\(spec.key)",
+                labelKey: spec.key,
+                isCustomLabel: false,
+                value: val,
+                valueType: spec.valueType,
+                isSensitive: spec.sensitive
+            )
+        }
+        return MacVaultEntry(
+            id: "preview",
+            category: category,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? vaultState.categorySingularName(category)
+                : title,
+            subtitle: subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? vaultState.categorySingularName(category)
+                : subtitle,
+            fields: builtFields,
+            tags: [],
+            customColorHex: customColorHex.isEmpty ? nil : customColorHex,
+            networkBrand: fieldDrafts["field_card_network"],
+            pinned: false,
+            favorite: false,
+            isSampleItem: false,
+            updatedAt: Date()
+        )
+    }
+
     var body: some View {
+        let allSpecs = MacCategoryTemplates.specs(for: category)
+        let primarySpecs = Array(allSpecs.prefix(6))
+        let secondarySpecs = Array(allSpecs.dropFirst(6))
+
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 10) {
                 Text(existing == nil ? vaultState.t("action_new_item") : vaultState.t("action_edit"))
@@ -876,6 +1226,19 @@ struct MacSmartItemEditorSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if category != "SECURE_NOTE" {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(vaultState.t("editor_live_preview_label").uppercased())
+                                .font(.system(size: 10.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            MacFlippableVisualCard(
+                                vaultState: vaultState,
+                                entry: livePreviewEntry,
+                                isCompactPreview: true
+                            )
+                        }
+                    }
+
                     MacSectionCard(title: vaultState.t("app_name")) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(vaultState.t("editor_title_label"))
@@ -907,9 +1270,24 @@ struct MacSmartItemEditorSheet: View {
                         }
                     }
 
-                    MacSectionCard(title: vaultState.t("editor_section_structured_fields")) {
-                        ForEach(MacCategoryTemplates.specs(for: category), id: \.key) { spec in
+                    MacSectionCard(title: vaultState.t("editor_essential_fields_title")) {
+                        ForEach(primarySpecs, id: \.key) { spec in
                             smartEditorRow(for: spec)
+                        }
+
+                        if !secondarySpecs.isEmpty {
+                            Divider()
+                            DisclosureGroup(
+                                "\(vaultState.t("editor_more_fields_toggle")) (\(secondarySpecs.count))",
+                                isExpanded: $moreFieldsExpanded
+                            ) {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    ForEach(secondarySpecs, id: \.key) { spec in
+                                        smartEditorRow(for: spec)
+                                    }
+                                }
+                                .padding(.top, 8)
+                            }
                         }
                     }
 
@@ -991,6 +1369,8 @@ struct MacSmartItemEditorSheet: View {
                         fieldDrafts[f.labelKey] = f.value
                     }
                 }
+                let secSpecs = Array(MacCategoryTemplates.specs(for: ex.category).dropFirst(6))
+                moreFieldsExpanded = secSpecs.contains { !(fieldDrafts[$0.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             } else {
                 category = vaultState.pendingCreateCategory
                 if category == "BANK_ACCOUNT" {
@@ -1223,6 +1603,38 @@ struct MacSettingsAndAboutView: View {
 
     @FocusState private var focusedInput: SettingsInputFocus?
 
+    private enum MacSettingsTab: String, CaseIterable, Identifiable {
+        case appearance
+        case security
+        case sync
+        case data
+        case updates
+
+        var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .appearance: return "sun.max"
+            case .security: return "checkmark.shield"
+            case .sync: return "icloud"
+            case .data: return "externaldrive"
+            case .updates: return "arrow.triangle.2.circlepath"
+            }
+        }
+
+        var labelKey: String {
+            switch self {
+            case .appearance: return "settings_tab_appearance"
+            case .security: return "settings_tab_security"
+            case .sync: return "settings_tab_sync"
+            case .data: return "settings_tab_data"
+            case .updates: return "settings_tab_updates"
+            }
+        }
+    }
+
+    @State private var activeTab: MacSettingsTab = .appearance
+
     @State private var cloudEmailInput: String = ""
     @State private var cloudPasswordInput: String = ""
     @State private var cloudValidationMessage: String?
@@ -1264,41 +1676,78 @@ struct MacSettingsAndAboutView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let err = vaultState.lastErrorBanner {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Text(err)
-                            .font(.system(size: 12, weight: .medium))
-                            .textSelection(.enabled)
-                        Spacer()
-                        Button("✕") {
-                            vaultState.lastErrorBanner = nil
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                ForEach(MacSettingsTab.allCases) { tab in
+                    let isSelected = activeTab == tab
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.14)) {
+                            activeTab = tab
                         }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(10)
-                    .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
-                }
-
-                if let notice = vaultState.statusNotice {
-                    HStack(spacing: 8) {
-                        Text(notice)
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Button("✕") {
-                            vaultState.statusNotice = nil
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: tab.systemImage)
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(vaultState.t(tab.labelKey))
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .lineLimit(1)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(isSelected ? vaultState.materialAccent.swiftUIColor.opacity(0.14) : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(isSelected ? vaultState.materialAccent.swiftUIColor.opacity(0.42) : Color.clear, lineWidth: 1)
+                        )
+                        .foregroundStyle(isSelected ? vaultState.materialAccent.swiftUIColor : .secondary)
                     }
-                    .padding(10)
-                    .background(vaultState.materialAccent.swiftUIColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+                    .buttonStyle(.plain)
                 }
+            }
+            .padding(6)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .overlay(alignment: .bottom) { Divider() }
 
-                // 1. APPEARANCE, ACCENT COLOR & 6-LANGUAGE SELECTOR (WITH COUNTRY FLAGS)
-                MacSectionCard(title: vaultState.t("settings_theme_title") + " & " + vaultState.t("settings_language_title")) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let err = vaultState.lastErrorBanner {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(err)
+                                .font(.system(size: 12, weight: .medium))
+                                .textSelection(.enabled)
+                            Spacer()
+                            Button("✕") {
+                                vaultState.lastErrorBanner = nil
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(10)
+                        .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
+                    }
+
+                    if let notice = vaultState.statusNotice {
+                        HStack(spacing: 8) {
+                            Text(notice)
+                                .font(.system(size: 12, weight: .medium))
+                            Spacer()
+                            Button("✕") {
+                                vaultState.statusNotice = nil
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(10)
+                        .background(vaultState.materialAccent.swiftUIColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+                    }
+
+                    if activeTab == .appearance {
+                        // 1. APPEARANCE, ACCENT COLOR & 6-LANGUAGE SELECTOR (WITH COUNTRY FLAGS)
+                        MacSectionCard(title: vaultState.t("settings_theme_title") + " & " + vaultState.t("settings_language_title"), systemImage: "sun.max") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(vaultState.t("settings_theme_title"))
                             .font(.system(size: 12, weight: .semibold))
@@ -1339,10 +1788,13 @@ struct MacSettingsAndAboutView: View {
                         .labelsHidden()
                         .frame(maxWidth: 310)
                     }
-                }
+                        Toggle(vaultState.t("settings_auto_download_logos_toggle"), isOn: $vaultState.autoDownloadLogos)
+                    }
+                    } // end activeTab == .appearance
 
-                // 2. VAULT STORAGE MODE (2-COLUMN LOKALE DB VS CLOUD-SYNC CARDS) + CLOUD SYNC CONFIGURATION
-                MacSectionCard(title: vaultState.t("storage_mode_section_title"), systemImage: "cylinder.split.1x2") {
+                    if activeTab == .sync {
+                    // 2. VAULT STORAGE MODE (2-COLUMN LOKALE DB VS CLOUD-SYNC CARDS) + CLOUD SYNC CONFIGURATION
+                    MacSectionCard(title: vaultState.t("storage_mode_section_title"), systemImage: "cylinder.split.1x2") {
                     HStack(spacing: 12) {
                         MacStorageModeSelectionCard(
                             systemImage: "icloud.slash",
@@ -1556,9 +2008,11 @@ struct MacSettingsAndAboutView: View {
                         }
                     }
                 }
+                } // end activeTab == .sync
 
+                if activeTab == .data {
                 // 3. PORTABILITY: ENCRYPTED BACKUP (.safepocket), 1PASSWORD & CSV IMPORT / EXPORT + DELETE EXAMPLE DATA
-                MacSectionCard(title: vaultState.t("portability_section_title")) {
+                MacSectionCard(title: vaultState.t("portability_section_title"), systemImage: "externaldrive") {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(vaultState.t("backup_export_encrypted")) — Password")
                             .font(.system(size: 12, weight: .semibold))
@@ -1683,9 +2137,11 @@ struct MacSettingsAndAboutView: View {
                         .buttonStyle(.bordered)
                     }
                 }
+                } // end activeTab == .data
 
+                if activeTab == .security {
                 // 4. ZERO-KNOWLEDGE SECURITY, SCREENSHOTS, BRANDING, EXPIRY WINDOW, AUTO-LOCK & EMERGENCY KIT
-                MacSectionCard(title: vaultState.t("security_section_title")) {
+                MacSectionCard(title: vaultState.t("security_section_title"), systemImage: "checkmark.shield") {
                     HStack {
                         Text("\(vaultState.t("security_secret_key")): \(vaultState.secretKeyFormatted)")
                             .font(.system(size: 11.5, design: .monospaced))
@@ -1786,9 +2242,11 @@ struct MacSettingsAndAboutView: View {
                         .pickerStyle(.segmented)
                     }
                 }
+                } // end activeTab == .security
 
+                if activeTab == .updates {
                 // 5. AUTOMATED IN-APP MACOS UPDATES (Ed25519 + SHA-256)
-                MacSectionCard(title: vaultState.t("update_section_title")) {
+                MacSectionCard(title: vaultState.t("update_section_title"), systemImage: "arrow.triangle.2.circlepath") {
                     Toggle(vaultState.t("update_auto_toggle"), isOn: $updater.automaticChecksEnabled)
 
                     HStack(spacing: 10) {
@@ -1874,9 +2332,11 @@ struct MacSettingsAndAboutView: View {
                         }
                     }
                 }
+                } // end activeTab == .updates
             }
             .padding(24)
             .padding(.bottom, 54)
+        }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {

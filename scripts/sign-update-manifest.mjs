@@ -68,11 +68,13 @@ function main() {
   const swSha256 = crypto.createHash('sha256').update(swBytes).digest('hex');
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
-  const latestVersion = (process.env.SAFEPOCKET_RELEASE_VERSION || '0.4.0').replace(
-    /^v/i,
-    ''
-  );
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '15');
+  const latestVersion = (
+    process.env.SAFEPOCKET_RELEASE_VERSION || '0.5.0-beta.1'
+  ).replace(/^v/i, '');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '16');
+  const channel =
+    process.env.SAFEPOCKET_RELEASE_CHANNEL ||
+    (latestVersion.includes('-') ? 'beta' : 'stable');
 
   const apkDigest = hashOptionalFile(
     process.env.SAFEPOCKET_APK_PATH,
@@ -87,21 +89,21 @@ function main() {
 
   const manifest = {
     schemaVersion: 2,
-    channel: 'stable',
+    channel,
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-19T18:30:00Z',
+    publishedAt: '2026-11-23T11:30:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} eliminates Google Play Protect dropper false-positives by removing REQUEST_INSTALL_PACKAGES and in-APK package installer sessions in favor of verified HTTPS release downloads.\n• Introduces Cross-Platform Zero-Knowledge Cloud Sync v2 (deterministic PBKDF2-HMAC-SHA256 100k-round Cloud Sync Key, canonical wire schema across Android/macOS/PWA, Pull-First CRDT reconciliation, real tombstones, and instant 5-second live background sync).`,
-      de: `• SafePocket v${latestVersion} beseitigt Google-Play-Protect-Warnungen durch Entfernen von REQUEST_INSTALL_PACKAGES und In-App-APK-Installationen zugunsten verifizierter HTTPS-Downloads.\n• Führt Cross-Platform Zero-Knowledge Cloud-Sync v2 ein (deterministischer PBKDF2-HMAC-SHA256-Schlüssel, einheitliches Schema für Android/macOS/PWA, Pull-First-CRDT-Abgleich, echte Lösch-Tombstones und sofortige Live-Synchronisation alle 5 Sekunden).`,
-      it: `• SafePocket v${latestVersion} elimina i falsi positivi di Google Play Protect rimuovendo REQUEST_INSTALL_PACKAGES e introduce Cloud Sync Zero-Knowledge multipiattaforma v2 istantaneo tra Android, macOS e PWA.`,
-      fr: `• SafePocket v${latestVersion} élimine les alertes Google Play Protect en supprimant REQUEST_INSTALL_PACKAGES et introduit la synchronisation Cloud Zero-Knowledge multiplateforme v2 instantanée entre Android, macOS et PWA.`,
-      es: `• SafePocket v${latestVersion} elimina las alertas de Google Play Protect al retirar REQUEST_INSTALL_PACKAGES e introduce sincronización en la nube Zero-Knowledge multiplataforma v2 instantánea entre Android, macOS y PWA.`,
-      el: `• Το SafePocket v${latestVersion} εξαλείφει τις προειδοποιήσεις του Google Play Protect αφαιρώντας το REQUEST_INSTALL_PACKAGES και εισάγει άμεσο συγχρονισμό Cloud Zero-Knowledge v2 σε πραγματικό χρόνο μεταξύ Android, macOS και PWA.`
+      en: `• SafePocket v${latestVersion} introduces the Phase 1 UI/UX Overhaul across Android, macOS, and PWA: ISO ID-1 (1.586:1) 3D Front/Back flippable cards, 5-tab Settings dialog, unified stroke vector icons, Vault Shield lock/onboarding stepper, and live-preview item editor with progressive disclosure.\n• Includes Cross-Platform Zero-Knowledge Cloud Sync v2 and Google Play Protect compliant HTTPS updates.`,
+      de: `• SafePocket v${latestVersion} bringt das Phase-1-UI/UX-Redesign für Android, macOS und PWA: interaktive 3D-Karten im ISO-ID-1-Format (Vorder-/Rückseite), 5-Tab-Einstellungen, einheitliche Vektor-Icons, Vault-Shield-Sperrbildschirm sowie Live-Kartenvorschau im Editor.\n• Inklusive Cross-Platform Zero-Knowledge Cloud-Sync v2 und Play-Protect-konformer Updates.`,
+      it: `• SafePocket v${latestVersion} introduce il redesign UI/UX Fase 1 su Android, macOS e PWA: carte interattive 3D fronte/retro ISO ID-1, Impostazioni a 5 schede, icone vettoriali unificate, schermata di blocco Vault Shield ed editor con anteprima dal vivo.`,
+      fr: `• SafePocket v${latestVersion} introduit la refonte UI/UX Phase 1 sur Android, macOS et PWA : cartes 3D recto/verso au format ISO ID-1, Paramètres à 5 onglets, icônes vectorielles unifiées, écran de verrouillage Vault Shield et éditeur avec aperçu en direct.`,
+      es: `• SafePocket v${latestVersion} presenta el rediseño UI/UX Fase 1 en Android, macOS y PWA: tarjetas interactivas 3D anverso/reverso ISO ID-1, Ajustes en 5 pestañas, iconos vectoriales unificados, pantalla de bloqueo Vault Shield y editor con vista previa en vivo.`,
+      el: `• Το SafePocket v${latestVersion} παρουσιάζει τον ανασχεδιασμό UI/UX Φάσης 1 σε Android, macOS και PWA: διαδραστικές τρισδιάστατες κάρτες εμπρός/πίσω όψης ISO ID-1, Ρυθμίσεις 5 καρτελών, διανυσματικά εικονίδια, οθόνη κλειδώματος Vault Shield και ζωντανή προεπισκόπηση κάρτας.`
     },
     artifacts: {
       'android-universal': {
