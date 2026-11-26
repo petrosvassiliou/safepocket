@@ -1,24 +1,24 @@
 {
   "schemaVersion": 2,
-  "channel": "beta",
-  "latestVersion": "0.5.0-beta.4",
-  "versionCode": 19,
+  "channel": "stable",
+  "latestVersion": "0.5.0",
+  "versionCode": 20,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-23T11:30:00Z",
+  "publishedAt": "2026-11-27T00:20:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:18a541e4c0eceba41b83f0890a93307d39b596e3f19a5227e8beafeeea45157536d12846b4c2e57b07fd437cf493628151ea1f9effc9873678b5dee6d6e04d03",
+  "manifestSignature": "ed25519:236b02c6b753165c340adcd4fa01ab3ead9bf134111c5185ed6c0975b3edad7eec0bc6657ce37d31fe1cb6fc221814daaaaf81747e944ef6e1c58a24b1e5f00e",
   "releaseNotes": {
-    "en": "• SafePocket v0.5.0-beta.4 adds Phase 2 Signature Digital Wallet UX across Android, macOS, and PWA: 30s radial clipboard hygiene pill, offline EPC069-12 SEPA GiroCode QR on bank accounts, Counter Pass Mode with 4-character Read-Aloud dictation blocks, and Pinned Wallet Deck.\n• Includes Phase 1 3D flippable ISO ID-1 cards, 5-tab Settings, Cross-Platform Zero-Knowledge Cloud Sync v2, and Google Play Protect compliant updates.",
-    "de": "• SafePocket v0.5.0-beta.4 ergänzt Phase 2 Digital-Wallet-UX für Android, macOS und PWA: schwebende 30s-Zwischenablage-Anzeige mit Countdown-Ring, Offline-SEPA-GiroCode (EPC-QR) für Bankkonten, Pass- & Vorlesemodus (4er-Blöcke) sowie angepinntes Wallet-Deck.\n• Inklusive Phase-1-3D-Karten, 5-Tab-Einstellungen und Zero-Knowledge Cloud-Sync v2.",
-    "it": "• SafePocket v0.5.0-beta.4 aggiunge la UX Digital Wallet Fase 2 su Android, macOS e PWA: indicatore appunti con conto alla rovescia di 30s, QR SEPA (EPC GiroCode) offline, modalità Pass e dettatura a blocchi di 4 caratteri, e mazzo di carte fissate.",
-    "fr": "• SafePocket v0.5.0-beta.4 ajoute l’UX Portefeuille Numérique Phase 2 sur Android, macOS et PWA : pilule presse-papiers avec anneau 30s, QR SEPA (EPC GiroCode) hors ligne, mode Pass et dictée par blocs de 4 caractères, et cartes épinglées.",
-    "es": "• SafePocket v0.5.0-beta.4 incorpora la UX de Cartera Digital Fase 2 en Android, macOS y PWA: píldora de portapapeles con anillo de 30s, QR SEPA (EPC GiroCode) sin conexión, modo Pase y dictado en bloques de 4 caracteres, y tarjetas fijadas.",
-    "el": "• Το SafePocket v0.5.0-beta.4 προσθέτει τη Φάση 2 Digital Wallet UX σε Android, macOS και PWA: ένδειξη προχείρου 30s, κωδικό QR SEPA (EPC) εκτός σύνδεσης, λειτουργία πάσου και υπαγόρευσης ανά 4 χαρακτήρες, και καρφιτσωμένες κάρτες."
+    "en": "• SafePocket v0.5.0 Stable delivers the complete Digital Wallet & Power UX overhaul across Android, macOS, and PWA: 3D flippable ISO ID-1 cards with click-to-reveal CVV, Pinned Wallet Deck, offline EPC069-12 SEPA GiroCode QR, Counter Pass & Read-Aloud mode, 30s radial clipboard hygiene, Cmd/Ctrl+K Command Palette, 6-month Passport Travel Readiness Radar, and Quick-Copy swipe gestures.\n• Includes macOS single hardware-bound encrypted keybag (zero repeated Keychain prompts) and Cross-Platform Zero-Knowledge Cloud Sync v2.",
+    "de": "• SafePocket v0.5.0 Stable bringt das komplette Digital-Wallet- & Power-UX-Upgrade für Android, macOS und PWA: drehbare 3D-Karten mit CVV-Direktanzeige, angepinntes Wallet-Deck, Offline-SEPA-GiroCode (EPC-QR), Pass- & Vorlesemodus, 30s-Zwischenablage-Countdown, Cmd/Ctrl+K-Befehlspalette, 6-Monats-Reisepass-Radar und Schnellkopier-Wischgesten.\n• Inklusive einheitlichem macOS-Keybag ohne wiederholte Schlüsselbund-Abfragen und Zero-Knowledge Cloud-Sync v2.",
+    "it": "• SafePocket v0.5.0 Stable introduce il rinnovamento completo Digital Wallet su Android, macOS e PWA: carte 3D girevoli con CVV cliccabile, mazzo fissato, QR SEPA offline, modalità Pass e dettatura, comando rapido Cmd/Ctrl+K, radar passaporti (< 6 mesi) e swipe di copia rapida.",
+    "fr": "• SafePocket v0.5.0 Stable apporte la refonte complète Portefeuille Numérique sur Android, macOS et PWA : cartes 3D retournables avec CVV cliquable, cartes épinglées, QR SEPA hors ligne, mode Pass et dictée, palette Cmd/Ctrl+K, radar passeports (< 6 mois) et balayage copie rapide.",
+    "es": "• SafePocket v0.5.0 Stable presenta la renovación completa de Cartera Digital en Android, macOS y PWA: tarjetas 3D giratorias con CVV clicable, mazo fijado, QR SEPA sin conexión, modo Pase y dictado, paleta Cmd/Ctrl+K, radar de pasaportes (< 6 meses) y gesto de copia rápida.",
+    "el": "• Το SafePocket v0.5.0 Stable φέρνει την πλήρη αναβάθμιση Digital Wallet σε Android, macOS και PWA: τρισδιάστατες κάρτες με εμφάνιση CVV, καρφιτσωμένες κάρτες, QR SEPA εκτός σύνδεσης, λειτουργία πάσου/υπαγόρευσης, παλέτα εντολών Cmd/Ctrl+K, ραντάρ διαβατηρίων (< 6 μηνών) και γρήγορη αντιγραφή με σύρσιμο."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0-beta.4/SafePocket-v0.5.0-beta.4-b19-universal-arm64-x86_64.apk",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0/SafePocket-v0.5.0-b20-universal-arm64-x86_64.apk",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "sizeBytes": 18432960,
       "minSdk": 29,
@@ -34,7 +34,7 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0-beta.4/SafePocket-0.5.0-beta.4-19-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0/SafePocket-0.5.0-20-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
       "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
@@ -44,8 +44,8 @@
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "3465a09422763800b1e43c223ff04dc483623d21e4f93512184429a14112cdb6",
-      "sizeBytes": 2716
+      "sha256": "378c5775909c1139d7fbcd269a70e824cc28a5418e047fbdf4885f0d013580de",
+      "sizeBytes": 2709
     }
   }
 }

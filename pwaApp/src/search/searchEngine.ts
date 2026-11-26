@@ -96,6 +96,48 @@ export interface VaultExpirySummary {
   totalAttentionCount: number;
 }
 
+export interface DocumentReadinessStatus {
+  expiry: ExpiryComputation;
+  travelSixMonthWarning: boolean;
+  missingBackupScan: boolean;
+  needsReadinessAttention: boolean;
+  timelineBucket: 'expired' | 'urgent' | 'upcoming' | 'healthy';
+}
+
+export function computeDocumentReadiness(
+  item: VaultItem,
+  referenceEpochMs = Date.now(),
+  warningWindowDays: ExpiryWindowDays = 90
+): DocumentReadinessStatus {
+  const expiry = computeExpiryStatus(item, referenceEpochMs, warningWindowDays);
+  const isTravelDoc =
+    item.category === 'OFFICIAL_DOCUMENT' || item.category === 'IDENTITY';
+  const travelSixMonthWarning =
+    isTravelDoc &&
+    expiry.severity !== 'none' &&
+    expiry.daysRemaining >= 0 &&
+    expiry.daysRemaining <= 180;
+  const missingBackupScan = isTravelDoc && item.attachments.length === 0;
+
+  let timelineBucket: DocumentReadinessStatus['timelineBucket'] = 'healthy';
+  if (expiry.severity === 'expired') {
+    timelineBucket = 'expired';
+  } else if (expiry.severity === 'critical') {
+    timelineBucket = 'urgent';
+  } else if (expiry.severity === 'warning' || travelSixMonthWarning) {
+    timelineBucket = 'upcoming';
+  }
+
+  return {
+    expiry,
+    travelSixMonthWarning,
+    missingBackupScan,
+    needsReadinessAttention:
+      timelineBucket !== 'healthy' || missingBackupScan,
+    timelineBucket
+  };
+}
+
 export function parseExpiryDateUtc(rawDate: string): Date | null {
   const raw = rawDate.trim();
   if (!raw) return null;
@@ -268,12 +310,8 @@ export function searchVaultItems(
       if (!hasTag) return false;
     }
     if (filter.expiringOnly) {
-      const exp = computeExpiryStatus(item, refMs, windowDays);
-      if (
-        exp.severity !== 'warning' &&
-        exp.severity !== 'critical' &&
-        exp.severity !== 'expired'
-      ) {
+      const readiness = computeDocumentReadiness(item, refMs, windowDays);
+      if (!readiness.needsReadinessAttention) {
         return false;
       }
     }

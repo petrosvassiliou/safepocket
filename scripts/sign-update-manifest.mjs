@@ -69,9 +69,9 @@ function main() {
   const { privateKey, publicKey, rawPubHex } = loadOrCreateEd25519KeyPair();
 
   const latestVersion = (
-    process.env.SAFEPOCKET_RELEASE_VERSION || '0.5.0-beta.4'
+    process.env.SAFEPOCKET_RELEASE_VERSION || '0.5.0'
   ).replace(/^v/i, '');
-  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '19');
+  const versionCode = Number(process.env.SAFEPOCKET_VERSION_CODE || '20');
   const channel =
     process.env.SAFEPOCKET_RELEASE_CHANNEL ||
     (latestVersion.includes('-') ? 'beta' : 'stable');
@@ -93,17 +93,17 @@ function main() {
     latestVersion,
     versionCode,
     minimumSupportedVersionCode: 1,
-    publishedAt: '2026-11-23T11:30:00Z',
+    publishedAt: '2026-11-27T00:20:00Z',
     signingKeyId: 'safepocket-release-ed25519-2026',
     signingPublicKeyHex: rawPubHex,
     manifestSignature: '',
     releaseNotes: {
-      en: `• SafePocket v${latestVersion} adds Phase 2 Signature Digital Wallet UX across Android, macOS, and PWA: 30s radial clipboard hygiene pill, offline EPC069-12 SEPA GiroCode QR on bank accounts, Counter Pass Mode with 4-character Read-Aloud dictation blocks, and Pinned Wallet Deck.\n• Includes Phase 1 3D flippable ISO ID-1 cards, 5-tab Settings, Cross-Platform Zero-Knowledge Cloud Sync v2, and Google Play Protect compliant updates.`,
-      de: `• SafePocket v${latestVersion} ergänzt Phase 2 Digital-Wallet-UX für Android, macOS und PWA: schwebende 30s-Zwischenablage-Anzeige mit Countdown-Ring, Offline-SEPA-GiroCode (EPC-QR) für Bankkonten, Pass- & Vorlesemodus (4er-Blöcke) sowie angepinntes Wallet-Deck.\n• Inklusive Phase-1-3D-Karten, 5-Tab-Einstellungen und Zero-Knowledge Cloud-Sync v2.`,
-      it: `• SafePocket v${latestVersion} aggiunge la UX Digital Wallet Fase 2 su Android, macOS e PWA: indicatore appunti con conto alla rovescia di 30s, QR SEPA (EPC GiroCode) offline, modalità Pass e dettatura a blocchi di 4 caratteri, e mazzo di carte fissate.`,
-      fr: `• SafePocket v${latestVersion} ajoute l’UX Portefeuille Numérique Phase 2 sur Android, macOS et PWA : pilule presse-papiers avec anneau 30s, QR SEPA (EPC GiroCode) hors ligne, mode Pass et dictée par blocs de 4 caractères, et cartes épinglées.`,
-      es: `• SafePocket v${latestVersion} incorpora la UX de Cartera Digital Fase 2 en Android, macOS y PWA: píldora de portapapeles con anillo de 30s, QR SEPA (EPC GiroCode) sin conexión, modo Pase y dictado en bloques de 4 caracteres, y tarjetas fijadas.`,
-      el: `• Το SafePocket v${latestVersion} προσθέτει τη Φάση 2 Digital Wallet UX σε Android, macOS και PWA: ένδειξη προχείρου 30s, κωδικό QR SEPA (EPC) εκτός σύνδεσης, λειτουργία πάσου και υπαγόρευσης ανά 4 χαρακτήρες, και καρφιτσωμένες κάρτες.`
+      en: `• SafePocket v${latestVersion} Stable delivers the complete Digital Wallet & Power UX overhaul across Android, macOS, and PWA: 3D flippable ISO ID-1 cards with click-to-reveal CVV, Pinned Wallet Deck, offline EPC069-12 SEPA GiroCode QR, Counter Pass & Read-Aloud mode, 30s radial clipboard hygiene, Cmd/Ctrl+K Command Palette, 6-month Passport Travel Readiness Radar, and Quick-Copy swipe gestures.\n• Includes macOS single hardware-bound encrypted keybag (zero repeated Keychain prompts) and Cross-Platform Zero-Knowledge Cloud Sync v2.`,
+      de: `• SafePocket v${latestVersion} Stable bringt das komplette Digital-Wallet- & Power-UX-Upgrade für Android, macOS und PWA: drehbare 3D-Karten mit CVV-Direktanzeige, angepinntes Wallet-Deck, Offline-SEPA-GiroCode (EPC-QR), Pass- & Vorlesemodus, 30s-Zwischenablage-Countdown, Cmd/Ctrl+K-Befehlspalette, 6-Monats-Reisepass-Radar und Schnellkopier-Wischgesten.\n• Inklusive einheitlichem macOS-Keybag ohne wiederholte Schlüsselbund-Abfragen und Zero-Knowledge Cloud-Sync v2.`,
+      it: `• SafePocket v${latestVersion} Stable introduce il rinnovamento completo Digital Wallet su Android, macOS e PWA: carte 3D girevoli con CVV cliccabile, mazzo fissato, QR SEPA offline, modalità Pass e dettatura, comando rapido Cmd/Ctrl+K, radar passaporti (< 6 mesi) e swipe di copia rapida.`,
+      fr: `• SafePocket v${latestVersion} Stable apporte la refonte complète Portefeuille Numérique sur Android, macOS et PWA : cartes 3D retournables avec CVV cliquable, cartes épinglées, QR SEPA hors ligne, mode Pass et dictée, palette Cmd/Ctrl+K, radar passeports (< 6 mois) et balayage copie rapide.`,
+      es: `• SafePocket v${latestVersion} Stable presenta la renovación completa de Cartera Digital en Android, macOS y PWA: tarjetas 3D giratorias con CVV clicable, mazo fijado, QR SEPA sin conexión, modo Pase y dictado, paleta Cmd/Ctrl+K, radar de pasaportes (< 6 meses) y gesto de copia rápida.`,
+      el: `• Το SafePocket v${latestVersion} Stable φέρνει την πλήρη αναβάθμιση Digital Wallet σε Android, macOS και PWA: τρισδιάστατες κάρτες με εμφάνιση CVV, καρφιτσωμένες κάρτες, QR SEPA εκτός σύνδεσης, λειτουργία πάσου/υπαγόρευσης, παλέτα εντολών Cmd/Ctrl+K, ραντάρ διαβατηρίων (< 6 μηνών) και γρήγορη αντιγραφή με σύρσιμο.`
     },
     artifacts: {
       'android-universal': {

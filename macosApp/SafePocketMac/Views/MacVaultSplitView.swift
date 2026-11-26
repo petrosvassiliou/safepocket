@@ -98,6 +98,20 @@ struct MacVaultSplitView: View {
         .sheet(item: $presentingPassEntry) { passEntry in
             MacPassPresentationSheet(vaultState: vaultState, entry: passEntry)
         }
+        .sheet(isPresented: $vaultState.presentCommandPalette) {
+            MacCommandPaletteSheet(vaultState: vaultState) { passTarget in
+                presentingPassEntry = passTarget
+            }
+        }
+        .onChange(of: vaultState.presentPassRequested) { _, requested in
+            if requested {
+                vaultState.presentPassRequested = false
+                if let selected = vaultState.entries.first(where: { $0.id == vaultState.selectedEntryId }),
+                   selected.category != "SECURE_NOTE" {
+                    presentingPassEntry = selected
+                }
+            }
+        }
         .confirmationDialog(
             vaultState.t("delete_example_data_confirm", ["count": String(vaultState.sampleEntriesCount)]),
             isPresented: $confirmDeleteSamples
@@ -221,6 +235,9 @@ struct MacVaultSplitView: View {
                     .tag("all")
                 Label(vaultState.t("nav_favorites"), systemImage: "star")
                     .tag("favorites")
+                Label(vaultState.t("nav_expiring"), systemImage: "clock.badge.exclamationmark")
+                    .badge(vaultState.readinessAttentionCount)
+                    .tag("expiring")
             }
             Section {
                 Label(vaultState.t("category_payment_card"), systemImage: "creditcard")
@@ -325,6 +342,14 @@ struct MacVaultSplitView: View {
                             .font(.body.weight(.semibold))
                             .lineLimit(1)
                         Spacer(minLength: 6)
+                        if vaultState.isTravelSixMonthWarning(entry) {
+                            Text(vaultState.t("readiness_passport_6m_badge"))
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.18), in: Capsule())
+                                .foregroundStyle(.orange)
+                        }
                         if let days = entry.daysUntilExpiry(), days <= vaultState.expiryWindowDays {
                             Text(days < 0 ? vaultState.t("badge_expired") : "\(days)d")
                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -342,6 +367,12 @@ struct MacVaultSplitView: View {
                 .padding(.vertical, 4)
                 .tag(entry.id)
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    Button {
+                        vaultState.copyFieldWithClipboardHygiene(entry.primaryValue, isSensitive: true)
+                    } label: {
+                        Label(vaultState.t("swipe_quick_copy_hint"), systemImage: "doc.on.doc")
+                    }
+                    .tint(.indigo)
                     Button {
                         vaultState.togglePin(entry.id)
                     } label: {
@@ -3156,6 +3187,182 @@ private struct MacStorageModeSelectionCard: View {
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.14)) {
                 isHovered = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Phase 3: Instant Cmd+K Command Palette Sheet
+
+struct MacCommandPaletteSheet: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+    let onPresentPass: (MacVaultEntry) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var query: String = ""
+    @State private var highlightedIndex: Int = 0
+    @FocusState private var queryFocused: Bool
+
+    private var matchingItems: [MacVaultEntry] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = vaultState.entries.filter { item in
+            guard !q.isEmpty else { return true }
+            return item.title.lowercased().contains(q)
+                || vaultState.displaySubtitle(for: item).lowercased().contains(q)
+                || item.subtitle.lowercased().contains(q)
+                || item.fields.contains(where: { $0.value.lowercased().contains(q) })
+                || item.tags.contains(where: { $0.lowercased().contains(q) })
+        }
+        return Array(
+            filtered.sorted { lhs, rhs in
+                if lhs.pinned != rhs.pinned { return lhs.pinned && !rhs.pinned }
+                return lhs.updatedAt > rhs.updatedAt
+            }.prefix(12)
+        )
+    }
+
+    private func secondaryQuickField(for item: MacVaultEntry) -> MacVaultField? {
+        let keys = ["field_cvv", "field_bic", "field_pin", "field_routing_code", "field_expiry_date"]
+        for k in keys {
+            if let f = item.fields.first(where: { $0.labelKey == k && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                return f
+            }
+        }
+        return nil
+    }
+
+    var body: some View {
+        let items = matchingItems
+        let safeIdx = min(max(0, highlightedIndex), max(0, items.count - 1))
+
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField(vaultState.t("cmd_palette_placeholder"), text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15, weight: .medium))
+                    .focused($queryFocused)
+                    .onChange(of: query) { _, _ in
+                        highlightedIndex = 0
+                    }
+                    .onSubmit {
+                        guard items.indices.contains(safeIdx) else { return }
+                        let target = items[safeIdx]
+                        vaultState.selectedEntryId = target.id
+                        if !target.primaryValue.isEmpty {
+                            vaultState.copyFieldWithClipboardHygiene(target.primaryValue, isSensitive: true)
+                        }
+                        vaultState.presentCommandPalette = false
+                        dismiss()
+                    }
+                Button("ESC") {
+                    vaultState.presentCommandPalette = false
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            Divider()
+
+            ScrollView {
+                VStack(spacing: 4) {
+                    if items.isEmpty {
+                        Text(vaultState.t("search_empty_title"))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 24)
+                    } else {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                            let sec = secondaryQuickField(for: item)
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.title)
+                                        .font(.system(size: 13.5, weight: .semibold))
+                                        .lineLimit(1)
+                                    Text(vaultState.displaySubtitle(for: item))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 8)
+                                if !item.primaryValue.isEmpty {
+                                    Button(vaultState.t("action_copy")) {
+                                        vaultState.selectedEntryId = item.id
+                                        vaultState.copyFieldWithClipboardHygiene(item.primaryValue, isSensitive: true)
+                                        vaultState.presentCommandPalette = false
+                                        dismiss()
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                }
+                                if let sec {
+                                    Button("⇧↵") {
+                                        vaultState.selectedEntryId = item.id
+                                        vaultState.copyFieldWithClipboardHygiene(sec.value, isSensitive: sec.isSensitive)
+                                        vaultState.presentCommandPalette = false
+                                        dismiss()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                                if item.category != "SECURE_NOTE" {
+                                    Button {
+                                        vaultState.selectedEntryId = item.id
+                                        vaultState.presentCommandPalette = false
+                                        dismiss()
+                                        onPresentPass(item)
+                                    } label: {
+                                        Image(systemName: "viewfinder")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                idx == safeIdx
+                                    ? vaultState.materialAccent.swiftUIColor.opacity(0.14)
+                                    : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .onTapGesture {
+                                vaultState.selectedEntryId = item.id
+                                vaultState.presentCommandPalette = false
+                                dismiss()
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+            }
+            .frame(maxHeight: 330)
+
+            Divider()
+
+            HStack {
+                Text(vaultState.t("cmd_palette_hint_enter"))
+                Spacer()
+                Text(vaultState.t("cmd_palette_hint_shift_enter"))
+                Spacer()
+                Text(vaultState.t("cmd_palette_hint_pass"))
+            }
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(.bar)
+        }
+        .frame(width: 560)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                queryFocused = true
             }
         }
     }

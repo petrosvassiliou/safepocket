@@ -1,9 +1,27 @@
 package com.safepocket.shared.search
 
 import com.safepocket.shared.i18n.LocalizationEngine
+import com.safepocket.shared.model.ExpirySeverity
+import com.safepocket.shared.model.ExpiryStatus
 import com.safepocket.shared.model.VaultCategory
 import com.safepocket.shared.model.VaultItemPayload
 import com.safepocket.shared.model.VaultSortMode
+import kotlin.math.ceil
+
+enum class ReadinessTimelineBucket {
+    EXPIRED,
+    URGENT,
+    UPCOMING,
+    HEALTHY
+}
+
+data class DocumentReadiness(
+    val expiry: ExpiryStatus,
+    val travelSixMonthWarning: Boolean,
+    val missingBackupScan: Boolean,
+    val needsReadinessAttention: Boolean,
+    val timelineBucket: ReadinessTimelineBucket
+)
 
 /**
  * Instant (< 50ms) Multilingual Vault Search Engine.
@@ -157,6 +175,98 @@ class MultilingualSearchEngine(
             for (ch in input) {
                 append(GREEK_TO_LATIN[ch] ?: ch.toString())
             }
+        }
+
+        private fun isLeapYear(year: Int): Boolean =
+            (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+
+        private fun lastDayOfMonth(year: Int, month: Int): Int = when (month) {
+            1, 3, 5, 7, 8, 10, 12 -> 31
+            4, 6, 9, 11 -> 30
+            2 -> if (isLeapYear(year)) 29 else 28
+            else -> 30
+        }
+
+        private fun daysFromCivil(year: Int, month: Int, day: Int): Long {
+            val y = year - if (month <= 2) 1 else 0
+            val era = if (y >= 0) y / 400 else (y - 399) / 400
+            val yoe = y - era * 400
+            val doy = (153 * (month + if (month > 2) -3 else 9) + 2) / 5 + day - 1
+            val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+            return era * 146097L + doe - 719468L
+        }
+
+        fun parseExpiryUtcEpochMs(rawDate: String): Long? {
+            val raw = rawDate.trim()
+            if (raw.isEmpty()) return null
+            val ymd = when {
+                Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(raw) -> {
+                    val parts = raw.split("-")
+                    Triple(parts[0].toIntOrNull() ?: return null, parts[1].toIntOrNull() ?: return null, parts[2].toIntOrNull() ?: return null)
+                }
+                Regex("^\\d{4}-\\d{2}$").matches(raw) -> {
+                    val parts = raw.split("-")
+                    val y = parts[0].toIntOrNull() ?: return null
+                    val m = parts[1].toIntOrNull() ?: return null
+                    if (m !in 1..12) return null
+                    Triple(y, m, lastDayOfMonth(y, m))
+                }
+                Regex("^(0[1-9]|1[0-2])/\\d{2}$").matches(raw) -> {
+                    val parts = raw.split("/")
+                    val m = parts[0].toIntOrNull() ?: return null
+                    val y = 2000 + (parts[1].toIntOrNull() ?: return null)
+                    Triple(y, m, lastDayOfMonth(y, m))
+                }
+                else -> return null
+            }
+            val (year, month, day) = ymd
+            if (month !in 1..12 || day !in 1..lastDayOfMonth(year, month)) return null
+            val epochDays = daysFromCivil(year, month, day)
+            return epochDays * 86_400_000L + 86_399_000L
+        }
+
+        fun computeExpiryStatus(
+            item: VaultItemPayload,
+            referenceEpochMs: Long,
+            warningWindowDays: Int = 90
+        ): ExpiryStatus {
+            val rawExpiry = item.expiryIsoDate() ?: return ExpiryStatus(ExpirySeverity.NONE, 0L)
+            val targetMs = parseExpiryUtcEpochMs(rawExpiry) ?: return ExpiryStatus(ExpirySeverity.NONE, 0L)
+            val diffDays = ceil((targetMs - referenceEpochMs).toDouble() / 86_400_000.0).toLong()
+            val severity = when {
+                diffDays < 0L -> ExpirySeverity.EXPIRED
+                diffDays <= 30L -> ExpirySeverity.CRITICAL_SOON
+                diffDays <= warningWindowDays.toLong() -> ExpirySeverity.EXPIRING_SOON
+                else -> ExpirySeverity.VALID
+            }
+            return ExpiryStatus(severity = severity, daysDelta = diffDays)
+        }
+
+        fun computeDocumentReadiness(
+            item: VaultItemPayload,
+            referenceEpochMs: Long,
+            warningWindowDays: Int = 90
+        ): DocumentReadiness {
+            val expiry = computeExpiryStatus(item, referenceEpochMs, warningWindowDays)
+            val isTravelDoc = item.category == VaultCategory.OFFICIAL_DOCUMENT || item.category == VaultCategory.IDENTITY
+            val travelSixMonthWarning = isTravelDoc &&
+                expiry.severity != ExpirySeverity.NONE &&
+                expiry.daysDelta in 0L..180L
+            val missingBackupScan = isTravelDoc && item.attachments.isEmpty()
+
+            val bucket = when {
+                expiry.severity == ExpirySeverity.EXPIRED -> ReadinessTimelineBucket.EXPIRED
+                expiry.severity == ExpirySeverity.CRITICAL_SOON -> ReadinessTimelineBucket.URGENT
+                expiry.severity == ExpirySeverity.EXPIRING_SOON || travelSixMonthWarning -> ReadinessTimelineBucket.UPCOMING
+                else -> ReadinessTimelineBucket.HEALTHY
+            }
+            return DocumentReadiness(
+                expiry = expiry,
+                travelSixMonthWarning = travelSixMonthWarning,
+                missingBackupScan = missingBackupScan,
+                needsReadinessAttention = bucket != ReadinessTimelineBucket.HEALTHY || missingBackupScan,
+                timelineBucket = bucket
+            )
         }
     }
 }

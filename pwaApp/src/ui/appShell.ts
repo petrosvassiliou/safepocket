@@ -46,6 +46,7 @@ import {
   validatePaymentCardPan
 } from '../scanner/mrzAndCardValidator';
 import {
+  computeDocumentReadiness,
   computeExpiryStatus,
   extractVaultTags,
   searchVaultItems,
@@ -263,6 +264,10 @@ export class SafePocketAppShell {
     itemId: string;
     formatOverride?: BarcodeFormat;
     tab?: 'digital' | 'read_aloud' | 'scans';
+  } | null = null;
+  private commandPaletteState: {
+    query: string;
+    selectedIdx: number;
   } | null = null;
   private sepaQrExpandedIds = new Set<string>();
   private sepaAmountByItemId: Record<string, string> = {};
@@ -1304,6 +1309,7 @@ export class SafePocketAppShell {
     this.sepaQrExpandedIds.clear();
     this.sepaAmountByItemId = {};
     this.sepaPurposeByItemId = {};
+    this.commandPaletteState = null;
     this.settingsModalOpen = false;
     this.editorDraft = null;
     this.restoreModalState = null;
@@ -1474,6 +1480,11 @@ export class SafePocketAppShell {
   private bindGlobalShortcuts(): void {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        if (this.commandPaletteState) {
+          this.commandPaletteState = null;
+          this.render();
+          return;
+        }
         if (this.confirmDeleteSamplesOpen) {
           this.confirmDeleteSamplesOpen = false;
           this.render();
@@ -1523,7 +1534,31 @@ export class SafePocketAppShell {
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
-      if (key === 'f') {
+      if (key === 'k') {
+        e.preventDefault();
+        if (this.crypto.isUnlocked) {
+          this.commandPaletteState = this.commandPaletteState
+            ? null
+            : { query: '', selectedIdx: 0 };
+          this.render();
+          this.root
+            .querySelector<HTMLInputElement>('#sp-cmd-palette-input')
+            ?.focus();
+        }
+      } else if (key === 'p') {
+        if (this.crypto.isUnlocked && !this.editorDraft) {
+          const targetId = this.commandPaletteState
+            ? this.getCommandPaletteItems()[this.commandPaletteState.selectedIdx]
+                ?.id ?? this.selectedItemId
+            : this.selectedItemId;
+          if (targetId) {
+            e.preventDefault();
+            this.commandPaletteState = null;
+            this.openPresentationMode(targetId);
+            this.render();
+          }
+        }
+      } else if (key === 'f') {
         e.preventDefault();
         const searchEl = this.root.querySelector<HTMLInputElement>(
           '#sp-global-search'
@@ -2133,6 +2168,11 @@ export class SafePocketAppShell {
       Date.now(),
       this.expiryWindowDays
     );
+    const readinessAttentionCount = this.items.filter(
+      (i) =>
+        computeDocumentReadiness(i, Date.now(), this.expiryWindowDays)
+          .needsReadinessAttention
+    ).length;
     const allTags = extractVaultTags(this.items);
     const versionBanner = this.i18n.t('update_version_display', {
       version: APP_BUILD_INFO.versionName,
@@ -2166,7 +2206,7 @@ export class SafePocketAppShell {
               ${this.renderNavBtn(
                 'EXPIRING',
                 this.i18n.t('nav_expiring'),
-                expirySummary.totalAttentionCount
+                readinessAttentionCount
               )}
             </nav>
 
@@ -2282,7 +2322,13 @@ export class SafePocketAppShell {
                 placeholder="${this.escape(this.i18n.t('search_placeholder'))}"
                 autocomplete="off"
               />
-              <span class="sp-kbd">Ctrl+F</span>
+              <button
+                type="button"
+                id="sp-open-cmd-palette-btn"
+                class="sp-kbd"
+                style="cursor:pointer;border:1px solid var(--border-subtle);background:var(--surface-card);"
+                title="${this.escape(this.i18n.t('cmd_palette_title'))} (⌘K / Ctrl+K)"
+              >⌘K</button>
             </div>
             <div class="sp-list-toolbar">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -2453,11 +2499,16 @@ export class SafePocketAppShell {
                        this.i18n.t('search_empty_subtitle')
                      )}</div>
                    </div>`
-                : filtered
-                    .map((item) =>
-                      this.renderItemListRow(item, selectedItem?.id === item.id)
+                : this.selectedNav === 'EXPIRING'
+                  ? this.renderExpiringReadinessGroups(
+                      filtered,
+                      selectedItem?.id ?? null
                     )
-                    .join('')
+                  : filtered
+                      .map((item) =>
+                        this.renderItemListRow(item, selectedItem?.id === item.id)
+                      )
+                      .join('')
             }
           </div>
         </section>
@@ -2484,6 +2535,7 @@ export class SafePocketAppShell {
       ${this.editorDraft ? this.renderItemEditorModal() : ''}
       ${this.activePreview ? this.renderScanPreviewModal() : ''}
       ${this.presentationState ? this.renderPresentationModal() : ''}
+      ${this.commandPaletteState ? this.renderCommandPaletteModal() : ''}
       ${this.restoreModalState ? this.renderRestoreBackupModal() : ''}
       ${this.plainExportModalState ? this.renderPlainExportModal() : ''}
       ${this.confirmDeleteSamplesOpen ? this.renderConfirmDeleteSamplesModal() : ''}
@@ -2492,6 +2544,7 @@ export class SafePocketAppShell {
     `;
 
     this.wireShellEvents();
+    this.wireCommandPaletteEvents();
 
     if (activeSearchInput) {
       const restored =
@@ -2842,29 +2895,57 @@ export class SafePocketAppShell {
   }
 
   private renderItemListRow(item: VaultItem, isSelected: boolean): string {
-    const exp = computeExpiryStatus(item, Date.now(), this.expiryWindowDays);
+    const readiness = computeDocumentReadiness(
+      item,
+      Date.now(),
+      this.expiryWindowDays
+    );
+    const exp = readiness.expiry;
     const resolved = resolveDualBrand(item);
     const miniLogoHtml = renderInstitutionLogoHtml(item, resolved, 28);
-    let badgeHtml = '';
+    const badges: string[] = [];
     if (exp.severity === 'critical') {
-      badgeHtml = `<span class="sp-badge sp-badge-critical">${renderIconSvg('clock', 11)} ${this.escape(
-        this.i18n.plural('expiry_critical', exp.daysRemaining, {
-          days: exp.daysRemaining
-        })
-      )}</span>`;
+      badges.push(
+        `<span class="sp-badge sp-badge-critical">${renderIconSvg('clock', 11)} ${this.escape(
+          this.i18n.plural('expiry_critical', exp.daysRemaining, {
+            days: exp.daysRemaining
+          })
+        )}</span>`
+      );
     } else if (exp.severity === 'warning') {
-      badgeHtml = `<span class="sp-badge sp-badge-warn">${this.escape(
-        this.i18n.plural('expiry_warning', exp.daysRemaining, {
-          days: exp.daysRemaining
-        })
-      )}</span>`;
+      badges.push(
+        `<span class="sp-badge sp-badge-warn">${this.escape(
+          this.i18n.plural('expiry_warning', exp.daysRemaining, {
+            days: exp.daysRemaining
+          })
+        )}</span>`
+      );
     } else if (exp.severity === 'expired') {
-      badgeHtml = `<span class="sp-badge sp-badge-expired">${this.escape(
-        this.i18n.plural('expiry_expired', Math.abs(exp.daysRemaining), {
-          days: Math.abs(exp.daysRemaining)
-        })
-      )}</span>`;
+      badges.push(
+        `<span class="sp-badge sp-badge-expired">${this.escape(
+          this.i18n.plural('expiry_expired', Math.abs(exp.daysRemaining), {
+            days: Math.abs(exp.daysRemaining)
+          })
+        )}</span>`
+      );
     }
+    if (readiness.travelSixMonthWarning) {
+      badges.push(
+        `<span class="sp-badge sp-badge-travel" title="${this.escape(
+          this.i18n.t('readiness_passport_6m_desc')
+        )}">${renderIconSvg('globe', 11)} ${this.escape(
+          this.i18n.t('readiness_passport_6m_badge')
+        )}</span>`
+      );
+    }
+    if (readiness.missingBackupScan) {
+      badges.push(
+        `<span class="sp-badge sp-badge-scan-missing">${renderIconSvg('camera', 11)} ${this.escape(
+          this.i18n.t('readiness_missing_scan_badge')
+        )}</span>`
+      );
+    }
+    const badgeHtml = badges.join(' ');
 
     const swipeClass =
       this.swipedItemState?.itemId === item.id
@@ -2880,6 +2961,14 @@ export class SafePocketAppShell {
         data-entry-context="${this.escape(item.id)}"
       >
         <div class="sp-swipe-actions-rail is-left">
+          <button
+            type="button"
+            class="sp-swipe-action-btn is-copy"
+            data-swipe-copy="${this.escape(item.id)}"
+            title="${this.escape(this.i18n.t('swipe_quick_copy_hint'))}"
+          >${renderIconSvg('copy', 12)} ${this.escape(
+            this.i18n.t('swipe_quick_copy_hint')
+          )}</button>
           <button
             type="button"
             class="sp-swipe-action-btn is-pin"
@@ -7471,6 +7560,21 @@ export class SafePocketAppShell {
           startX = null;
           startY = null;
           if (Math.abs(dx) >= 44 && Math.abs(dx) > dy * 1.4 && itemId) {
+            if (dx >= 120) {
+              const target = this.items.find((i) => i.id === itemId);
+              if (target) {
+                const primary = getPrimaryCopyableField(target);
+                if (primary) {
+                  void this.clipboard.copyValue(
+                    primary.value,
+                    Boolean(primary.isSensitive)
+                  );
+                }
+              }
+              this.swipedItemState = null;
+              this.render();
+              return;
+            }
             if (dx < 0) {
               this.swipedItemState =
                 this.swipedItemState?.itemId === itemId &&
@@ -9534,6 +9638,357 @@ export class SafePocketAppShell {
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  private renderExpiringReadinessGroups(
+    items: VaultItem[],
+    selectedId: string | null
+  ): string {
+    const nowMs = Date.now();
+    const expired: VaultItem[] = [];
+    const urgent: VaultItem[] = [];
+    const upcoming: VaultItem[] = [];
+
+    for (const item of items) {
+      const r = computeDocumentReadiness(item, nowMs, this.expiryWindowDays);
+      if (r.timelineBucket === 'expired') expired.push(item);
+      else if (r.timelineBucket === 'urgent') urgent.push(item);
+      else upcoming.push(item);
+    }
+
+    const renderGroup = (titleKey: string, groupItems: VaultItem[]): string => {
+      if (groupItems.length === 0) return '';
+      return `
+        <div class="sp-readiness-timeline-group">
+          <span>${this.escape(this.i18n.t(titleKey))}</span>
+          <span>${groupItems.length}</span>
+        </div>
+        ${groupItems
+          .map((item) => this.renderItemListRow(item, selectedId === item.id))
+          .join('')}
+      `;
+    };
+
+    return `
+      ${renderGroup('readiness_group_expired', expired)}
+      ${renderGroup('readiness_group_urgent', urgent)}
+      ${renderGroup('readiness_group_upcoming', upcoming)}
+    `;
+  }
+
+  private getCommandPaletteItems(): VaultItem[] {
+    if (!this.commandPaletteState) return [];
+    const q = this.commandPaletteState.query;
+    const matches = searchVaultItems(this.items, q, this.i18n, {});
+    return sortVaultItems(
+      matches,
+      'pinned_recent',
+      this.i18n.activeLocale,
+      Date.now(),
+      this.expiryWindowDays
+    ).slice(0, 12);
+  }
+
+  private resolveSecondaryQuickField(
+    item: VaultItem
+  ): { value: string; isSensitive: boolean } | null {
+    const keys = [
+      'field_cvv',
+      'field_bic',
+      'field_pin',
+      'field_routing_code',
+      'field_expiry_date'
+    ];
+    for (const k of keys) {
+      const found = item.fields.find(
+        (f) => f.labelKey === k && Boolean(f.value?.trim())
+      );
+      if (found) {
+        return {
+          value: found.value.trim(),
+          isSensitive: Boolean(found.isSensitive)
+        };
+      }
+    }
+    return null;
+  }
+
+  private renderCommandPaletteRowsHtml(): string {
+    if (!this.commandPaletteState) return '';
+    const matches = this.getCommandPaletteItems();
+    if (matches.length === 0) {
+      return `<div style="padding:20px 14px;text-align:center;color:var(--text-muted);font-size:13px;">${this.escape(
+        this.i18n.t('search_empty_title')
+      )}</div>`;
+    }
+    const clampedIdx = Math.max(
+      0,
+      Math.min(this.commandPaletteState.selectedIdx, matches.length - 1)
+    );
+    this.commandPaletteState.selectedIdx = clampedIdx;
+
+    return matches
+      .map((item, idx) => {
+        const resolved = resolveDualBrand(item);
+        const logoHtml = renderInstitutionLogoHtml(item, resolved, 28);
+        const primary = getPrimaryCopyableField(item);
+        const secondary = this.resolveSecondaryQuickField(item);
+        return `
+          <div
+            class="sp-cmd-palette-row ${idx === clampedIdx ? 'is-highlighted' : ''}"
+            data-cmd-idx="${idx}"
+            data-cmd-item="${this.escape(item.id)}"
+          >
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+              ${logoHtml}
+              <div style="display:flex;flex-direction:column;min-width:0;">
+                <span style="font-weight:650;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${this.escape(
+                  item.title
+                )}</span>
+                <span style="font-size:11.5px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${this.escape(
+                  this.i18n.resolveDisplaySubtitle(item.subtitle, item.category)
+                )}</span>
+              </div>
+            </div>
+            <div style="display:inline-flex;align-items:center;gap:6px;flex-shrink:0;">
+              ${
+                primary
+                  ? `<button type="button" class="sp-btn sp-btn-tonal" style="min-height:26px;padding:2px 8px;font-size:11px;" data-cmd-copy-primary="${this.escape(
+                      item.id
+                    )}">${renderIconSvg('copy', 12)} ${this.escape(
+                      this.i18n.t('action_copy')
+                    )}</button>`
+                  : ''
+              }
+              ${
+                secondary
+                  ? `<button type="button" class="sp-btn" style="min-height:26px;padding:2px 8px;font-size:11px;" data-cmd-copy-secondary="${this.escape(
+                      item.id
+                    )}">⇧↵</button>`
+                  : ''
+              }
+              ${
+                item.category !== 'SECURE_NOTE'
+                  ? `<button type="button" class="sp-btn" style="min-height:26px;padding:2px 8px;font-size:11px;" data-cmd-pass="${this.escape(
+                      item.id
+                    )}">${renderIconSvg('present', 12)}</button>`
+                  : ''
+              }
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+  }
+
+  private renderCommandPaletteModal(): string {
+    if (!this.commandPaletteState) return '';
+    return `
+      <div class="sp-overlay" id="sp-cmd-palette-backdrop" style="z-index:990;align-items:flex-start;padding-top:10vh;">
+        <div class="sp-cmd-palette-card" role="dialog" aria-modal="true" aria-label="${this.escape(
+          this.i18n.t('cmd_palette_title')
+        )}">
+          <div class="sp-cmd-palette-search">
+            ${renderIconSvg('search', 16)}
+            <input
+              type="text"
+              id="sp-cmd-palette-input"
+              class="sp-cmd-palette-input"
+              placeholder="${this.escape(
+                this.i18n.t('cmd_palette_placeholder')
+              )}"
+              value="${this.escape(this.commandPaletteState.query)}"
+              autocomplete="off"
+            />
+            <span class="sp-kbd">ESC</span>
+          </div>
+          <div class="sp-cmd-palette-list" id="sp-cmd-palette-results">
+            ${this.renderCommandPaletteRowsHtml()}
+          </div>
+          <div class="sp-cmd-palette-footer">
+            <span>${this.escape(this.i18n.t('cmd_palette_hint_enter'))}</span>
+            <span>${this.escape(
+              this.i18n.t('cmd_palette_hint_shift_enter')
+            )}</span>
+            <span>${this.escape(this.i18n.t('cmd_palette_hint_pass'))}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private wireCommandPaletteRowActions(): void {
+    this.root
+      .querySelectorAll<HTMLElement>('[data-cmd-copy-primary]')
+      .forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const item = this.items.find(
+            (i) => i.id === btn.dataset.cmdCopyPrimary
+          );
+          this.commandPaletteState = null;
+          if (item) {
+            this.selectedItemId = item.id;
+            const primary = getPrimaryCopyableField(item);
+            if (primary) {
+              await this.clipboard.copyValue(
+                primary.value,
+                Boolean(primary.isSensitive)
+              );
+              if (!primary.isSensitive) {
+                this.showToast(this.i18n.t('action_copied'));
+              }
+            }
+          }
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-cmd-copy-secondary]')
+      .forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const item = this.items.find(
+            (i) => i.id === btn.dataset.cmdCopySecondary
+          );
+          this.commandPaletteState = null;
+          if (item) {
+            this.selectedItemId = item.id;
+            const sec = this.resolveSecondaryQuickField(item);
+            if (sec) {
+              await this.clipboard.copyValue(sec.value, sec.isSensitive);
+              if (!sec.isSensitive) {
+                this.showToast(this.i18n.t('action_copied'));
+              }
+            }
+          }
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-cmd-pass]')
+      .forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = btn.dataset.cmdPass;
+          this.commandPaletteState = null;
+          if (id) {
+            this.selectedItemId = id;
+            this.openPresentationMode(id);
+          }
+          this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-cmd-item]')
+      .forEach((row) => {
+        row.addEventListener('click', () => {
+          const id = row.dataset.cmdItem;
+          this.commandPaletteState = null;
+          if (id) {
+            this.selectedItemId = id;
+            this.mobileDetailOpen = true;
+          }
+          this.render();
+        });
+      });
+  }
+
+  private wireCommandPaletteEvents(): void {
+    this.root
+      .querySelector('#sp-open-cmd-palette-btn')
+      ?.addEventListener('click', () => {
+        this.commandPaletteState = { query: '', selectedIdx: 0 };
+        this.render();
+        this.root
+          .querySelector<HTMLInputElement>('#sp-cmd-palette-input')
+          ?.focus();
+      });
+
+    if (!this.commandPaletteState) return;
+
+    this.root
+      .querySelector('#sp-cmd-palette-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+          this.commandPaletteState = null;
+          this.render();
+        }
+      });
+
+    const inputEl = this.root.querySelector<HTMLInputElement>(
+      '#sp-cmd-palette-input'
+    );
+    const resultsSlot = this.root.querySelector<HTMLElement>(
+      '#sp-cmd-palette-results'
+    );
+
+    const refreshSlot = () => {
+      if (!resultsSlot) return;
+      resultsSlot.innerHTML = this.renderCommandPaletteRowsHtml();
+      this.wireCommandPaletteRowActions();
+    };
+
+    inputEl?.addEventListener('input', () => {
+      if (!this.commandPaletteState) return;
+      this.commandPaletteState.query = inputEl.value;
+      this.commandPaletteState.selectedIdx = 0;
+      refreshSlot();
+    });
+
+    inputEl?.addEventListener('keydown', async (e) => {
+      if (!this.commandPaletteState) return;
+      const matches = this.getCommandPaletteItems();
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (matches.length > 0) {
+          this.commandPaletteState.selectedIdx =
+            (this.commandPaletteState.selectedIdx + 1) % matches.length;
+          refreshSlot();
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (matches.length > 0) {
+          this.commandPaletteState.selectedIdx =
+            (this.commandPaletteState.selectedIdx - 1 + matches.length) %
+            matches.length;
+          refreshSlot();
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const chosen = matches[this.commandPaletteState.selectedIdx];
+        this.commandPaletteState = null;
+        if (chosen) {
+          this.selectedItemId = chosen.id;
+          if (e.shiftKey) {
+            const sec = this.resolveSecondaryQuickField(chosen);
+            if (sec) {
+              await this.clipboard.copyValue(sec.value, sec.isSensitive);
+              if (!sec.isSensitive) {
+                this.showToast(this.i18n.t('action_copied'));
+              }
+            }
+          } else {
+            const primary = getPrimaryCopyableField(chosen);
+            if (primary) {
+              await this.clipboard.copyValue(
+                primary.value,
+                Boolean(primary.isSensitive)
+              );
+              if (!primary.isSensitive) {
+                this.showToast(this.i18n.t('action_copied'));
+              }
+            }
+          }
+        }
+        this.render();
+      }
+    });
+
+    this.wireCommandPaletteRowActions();
   }
 
   private escape(str: string): string {

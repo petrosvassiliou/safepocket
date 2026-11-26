@@ -83,7 +83,9 @@ import com.safepocket.shared.i18n.SupportedLocale
 import com.safepocket.shared.intelligence.SmartFieldIntelligenceEngine
 import com.safepocket.shared.intelligence.WebsiteReachabilityResult
 import com.safepocket.shared.model.*
+import com.safepocket.shared.search.DocumentReadiness
 import com.safepocket.shared.search.MultilingualSearchEngine
+import com.safepocket.shared.search.ReadinessTimelineBucket
 import com.safepocket.shared.update.AppBuildInfo
 import com.safepocket.shared.update.PlatformArtifactDescriptor
 import com.safepocket.shared.update.RemoteUpdateManifest
@@ -184,6 +186,8 @@ fun AdaptiveSafePocketShell(
     var clipboardJob by remember { mutableStateOf<Job?>(null) }
     var clipboardCountdownSecs by remember { mutableStateOf<Int?>(null) }
     var presentingPassItem by remember { mutableStateOf<VaultItemPayload?>(null) }
+    var showCommandPalette by remember { mutableStateOf(false) }
+    var expiringOnly by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var copiedNotice by remember { mutableStateOf<String?>(null) }
     var showPurgeConfirmDialog by remember { mutableStateOf(false) }
@@ -198,17 +202,6 @@ fun AdaptiveSafePocketShell(
         }
     }
 
-    val searchEngine = remember(i18n, activeLocale) { MultilingualSearchEngine(i18n) }
-    val filteredItems = remember(items, searchQuery, selectedCategory, favoritesOnly, activeLocale) {
-        val searched = searchEngine.search(
-            items = items,
-            rawQuery = searchQuery,
-            categoryFilter = selectedCategory,
-            favoritesOnly = favoritesOnly
-        )
-        searchEngine.sortItems(searched, VaultSortMode.PINNED_RECENT)
-    }
-
     val prefs = remember(context) {
         context.getSharedPreferences("safepocket_android_prefs", Context.MODE_PRIVATE)
     }
@@ -218,6 +211,39 @@ fun AdaptiveSafePocketShell(
     var expiryWindowDays by remember {
         val saved = prefs.getInt("expiry_window_days", 90)
         mutableIntStateOf(if (saved in listOf(30, 60, 90, 180)) saved else 90)
+    }
+    val referenceEpochMs = remember(items, expiryWindowDays) { System.currentTimeMillis() }
+    val readinessAttentionCount = remember(items, expiryWindowDays, referenceEpochMs) {
+        items.count {
+            MultilingualSearchEngine.computeDocumentReadiness(it, referenceEpochMs, expiryWindowDays).needsReadinessAttention
+        }
+    }
+
+    val searchEngine = remember(i18n, activeLocale) { MultilingualSearchEngine(i18n) }
+    val filteredItems = remember(
+        items,
+        searchQuery,
+        selectedCategory,
+        favoritesOnly,
+        expiringOnly,
+        expiryWindowDays,
+        referenceEpochMs,
+        activeLocale
+    ) {
+        val searched = searchEngine.search(
+            items = items,
+            rawQuery = searchQuery,
+            categoryFilter = if (expiringOnly) null else selectedCategory,
+            favoritesOnly = if (expiringOnly) false else favoritesOnly
+        )
+        if (expiringOnly) {
+            val attention = searched.filter {
+                MultilingualSearchEngine.computeDocumentReadiness(it, referenceEpochMs, expiryWindowDays).needsReadinessAttention
+            }
+            searchEngine.sortItems(attention, VaultSortMode.EXPIRING_SOON)
+        } else {
+            searchEngine.sortItems(searched, VaultSortMode.PINNED_RECENT)
+        }
     }
     var autoLockMinutes by remember {
         val saved = prefs.getInt("auto_lock_minutes", 5)
@@ -346,6 +372,25 @@ fun AdaptiveSafePocketShell(
         }
     }
 
+    val copyItemSecondaryField: (VaultItemPayload) -> Unit = { target ->
+        val secondaryKeys = listOf(
+            CanonicalFieldKeys.CVV,
+            CanonicalFieldKeys.PIN,
+            CanonicalFieldKeys.BIC,
+            CanonicalFieldKeys.ROUTING_CODE,
+            CanonicalFieldKeys.ONLINE_PASSCODE
+        )
+        val secondary = secondaryKeys.firstNotNullOfOrNull { key ->
+            target.fields.firstOrNull { !it.isCustomLabel && it.labelKey == key && it.value.isNotBlank() }
+        }
+        if (secondary != null) {
+            val resolvedLabel = i18n.resolveFieldLabel(secondary.labelKey, secondary.isCustomLabel, target.category)
+            copyWith30sHygiene(resolvedLabel, secondary.value, true)
+        } else {
+            copyItemPrimaryField(target)
+        }
+    }
+
     MaterialTheme(colorScheme = colorScheme) {
         ProvideSeamFreeHoverIndication {
             key(activeLocale.code) {
@@ -353,8 +398,18 @@ fun AdaptiveSafePocketShell(
                     modifier = Modifier
                         .fillMaxSize()
                         .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.isCtrlPressed) {
+                            if (event.type == KeyEventType.KeyDown && (event.isCtrlPressed || event.isMetaPressed)) {
                                 when (event.key) {
+                                    Key.K -> {
+                                        if (!isVaultLocked) showCommandPalette = !showCommandPalette
+                                        true
+                                    }
+                                    Key.P -> {
+                                        if (!isVaultLocked && selectedItem != null && selectedItem.category != VaultCategory.SECURE_NOTE) {
+                                            presentingPassItem = selectedItem
+                                        }
+                                        true
+                                    }
                                     Key.F -> { onFocusSearch(); true }
                                     Key.N -> { openNewMenuTrigger++; true }
                                     Key.E -> { selectedItem?.let { onEditItem(it) }; true }
@@ -422,8 +477,20 @@ fun AdaptiveSafePocketShell(
                                                                 i18n = i18n,
                                                                 selectedCategory = selectedCategory,
                                                                 favoritesOnly = favoritesOnly,
-                                                                onSelectCategory = onSelectCategory,
-                                                                onSelectFavorites = onSelectFavorites
+                                                                expiringOnly = expiringOnly,
+                                                                readinessAttentionCount = readinessAttentionCount,
+                                                                onSelectCategory = { cat ->
+                                                                    expiringOnly = false
+                                                                    onSelectCategory(cat)
+                                                                },
+                                                                onSelectFavorites = {
+                                                                    expiringOnly = false
+                                                                    onSelectFavorites()
+                                                                },
+                                                                onSelectExpiring = {
+                                                                    onSelectCategory(null)
+                                                                    expiringOnly = true
+                                                                }
                                                             )
                                                         }
 
@@ -482,6 +549,7 @@ fun AdaptiveSafePocketShell(
                                                         i18n = i18n,
                                                         query = searchQuery,
                                                         onQueryChange = { searchQuery = it },
+                                                        onOpenCommandPalette = { showCommandPalette = true },
                                                         onNewItemWithCategory = onNewItemWithCategory,
                                                         openNewMenuTrigger = openNewMenuTrigger,
                                                         onOpenSettings = onOpenSettings,
@@ -494,7 +562,7 @@ fun AdaptiveSafePocketShell(
                                                             onRequestDelete = { showPurgeConfirmDialog = true }
                                                         )
                                                     }
-                                                    if (selectedCategory == null && !favoritesOnly && searchQuery.isBlank()) {
+                                                    if (selectedCategory == null && !favoritesOnly && !expiringOnly && searchQuery.isBlank()) {
                                                         PinnedWalletDeckStrip(
                                                             i18n = i18n,
                                                             items = items,
@@ -506,6 +574,9 @@ fun AdaptiveSafePocketShell(
                                                         i18n = i18n,
                                                         items = filteredItems,
                                                         selectedItem = selectedItem,
+                                                        expiringOnly = expiringOnly,
+                                                        expiryWindowDays = expiryWindowDays,
+                                                        referenceEpochMs = referenceEpochMs,
                                                         onSelectItem = { onSelectItem(it) },
                                                         onCopyPrimary = copyItemPrimaryField,
                                                         onEditItem = onEditItem,
@@ -606,15 +677,30 @@ fun AdaptiveSafePocketShell(
                                                                     .clip(RoundedCornerShape(8.dp))
                                                             )
                                                             NavigationRailItem(
-                                                                selected = selectedCategory == null && !favoritesOnly,
-                                                                onClick = { onSelectCategory(null) },
+                                                                selected = selectedCategory == null && !favoritesOnly && !expiringOnly,
+                                                                onClick = {
+                                                                    expiringOnly = false
+                                                                    onSelectCategory(null)
+                                                                },
                                                                 icon = { Text("📥") },
                                                                 label = { Text(i18n.t("nav_all_items"), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                                                             )
+                                                            NavigationRailItem(
+                                                                selected = expiringOnly,
+                                                                onClick = {
+                                                                    onSelectCategory(null)
+                                                                    expiringOnly = true
+                                                                },
+                                                                icon = { Text("⏳") },
+                                                                label = { Text(i18n.t("nav_expiring"), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                                            )
                                                             VaultCategory.entries.forEach { cat ->
                                                                 NavigationRailItem(
-                                                                    selected = selectedCategory == cat,
-                                                                    onClick = { onSelectCategory(cat) },
+                                                                    selected = selectedCategory == cat && !expiringOnly,
+                                                                    onClick = {
+                                                                        expiringOnly = false
+                                                                        onSelectCategory(cat)
+                                                                    },
                                                                     icon = { Text(categoryIcon(cat)) },
                                                                     label = { Text(categoryLabel(i18n, cat), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                                                                 )
@@ -670,6 +756,7 @@ fun AdaptiveSafePocketShell(
                                                                 i18n = i18n,
                                                                 query = searchQuery,
                                                                 onQueryChange = { searchQuery = it },
+                                                                onOpenCommandPalette = { showCommandPalette = true },
                                                                 onNewItemWithCategory = onNewItemWithCategory,
                                                                 openNewMenuTrigger = openNewMenuTrigger,
                                                                 onOpenSettings = onOpenSettings,
@@ -682,7 +769,7 @@ fun AdaptiveSafePocketShell(
                                                                     onRequestDelete = { showPurgeConfirmDialog = true }
                                                                 )
                                                             }
-                                                            if (selectedCategory == null && !favoritesOnly && searchQuery.isBlank()) {
+                                                            if (selectedCategory == null && !favoritesOnly && !expiringOnly && searchQuery.isBlank()) {
                                                                 PinnedWalletDeckStrip(
                                                                     i18n = i18n,
                                                                     items = items,
@@ -694,6 +781,9 @@ fun AdaptiveSafePocketShell(
                                                                 i18n = i18n,
                                                                 items = filteredItems,
                                                                 selectedItem = selectedItem,
+                                                                expiringOnly = expiringOnly,
+                                                                expiryWindowDays = expiryWindowDays,
+                                                                referenceEpochMs = referenceEpochMs,
                                                                 onSelectItem = { onSelectItem(it) },
                                                                 onCopyPrimary = copyItemPrimaryField,
                                                                 onEditItem = onEditItem,
@@ -797,25 +887,41 @@ fun AdaptiveSafePocketShell(
                                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                             ) {
                                                                 SmoothFilterPill(
-                                                                    selected = selectedCategory == null && !favoritesOnly,
+                                                                    selected = selectedCategory == null && !favoritesOnly && !expiringOnly,
                                                                     onClick = {
+                                                                        expiringOnly = false
                                                                         onSelectCategory(null)
                                                                         onSelectItem(null)
                                                                     },
                                                                     label = i18n.t("nav_all_items")
                                                                 )
                                                                 SmoothFilterPill(
-                                                                    selected = favoritesOnly,
+                                                                    selected = favoritesOnly && !expiringOnly,
                                                                     onClick = {
+                                                                        expiringOnly = false
                                                                         onSelectFavorites()
                                                                         onSelectItem(null)
                                                                     },
                                                                     label = "★ ${i18n.t("nav_favorites")}"
                                                                 )
+                                                                SmoothFilterPill(
+                                                                    selected = expiringOnly,
+                                                                    onClick = {
+                                                                        onSelectCategory(null)
+                                                                        expiringOnly = true
+                                                                        onSelectItem(null)
+                                                                    },
+                                                                    label = if (readinessAttentionCount > 0) {
+                                                                        "⏳ ${i18n.t("nav_expiring")} ($readinessAttentionCount)"
+                                                                    } else {
+                                                                        "⏳ ${i18n.t("nav_expiring")}"
+                                                                    }
+                                                                )
                                                                 VaultCategory.entries.forEach { cat ->
                                                                     SmoothFilterPill(
-                                                                        selected = selectedCategory == cat,
+                                                                        selected = selectedCategory == cat && !expiringOnly,
                                                                         onClick = {
+                                                                            expiringOnly = false
                                                                             onSelectCategory(cat)
                                                                             onSelectItem(null)
                                                                         },
@@ -868,13 +974,25 @@ fun AdaptiveSafePocketShell(
                                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                                 ) {
                                                     if (selectedItem == null) {
-                                                        OutlinedTextField(
-                                                            value = searchQuery,
-                                                            onValueChange = { searchQuery = it },
-                                                            placeholder = { Text(i18n.t("search_placeholder"), maxLines = 1) },
-                                                            singleLine = true,
-                                                            modifier = Modifier.fillMaxWidth()
-                                                        )
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            OutlinedTextField(
+                                                                value = searchQuery,
+                                                                onValueChange = { searchQuery = it },
+                                                                placeholder = { Text(i18n.t("search_placeholder"), maxLines = 1) },
+                                                                singleLine = true,
+                                                                modifier = Modifier.weight(1f)
+                                                            )
+                                                            SmoothTonalButton(
+                                                                onClick = { showCommandPalette = true },
+                                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
+                                                            ) {
+                                                                Text("⌘K")
+                                                            }
+                                                        }
                                                         if (exampleItemsCount > 0) {
                                                             DeleteExampleDataInlineCard(
                                                                 i18n = i18n,
@@ -882,7 +1000,7 @@ fun AdaptiveSafePocketShell(
                                                                 onRequestDelete = { showPurgeConfirmDialog = true }
                                                             )
                                                         }
-                                                        if (selectedCategory == null && !favoritesOnly && searchQuery.isBlank()) {
+                                                        if (selectedCategory == null && !favoritesOnly && !expiringOnly && searchQuery.isBlank()) {
                                                             PinnedWalletDeckStrip(
                                                                 i18n = i18n,
                                                                 items = items,
@@ -894,6 +1012,9 @@ fun AdaptiveSafePocketShell(
                                                             i18n = i18n,
                                                             items = filteredItems,
                                                             selectedItem = null,
+                                                            expiringOnly = expiringOnly,
+                                                            expiryWindowDays = expiryWindowDays,
+                                                            referenceEpochMs = referenceEpochMs,
                                                             onSelectItem = { onSelectItem(it) },
                                                             onCopyPrimary = copyItemPrimaryField,
                                                             onEditItem = onEditItem,
@@ -904,24 +1025,45 @@ fun AdaptiveSafePocketShell(
                                                             modifier = Modifier.weight(1f)
                                                         )
                                                     } else {
-                                                        SmoothTextButton(onClick = { onSelectItem(null) }) {
-                                                            Text("← ${i18n.t("nav_all_items")}")
+                                                        Surface(
+                                                            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                                                            tonalElevation = 2.dp,
+                                                            modifier = Modifier.fillMaxSize()
+                                                        ) {
+                                                            Column(
+                                                                modifier = Modifier
+                                                                    .fillMaxSize()
+                                                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                            ) {
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .align(Alignment.CenterHorizontally)
+                                                                        .width(38.dp)
+                                                                        .height(4.dp)
+                                                                        .clip(CircleShape)
+                                                                        .background(MaterialTheme.colorScheme.outlineVariant)
+                                                                )
+                                                                SmoothTextButton(onClick = { onSelectItem(null) }) {
+                                                                    Text("← ${i18n.t("nav_all_items")}")
+                                                                }
+                                                                VaultDetailInspectorPane(
+                                                                    i18n = i18n,
+                                                                    selectedItem = selectedItem,
+                                                                    copiedNotice = copiedNotice ?: statusBannerMessage,
+                                                                    onCopyField = copyWith30sHygiene,
+                                                                    onEdit = onEditItem,
+                                                                    onDuplicate = onDuplicateItem,
+                                                                    onTogglePin = onTogglePinItem,
+                                                                    onToggleFavorite = onToggleFavoriteItem,
+                                                                    onDelete = {
+                                                                        onDeleteItem(it)
+                                                                        onSelectItem(null)
+                                                                    },
+                                                                    onPresentPass = { presentingPassItem = it }
+                                                                )
+                                                            }
                                                         }
-                                                        VaultDetailInspectorPane(
-                                                            i18n = i18n,
-                                                            selectedItem = selectedItem,
-                                                            copiedNotice = copiedNotice ?: statusBannerMessage,
-                                                            onCopyField = copyWith30sHygiene,
-                                                            onEdit = onEditItem,
-                                                            onDuplicate = onDuplicateItem,
-                                                            onTogglePin = onTogglePinItem,
-                                                            onToggleFavorite = onToggleFavoriteItem,
-                                                            onDelete = {
-                                                                onDeleteItem(it)
-                                                                onSelectItem(null)
-                                                            },
-                                                            onPresentPass = { presentingPassItem = it }
-                                                        )
                                                     }
                                                 }
                                             }
@@ -941,6 +1083,36 @@ fun AdaptiveSafePocketShell(
                                 }
                             }
                         }
+                    }
+
+                    if (showCommandPalette && !isVaultLocked) {
+                        CommandPaletteDialog(
+                            i18n = i18n,
+                            searchEngine = searchEngine,
+                            items = items,
+                            onSelectAndClose = { target ->
+                                onSelectItem(target)
+                                showCommandPalette = false
+                            },
+                            onCopyPrimaryAndClose = { target ->
+                                onSelectItem(target)
+                                copyItemPrimaryField(target)
+                                showCommandPalette = false
+                            },
+                            onCopySecondaryAndClose = { target ->
+                                onSelectItem(target)
+                                copyItemSecondaryField(target)
+                                showCommandPalette = false
+                            },
+                            onPresentPassAndClose = { target ->
+                                onSelectItem(target)
+                                showCommandPalette = false
+                                if (target.category != VaultCategory.SECURE_NOTE) {
+                                    presentingPassItem = target
+                                }
+                            },
+                            onDismiss = { showCommandPalette = false }
+                        )
                     }
 
                     presentingPassItem?.let { passTarget ->
@@ -1234,27 +1406,37 @@ private fun CategoryDrawerDestinations(
     i18n: LocalizationEngine,
     selectedCategory: VaultCategory?,
     favoritesOnly: Boolean,
+    expiringOnly: Boolean = false,
+    readinessAttentionCount: Int = 0,
     onSelectCategory: (VaultCategory?) -> Unit,
-    onSelectFavorites: () -> Unit
+    onSelectFavorites: () -> Unit,
+    onSelectExpiring: () -> Unit = {}
 ) {
     SmoothSidebarItem(
         icon = "📥",
         label = i18n.t("nav_all_items"),
-        selected = selectedCategory == null && !favoritesOnly,
+        selected = selectedCategory == null && !favoritesOnly && !expiringOnly,
         onClick = { onSelectCategory(null) }
     )
     SmoothSidebarItem(
         icon = "★",
         label = i18n.t("nav_favorites"),
-        selected = favoritesOnly,
+        selected = favoritesOnly && !expiringOnly,
         onClick = onSelectFavorites
+    )
+    SmoothSidebarItem(
+        icon = "⏳",
+        label = i18n.t("nav_expiring"),
+        selected = expiringOnly,
+        onClick = onSelectExpiring,
+        badgeCount = readinessAttentionCount.takeIf { it > 0 }
     )
     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
     VaultCategory.entries.forEach { category ->
         SmoothSidebarItem(
             icon = categoryIcon(category),
             label = categoryLabel(i18n, category),
-            selected = selectedCategory == category && !favoritesOnly,
+            selected = selectedCategory == category && !favoritesOnly && !expiringOnly,
             onClick = { onSelectCategory(category) }
         )
     }
@@ -1341,6 +1523,7 @@ private fun SearchAndCreateHeader(
     i18n: LocalizationEngine,
     query: String,
     onQueryChange: (String) -> Unit,
+    onOpenCommandPalette: () -> Unit = {},
     onNewItemWithCategory: (VaultCategory) -> Unit,
     openNewMenuTrigger: Int = 0,
     onOpenSettings: () -> Unit,
@@ -1360,6 +1543,18 @@ private fun SearchAndCreateHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+            },
+            trailingIcon = {
+                SmoothTextButton(
+                    onClick = onOpenCommandPalette,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = i18n.t("cmd_palette_open_btn"),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             },
             singleLine = true,
             modifier = Modifier
@@ -1386,6 +1581,9 @@ private fun VaultItemListPane(
     i18n: LocalizationEngine,
     items: List<VaultItemPayload>,
     selectedItem: VaultItemPayload?,
+    expiringOnly: Boolean = false,
+    expiryWindowDays: Int = 90,
+    referenceEpochMs: Long = System.currentTimeMillis(),
     onSelectItem: (VaultItemPayload) -> Unit,
     onCopyPrimary: (VaultItemPayload) -> Unit,
     onEditItem: (VaultItemPayload) -> Unit,
@@ -1409,6 +1607,10 @@ private fun VaultItemListPane(
         return
     }
 
+    val readinessMap = remember(items, expiryWindowDays, referenceEpochMs) {
+        items.associate { it.id to MultilingualSearchEngine.computeDocumentReadiness(it, referenceEpochMs, expiryWindowDays) }
+    }
+
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1422,20 +1624,90 @@ private fun VaultItemListPane(
             modifier = Modifier.padding(horizontal = 4.dp)
         )
 
-        items.forEach { item ->
-            key(item.id) {
-                SwipeAndContextVaultItemRow(
-                    i18n = i18n,
-                    item = item,
-                    isSelected = selectedItem?.id == item.id,
-                    onSelect = { onSelectItem(item) },
-                    onCopyPrimary = { onCopyPrimary(item) },
-                    onEdit = { onEditItem(item) },
-                    onTogglePin = { onTogglePinItem(item) },
-                    onToggleFavorite = { onToggleFavoriteItem(item) },
-                    onDuplicate = { onDuplicateItem(item) },
-                    onDelete = { onDeleteItem(item) }
+        if (expiringOnly) {
+            Text(
+                text = "🛂 ${i18n.t("readiness_radar_title")}",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            )
+            val buckets = listOf(
+                Triple(ReadinessTimelineBucket.EXPIRED, i18n.t("readiness_group_expired"), Color(0xFFDC2626)),
+                Triple(ReadinessTimelineBucket.URGENT, i18n.t("readiness_group_urgent"), Color(0xFFD97706)),
+                Triple(
+                    ReadinessTimelineBucket.UPCOMING,
+                    i18n.t("readiness_group_upcoming", mapOf("days" to expiryWindowDays)),
+                    MaterialTheme.colorScheme.primary
                 )
+            )
+            buckets.forEach { (targetBucket, headerLabel, tint) ->
+                val bucketItems = items.filter { item ->
+                    val r = readinessMap[item.id]
+                    if (targetBucket == ReadinessTimelineBucket.UPCOMING) {
+                        r?.timelineBucket == ReadinessTimelineBucket.UPCOMING ||
+                            (r?.timelineBucket == ReadinessTimelineBucket.HEALTHY && r.missingBackupScan)
+                    } else {
+                        r?.timelineBucket == targetBucket
+                    }
+                }
+                if (bucketItems.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = headerLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = tint
+                        )
+                        Text(
+                            text = bucketItems.size.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = tint
+                        )
+                    }
+                    bucketItems.forEach { item ->
+                        key(item.id) {
+                            SwipeAndContextVaultItemRow(
+                                i18n = i18n,
+                                item = item,
+                                readiness = readinessMap[item.id],
+                                isSelected = selectedItem?.id == item.id,
+                                onSelect = { onSelectItem(item) },
+                                onCopyPrimary = { onCopyPrimary(item) },
+                                onEdit = { onEditItem(item) },
+                                onTogglePin = { onTogglePinItem(item) },
+                                onToggleFavorite = { onToggleFavoriteItem(item) },
+                                onDuplicate = { onDuplicateItem(item) },
+                                onDelete = { onDeleteItem(item) }
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            items.forEach { item ->
+                key(item.id) {
+                    SwipeAndContextVaultItemRow(
+                        i18n = i18n,
+                        item = item,
+                        readiness = readinessMap[item.id],
+                        isSelected = selectedItem?.id == item.id,
+                        onSelect = { onSelectItem(item) },
+                        onCopyPrimary = { onCopyPrimary(item) },
+                        onEdit = { onEditItem(item) },
+                        onTogglePin = { onTogglePinItem(item) },
+                        onToggleFavorite = { onToggleFavoriteItem(item) },
+                        onDuplicate = { onDuplicateItem(item) },
+                        onDelete = { onDeleteItem(item) }
+                    )
+                }
             }
         }
         Spacer(Modifier.height(44.dp))
@@ -1444,7 +1716,7 @@ private fun VaultItemListPane(
 
 /**
  * Vault entry row supporting:
- * 1. Horizontal Swipe Right -> Pin / Favorite quick toggle
+ * 1. Horizontal Swipe Right -> Quick Copy Primary / Pin action tray (full swipe triggers instant Quick Copy)
  * 2. Horizontal Swipe Left -> Reveals `Edit`, `Copy Primary`, `Delete` action tray
  * 3. Hardware Right-Click (`PointerButton.Secondary`) & Touch Long-Press Context Menu
  */
@@ -1453,6 +1725,7 @@ private fun VaultItemListPane(
 private fun SwipeAndContextVaultItemRow(
     i18n: LocalizationEngine,
     item: VaultItemPayload,
+    readiness: DocumentReadiness? = null,
     isSelected: Boolean,
     onSelect: () -> Unit,
     onCopyPrimary: () -> Unit,
@@ -1464,7 +1737,8 @@ private fun SwipeAndContextVaultItemRow(
 ) {
     val density = LocalDensity.current
     val actionTrayWidthPx = with(density) { 216.dp.toPx() }
-    val pinTriggerPx = with(density) { 88.dp.toPx() }
+    val rightTrayWidthPx = with(density) { 156.dp.toPx() }
+    val quickCopyTriggerPx = with(density) { 118.dp.toPx() }
 
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
     var contextMenuExpanded by remember { mutableStateOf(false) }
@@ -1485,19 +1759,32 @@ private fun SwipeAndContextVaultItemRow(
     ) {
         // Background Swipe Action Trays
         if (animatedOffsetPx > 6f) {
-            Box(
+            Row(
                 modifier = Modifier
                     .matchParentSize()
                     .background(MaterialTheme.colorScheme.primaryContainer)
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.CenterStart
+                    .padding(horizontal = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.Start),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "📌 ★ ${if (item.pinned) i18n.t("context_unpin") else i18n.t("context_pin")}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    fontWeight = FontWeight.SemiBold
-                )
+                SmoothPrimaryButton(
+                    onClick = {
+                        dragOffsetPx = 0f
+                        onCopyPrimary()
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                ) {
+                    Text("⎘ ${i18n.t("swipe_quick_copy_hint")}", style = MaterialTheme.typography.labelSmall)
+                }
+                SmoothOutlinedButton(
+                    onClick = {
+                        dragOffsetPx = 0f
+                        onTogglePin()
+                    },
+                    contentPadding = PaddingValues(horizontal = 9.dp, vertical = 7.dp)
+                ) {
+                    Text("📌", style = MaterialTheme.typography.labelSmall)
+                }
             }
         } else if (animatedOffsetPx < -6f) {
             Row(
@@ -1597,13 +1884,20 @@ private fun SwipeAndContextVaultItemRow(
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
                             dragOffsetPx = (dragOffsetPx + dragAmount)
-                                .coerceIn(-actionTrayWidthPx, pinTriggerPx * 1.35f)
+                                .coerceIn(-actionTrayWidthPx, rightTrayWidthPx)
                         },
                         onDragEnd = {
                             when {
-                                dragOffsetPx >= pinTriggerPx -> {
+                                dragOffsetPx >= quickCopyTriggerPx -> {
                                     dragOffsetPx = 0f
-                                    onTogglePin()
+                                    if (item.primaryCopyableField() != null) {
+                                        onCopyPrimary()
+                                    } else {
+                                        onTogglePin()
+                                    }
+                                }
+                                dragOffsetPx >= rightTrayWidthPx * 0.42f -> {
+                                    dragOffsetPx = rightTrayWidthPx
                                 }
                                 dragOffsetPx <= -(actionTrayWidthPx * 0.45f) -> {
                                     dragOffsetPx = -actionTrayWidthPx
@@ -1657,6 +1951,43 @@ private fun SwipeAndContextVaultItemRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (readiness != null && (readiness.travelSixMonthWarning || readiness.missingBackupScan)) {
+                        Row(
+                            modifier = Modifier.padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (readiness.travelSixMonthWarning) {
+                                Surface(
+                                    color = Color(0xFFFEF3C7),
+                                    shape = RoundedCornerShape(5.dp)
+                                ) {
+                                    Text(
+                                        text = "🛂 ${i18n.t("readiness_passport_6m_badge")}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF92400E),
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            if (readiness.missingBackupScan) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(5.dp)
+                                ) {
+                                    Text(
+                                        text = i18n.t("readiness_missing_scan_badge"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 Column(
                     horizontalAlignment = Alignment.End,
@@ -4518,6 +4849,235 @@ private fun PassPresentationDialog(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommandPaletteDialog(
+    i18n: LocalizationEngine,
+    searchEngine: MultilingualSearchEngine,
+    items: List<VaultItemPayload>,
+    onSelectAndClose: (VaultItemPayload) -> Unit,
+    onCopyPrimaryAndClose: (VaultItemPayload) -> Unit,
+    onCopySecondaryAndClose: (VaultItemPayload) -> Unit,
+    onPresentPassAndClose: (VaultItemPayload) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var activeIndex by remember { mutableIntStateOf(0) }
+    val inputFocusRequester = remember { FocusRequester() }
+
+    val matches = remember(items, query, searchEngine) {
+        val raw = searchEngine.search(items = items, rawQuery = query)
+        searchEngine.sortItems(raw, VaultSortMode.PINNED_RECENT).take(12)
+    }
+
+    LaunchedEffect(matches.size) {
+        if (activeIndex >= matches.size) {
+            activeIndex = (matches.size - 1).coerceAtLeast(0)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        delay(40L)
+        runCatching { inputFocusRequester.requestFocus() }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 620.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 28.dp)
+                .onPreviewKeyEvent { ev ->
+                    if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when {
+                        ev.key == Key.DirectionDown -> {
+                            if (matches.isNotEmpty()) {
+                                activeIndex = (activeIndex + 1) % matches.size
+                            }
+                            true
+                        }
+                        ev.key == Key.DirectionUp -> {
+                            if (matches.isNotEmpty()) {
+                                activeIndex = (activeIndex - 1 + matches.size) % matches.size
+                            }
+                            true
+                        }
+                        ev.key == Key.Enter || ev.key == Key.NumPadEnter -> {
+                            val target = matches.getOrNull(activeIndex)
+                            if (target != null) {
+                                if (ev.isShiftPressed) {
+                                    onCopySecondaryAndClose(target)
+                                } else {
+                                    onCopyPrimaryAndClose(target)
+                                }
+                            }
+                            true
+                        }
+                        (ev.isCtrlPressed || ev.isMetaPressed) && ev.key == Key.P -> {
+                            matches.getOrNull(activeIndex)?.let { onPresentPassAndClose(it) }
+                            true
+                        }
+                        ev.key == Key.Escape -> {
+                            onDismiss()
+                            true
+                        }
+                        else -> false
+                    }
+                },
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 8.dp,
+            shadowElevation = 12.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "⌘K  ${i18n.t("cmd_palette_title")}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    SmoothTextButton(onClick = onDismiss) {
+                        Text("✕")
+                    }
+                }
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = {
+                        query = it
+                        activeIndex = 0
+                    },
+                    placeholder = { Text(i18n.t("cmd_palette_placeholder"), maxLines = 1) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(inputFocusRequester)
+                )
+
+                if (matches.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = i18n.t("search_empty_title"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 340.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        matches.forEachIndexed { idx, entry ->
+                            val isHighlighted = idx == activeIndex
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isHighlighted) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surface
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onSelectAndClose(entry) }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    InstitutionMiniAvatar(item = entry, size = 32.dp)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = entry.title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = i18n.resolveDisplaySubtitle(entry.subtitle, entry.category),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        if (entry.primaryCopyableField() != null) {
+                                            SmoothTonalButton(
+                                                onClick = { onCopyPrimaryAndClose(entry) },
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                            ) {
+                                                Text("↵ ${i18n.t("action_copy")}", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                        SmoothOutlinedButton(
+                                            onClick = { onCopySecondaryAndClose(entry) },
+                                            minHeight = 32.dp,
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp)
+                                        ) {
+                                            Text("⇧↵", style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
+                                        }
+                                        if (entry.category != VaultCategory.SECURE_NOTE) {
+                                            SmoothOutlinedButton(
+                                                onClick = { onPresentPassAndClose(entry) },
+                                                minHeight = 32.dp,
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp)
+                                            ) {
+                                                Text(i18n.t("action_present_card"), style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = i18n.t("cmd_palette_hint_enter"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = i18n.t("cmd_palette_hint_shift_enter"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = i18n.t("cmd_palette_hint_pass"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

@@ -106,6 +106,20 @@ struct SafePocketMacApp: App {
                     vaultState.focusSearchField = true
                 }
                 .keyboardShortcut("f", modifiers: [.command])
+
+                Button(vaultState.t("cmd_palette_title") + "…") {
+                    if !vaultState.isLocked {
+                        vaultState.presentCommandPalette.toggle()
+                    }
+                }
+                .keyboardShortcut("k", modifiers: [.command])
+
+                Button(vaultState.t("action_present_card") + "…") {
+                    if !vaultState.isLocked {
+                        vaultState.presentPassRequested = true
+                    }
+                }
+                .keyboardShortcut("p", modifiers: [.command])
             }
         }
     }
@@ -146,9 +160,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.5.0-beta.4"
-    let currentVersionCode = 19
-    let currentVersionDisplay = "SafePocket v0.5.0-beta.4 (Build 19)"
+    let currentVersionName = "0.5.0"
+    let currentVersionCode = 20
+    let currentVersionDisplay = "SafePocket v0.5.0 (Build 20)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -424,6 +438,8 @@ final class MacVaultViewModel: ObservableObject {
     @Published var isLocked: Bool = false
     @Published var presentSettingsSheet: Bool = false
     @Published var presentEditorSheet: Bool = false
+    @Published var presentCommandPalette: Bool = false
+    @Published var presentPassRequested: Bool = false
     @Published var pendingCreateCategory: String = "PAYMENT_CARD"
     @Published var editingEntry: MacVaultEntry?
     @Published var focusSearchField: Bool = false
@@ -589,6 +605,7 @@ final class MacVaultViewModel: ObservableObject {
         switch selectedCategory {
         case "all": return t("nav_all_items")
         case "favorites": return t("nav_favorites")
+        case "expiring": return t("nav_expiring")
         case "PAYMENT_CARD": return t("category_payment_card")
         case "BANK_ACCOUNT": return t("category_bank_account")
         case "INSURANCE_CARD": return t("category_insurance_card")
@@ -650,12 +667,30 @@ final class MacVaultViewModel: ObservableObject {
         }
     }
 
+    func isTravelSixMonthWarning(_ item: MacVaultEntry) -> Bool {
+        let isTravelDoc = item.category == "OFFICIAL_DOCUMENT" || item.category == "IDENTITY"
+        guard isTravelDoc, let days = item.daysUntilExpiry() else { return false }
+        return days >= 0 && days <= 180
+    }
+
+    func needsReadinessAttention(_ item: MacVaultEntry) -> Bool {
+        if let days = item.daysUntilExpiry(), days <= expiryWindowDays {
+            return true
+        }
+        return isTravelSixMonthWarning(item)
+    }
+
+    var readinessAttentionCount: Int {
+        entries.filter { needsReadinessAttention($0) }.count
+    }
+
     var filteredEntries: [MacVaultEntry] {
         entries
             .filter { item in
                 switch selectedCategory {
                 case "all": return true
                 case "favorites": return item.favorite
+                case "expiring": return needsReadinessAttention(item)
                 default: return item.category == selectedCategory
                 }
             }
@@ -670,6 +705,11 @@ final class MacVaultViewModel: ObservableObject {
                     || item.tags.contains(where: { $0.lowercased().contains(q) })
             }
             .sorted { lhs, rhs in
+                if selectedCategory == "expiring" {
+                    let d1 = lhs.daysUntilExpiry() ?? 99_999
+                    let d2 = rhs.daysUntilExpiry() ?? 99_999
+                    if d1 != d2 { return d1 < d2 }
+                }
                 if lhs.pinned != rhs.pinned { return lhs.pinned && !rhs.pinned }
                 return lhs.updatedAt > rhs.updatedAt
             }

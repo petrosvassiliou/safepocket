@@ -44,7 +44,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.5.0-beta.4 (Build 19) Feature Suite', () => {
+describe('SafePocket v0.5.0 (Build 20) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -315,9 +315,9 @@ describe('SafePocket v0.5.0-beta.4 (Build 19) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.5.0-beta.4 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.5.0-beta.4');
-    expect(APP_BUILD_INFO.versionCode).toBe(19);
+  it('7. Cross-Platform v0.5.0 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.5.0');
+    expect(APP_BUILD_INFO.versionCode).toBe(20);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -401,7 +401,7 @@ describe('SafePocket v0.5.0-beta.4 (Build 19) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.5.0-beta.4 (Build 19)');
+    expect(macApp).toContain('SafePocket v0.5.0 (Build 20)');
     expect(macApp).toContain('NSApplication.shared.applicationIconImage = appIcon');
     expect(macApp).toContain('noteFileSystemChanged(destApp.path)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
@@ -1503,6 +1503,142 @@ describe('SafePocket v0.5.0-beta.4 (Build 19) Feature Suite', () => {
     expect(androidShell).toContain('ClipboardCountdownToastPill');
     expect(androidShell).toContain('SepaQrSectionCard');
     expect(androidShell).toContain('PassPresentationDialog');
+  });
+
+  it('18. Phase 3 Power & Mobile Ergonomics: Cmd+K Command Palette, 6-Month Passport Travel Readiness Radar & Quick-Copy Swipe across PWA, macOS & Android', async () => {
+    const { computeDocumentReadiness, searchVaultItems } = await import(
+      '../search/searchEngine'
+    );
+    const i18n = new SafePocketI18n('en');
+    const refMs = Date.UTC(2026, 10, 26, 12, 0, 0); // 2026-11-26
+
+    // 1) Passport with ~125 days remaining (< 6 months / <= 180 days) & missing scan triggers Travel Readiness warnings
+    const passportFiveMonths = {
+      schemaVersion: 1 as const,
+      id: 'doc-passport-5m',
+      category: 'OFFICIAL_DOCUMENT' as const,
+      title: 'EU Reisepass',
+      subtitle: 'Passport',
+      favorite: false,
+      pinned: false,
+      tags: ['travel'],
+      fields: [
+        {
+          id: 'f1',
+          labelKey: 'field_document_number',
+          isCustomLabel: false,
+          value: 'C01X99887',
+          valueType: 'SENSITIVE_SECRET' as const,
+          isSensitive: true
+        },
+        {
+          id: 'f2',
+          labelKey: 'field_expiry_date',
+          isCustomLabel: false,
+          value: '2027-03-31',
+          valueType: 'DATE_ISO' as const,
+          isSensitive: false
+        }
+      ],
+      attachments: [],
+      createdAtEpochMs: refMs,
+      updatedAtEpochMs: refMs
+    };
+
+    const readiness5m = computeDocumentReadiness(passportFiveMonths, refMs, 90);
+    expect(readiness5m.travelSixMonthWarning).toBe(true);
+    expect(readiness5m.missingBackupScan).toBe(true);
+    expect(readiness5m.timelineBucket).toBe('upcoming');
+    expect(readiness5m.needsReadinessAttention).toBe(true);
+
+    // 2) Payment card with 400+ days remaining is healthy and excluded from expiringOnly
+    const healthyCard = {
+      schemaVersion: 1 as const,
+      id: 'card-healthy-2029',
+      category: 'PAYMENT_CARD' as const,
+      title: 'Healthy Visa',
+      subtitle: 'Credit',
+      favorite: false,
+      pinned: false,
+      tags: [],
+      fields: [
+        {
+          id: 'c1',
+          labelKey: 'field_expiry_date',
+          isCustomLabel: false,
+          value: '2029-12',
+          valueType: 'DATE_ISO' as const,
+          isSensitive: false
+        }
+      ],
+      attachments: [],
+      createdAtEpochMs: refMs,
+      updatedAtEpochMs: refMs
+    };
+    const readinessCard = computeDocumentReadiness(healthyCard, refMs, 90);
+    expect(readinessCard.travelSixMonthWarning).toBe(false);
+    expect(readinessCard.missingBackupScan).toBe(false);
+    expect(readinessCard.timelineBucket).toBe('healthy');
+    expect(readinessCard.needsReadinessAttention).toBe(false);
+
+    // expiringOnly search surfaces 5-month passport even when warningWindowDays is 90
+    const attentionItems = searchVaultItems(
+      [passportFiveMonths, healthyCard],
+      '',
+      i18n,
+      { expiringOnly: true, warningWindowDays: 90, referenceEpochMs: refMs }
+    );
+    expect(attentionItems.map((it) => it.id)).toEqual(['doc-passport-5m']);
+
+    // 3) Cross-platform Phase 3 wiring across PWA, macOS, Shared Kotlin & Android
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const pwaShell = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/ui/appShell.ts'),
+      'utf-8'
+    );
+    const pwaCss = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/styles/m3-expressive.css'),
+      'utf-8'
+    );
+    const macApp = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const sharedSearchKt = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'shared/src/commonMain/kotlin/com/safepocket/shared/search/MultilingualSearchEngine.kt'
+      ),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+
+    expect(pwaCss).toContain('.sp-cmd-palette-card');
+    expect(pwaCss).toContain('.sp-badge-travel');
+    expect(pwaShell).toContain('renderCommandPaletteModal');
+    expect(pwaShell).toContain('renderExpiringReadinessGroups');
+    expect(pwaShell).toContain('readiness_passport_6m_badge');
+
+    expect(macApp).toContain('presentCommandPalette');
+    expect(macApp).toContain('isTravelSixMonthWarning');
+    expect(macSplit).toContain('MacCommandPaletteSheet');
+    expect(macSplit).toContain('readiness_passport_6m_badge');
+    expect(macSplit).toContain('swipe_quick_copy_hint');
+
+    expect(sharedSearchKt).toContain('fun computeDocumentReadiness');
+    expect(androidShell).toContain('CommandPaletteDialog');
+    expect(androidShell).toContain('readiness_passport_6m_badge');
+    expect(androidShell).toContain('swipe_quick_copy_hint');
   });
 });
 
