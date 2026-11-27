@@ -44,7 +44,7 @@ import {
   verifyWebsiteExists
 } from '../ui/smartFieldIntelligence';
 
-describe('SafePocket v0.5.0 (Build 20) Feature Suite', () => {
+describe('SafePocket v0.6.0-beta.1 (Build 21) Feature Suite', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
@@ -315,9 +315,9 @@ describe('SafePocket v0.5.0 (Build 20) Feature Suite', () => {
     );
   });
 
-  it('7. Cross-Platform v0.5.0 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
-    expect(APP_BUILD_INFO.versionName).toBe('0.5.0');
-    expect(APP_BUILD_INFO.versionCode).toBe(20);
+  it('7. Cross-Platform v0.6.0-beta.1 Architecture Verification (Android, Googlebook OS, macOS & PWA)', () => {
+    expect(APP_BUILD_INFO.versionName).toBe('0.6.0-beta.1');
+    expect(APP_BUILD_INFO.versionCode).toBe(21);
 
     const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -401,7 +401,7 @@ describe('SafePocket v0.5.0 (Build 20) Feature Suite', () => {
       path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
       'utf-8'
     );
-    expect(macApp).toContain('SafePocket v0.5.0 (Build 20)');
+    expect(macApp).toContain('SafePocket v0.6.0-beta.1 (Build 21)');
     expect(macApp).toContain('NSApplication.shared.applicationIconImage = appIcon');
     expect(macApp).toContain('noteFileSystemChanged(destApp.path)');
     expect(macApp).toContain('Curve25519.Signing.PublicKey');
@@ -1639,6 +1639,233 @@ describe('SafePocket v0.5.0 (Build 20) Feature Suite', () => {
     expect(androidShell).toContain('CommandPaletteDialog');
     expect(androidShell).toContain('readiness_passport_6m_badge');
     expect(androidShell).toContain('swipe_quick_copy_hint');
+  });
+
+  it('19. v0.6.0-beta.1 Phase 1: Cross-Platform Per-Blob Envelope Encryption (fileKeyHex), EU Cloud Storage Sync & In-Memory Image/PDF Lightbox across PWA, macOS & Android', async () => {
+    const {
+      ZeroKnowledgeVaultCrypto,
+      generateFormattedSecretKey
+    } = await import('../crypto/vaultCrypto');
+    const { deriveZeroKnowledgeCloudSyncKeyHex } = await import(
+      '../sync/liveCloudConnectors'
+    );
+    const { computeDocumentReadiness } = await import('../search/searchEngine');
+
+    // 1) Independent local vaults (Device A vs Device B) decrypt synced .enc attachment via per-blob fileKeyHex + cloudKeyHex!
+    const cryptoDeviceA = new ZeroKnowledgeVaultCrypto();
+    await cryptoDeviceA.initializeOrUnlock(
+      'MacLocalMasterPass!A',
+      generateFormattedSecretKey()
+    );
+
+    const cryptoDeviceB = new ZeroKnowledgeVaultCrypto();
+    await cryptoDeviceB.initializeOrUnlock(
+      'AndroidLocalMasterPass!B',
+      generateFormattedSecretKey()
+    );
+
+    const cloudKeyHex = await deriveZeroKnowledgeCloudSyncKeyHex(
+      'clara@safepocket.eu',
+      'MyStrongCloudPass!2026',
+      'uid_eu_test_12345'
+    );
+
+    const rawPdfScan = new TextEncoder().encode(
+      '%PDF-1.7\nSafePocket Biometric Passport Backup Scan\n%%EOF'
+    );
+    const fileKeyHex = cryptoDeviceA.generateAttachmentKeyHex();
+    expect(fileKeyHex).toHaveLength(64);
+
+    const encBlob = await cryptoDeviceA.encryptBinaryAttachment(
+      'att_passport_v06_01',
+      'Passport_Clara_2026.pdf',
+      'application/pdf',
+      rawPdfScan,
+      'front',
+      fileKeyHex
+    );
+    expect(encBlob.fileKeyHex).toBe(fileKeyHex);
+
+    const nowMs = Date.UTC(2026, 10, 27, 1, 0, 0);
+    const passportItem = {
+      schemaVersion: 1 as const,
+      id: 'doc-v06-passport',
+      category: 'OFFICIAL_DOCUMENT' as const,
+      title: 'Reisepass (DEU)',
+      subtitle: 'Passport',
+      favorite: false,
+      pinned: true,
+      tags: ['travel'],
+      fields: [
+        {
+          id: 'd1',
+          labelKey: 'field_document_number',
+          isCustomLabel: false,
+          value: 'C01X00T47',
+          valueType: 'SENSITIVE_SECRET' as const,
+          isSensitive: true
+        },
+        {
+          id: 'd2',
+          labelKey: 'field_expiry_date',
+          isCustomLabel: false,
+          value: '2030-06-15',
+          valueType: 'DATE_ISO' as const,
+          isSensitive: false
+        }
+      ],
+      attachments: [
+        {
+          id: encBlob.id,
+          fileName: encBlob.fileName,
+          mimeType: encBlob.mimeType,
+          side: 'front' as const,
+          sizeBytes: encBlob.sizeBytes,
+          sha256Hex: encBlob.sha256Hex,
+          ivHex: encBlob.ivHex,
+          fileKeyHex: encBlob.fileKeyHex,
+          blobSynced: true
+        }
+      ],
+      createdAtEpochMs: nowMs,
+      updatedAtEpochMs: nowMs
+    };
+
+    // Attaching scan clears "missingBackupScan" in Travel Readiness Radar!
+    const readiness = computeDocumentReadiness(passportItem, nowMs, 90);
+    expect(readiness.missingBackupScan).toBe(false);
+    expect(readiness.needsReadinessAttention).toBe(false);
+
+    // Sync item JSON under cloudKeyHex -> Device B decrypts item AND decrypts .enc blob in RAM despite having a different local vault key!
+    const cloudRow = await cryptoDeviceA.encryptVaultItemWithKeyHex(
+      passportItem,
+      cloudKeyHex,
+      '001764205200000:0001:mac-a',
+      { 'mac-a': 1 }
+    );
+    const hydratedOnDeviceB = await cryptoDeviceB.decryptVaultRowWithKeyHex(
+      cloudRow,
+      cloudKeyHex
+    );
+    expect(hydratedOnDeviceB.attachments).toHaveLength(1);
+    expect(hydratedOnDeviceB.attachments[0].fileKeyHex).toBe(fileKeyHex);
+
+    const decryptedOnDeviceB = await cryptoDeviceB.decryptBinaryAttachment({
+      attachmentId: hydratedOnDeviceB.attachments[0].id,
+      ivHex: hydratedOnDeviceB.attachments[0].ivHex,
+      expectedSha256Hex: hydratedOnDeviceB.attachments[0].sha256Hex,
+      fileKeyHex: hydratedOnDeviceB.attachments[0].fileKeyHex,
+      encryptedBytes: encBlob.encryptedBytes
+    });
+    expect(new TextDecoder().decode(decryptedOnDeviceB)).toBe(
+      '%PDF-1.7\nSafePocket Biometric Passport Backup Scan\n%%EOF'
+    );
+
+    // 2) Cross-platform source verification across PWA, macOS & Android
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const macCloud = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/CloudSyncAndPortability.swift'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const androidRepo = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/data/AndroidVaultRepository.kt'
+      ),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+
+    expect(macCloud).toContain('enum MacEncryptedBlobStore');
+    expect(macCloud).toContain('func uploadEncryptedBlobToFirebaseStorage');
+    expect(macCloud).toContain('func decryptAttachmentBlob');
+    expect(macSplit).toContain('struct MacDocumentScansSectionCard');
+    expect(macSplit).toContain('struct MacAttachmentLightboxSheet');
+    expect(macSplit).toContain('struct MacInMemoryPdfView');
+
+    expect(androidRepo).toContain('fun attachScanBytesToItem');
+    expect(androidRepo).toContain('fun decryptAttachmentBytesInRam');
+    expect(androidShell).toContain('fun EncryptedDocumentScansSectionCard');
+    expect(androidShell).toContain('fun AttachmentLightboxDialog');
+    expect(androidShell).toContain('PdfRenderer');
+  });
+
+  it('20. v0.6.0-beta.1 Phase 2: Instant Biometric / Passkey Unlock & macOS Menu Bar Quick-Vault across PWA, macOS & Android', async () => {
+    const { WebAuthnBiometricUnlock } = await import(
+      '../security/clipboardAndWebAuthn'
+    );
+
+    if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
+      WebAuthnBiometricUnlock.unenrollPasskey();
+      expect(WebAuthnBiometricUnlock.hasEnrolledPasskey()).toBe(false);
+      localStorage.setItem('safepocket.webauthn_cred_id', btoa('mock-cred-123'));
+      expect(WebAuthnBiometricUnlock.hasEnrolledPasskey()).toBe(true);
+      WebAuthnBiometricUnlock.unenrollPasskey();
+      expect(WebAuthnBiometricUnlock.hasEnrolledPasskey()).toBe(false);
+    }
+
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const pwaShell = fs.readFileSync(
+      path.join(repoRoot, 'pwaApp/src/ui/appShell.ts'),
+      'utf-8'
+    );
+    const macApp = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/SafePocketMacApp.swift'),
+      'utf-8'
+    );
+    const macSplit = fs.readFileSync(
+      path.join(repoRoot, 'macosApp/SafePocketMac/Views/MacVaultSplitView.swift'),
+      'utf-8'
+    );
+    const androidBio = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/security/AndroidBiometricKeystoreManager.kt'
+      ),
+      'utf-8'
+    );
+    const androidMain = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/MainActivity.kt'
+      ),
+      'utf-8'
+    );
+    const androidShell = fs.readFileSync(
+      path.join(
+        repoRoot,
+        'androidApp/src/main/kotlin/com/safepocket/android/ui/AdaptiveSafePocketShell.kt'
+      ),
+      'utf-8'
+    );
+
+    // PWA WebAuthn Passkey enrollment & removal
+    expect(pwaShell).toContain('security_biometrics_enrolled_badge');
+    expect(pwaShell).toContain('id="sp-remove-passkey"');
+
+    // macOS Menu Bar Quick-Vault & Touch ID toggle
+    expect(macApp).toContain('MenuBarExtra(');
+    expect(macApp).toContain('MacMenuBarQuickVaultView');
+    expect(macSplit).toContain('struct MacMenuBarQuickVaultView');
+    expect(macSplit).toContain('security_menubar_toggle');
+
+    // Android BiometricPrompt Vault Shield integration
+    expect(androidBio).toContain('fun authenticateVaultShield');
+    expect(androidBio).toContain('fun canAuthenticateBiometrics');
+    expect(androidMain).toContain('class MainActivity : FragmentActivity()');
+    expect(androidMain).toContain('authenticateVaultShield');
+    expect(androidShell).toContain('showBiometricButton');
+    expect(androidShell).toContain('security_biometrics_toggle');
   });
 });
 

@@ -1,5 +1,6 @@
 package com.safepocket.android.security
 
+import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import androidx.biometric.BiometricManager
@@ -21,6 +22,48 @@ import javax.crypto.spec.GCMParameterSpec
  */
 class AndroidBiometricKeystoreManager {
     private val keyAlias = "safepocket_hardware_vek_wrapper_v1"
+
+    fun canAuthenticateBiometrics(context: Context): Boolean = runCatching {
+        val manager = BiometricManager.from(context)
+        manager.canAuthenticate(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.BIOMETRIC_WEAK
+        ) == BiometricManager.BIOMETRIC_SUCCESS
+    }.getOrDefault(false)
+
+    fun authenticateVaultShield(
+        activity: FragmentActivity,
+        title: String,
+        subtitle: String,
+        negativeButtonText: String,
+        onAuthenticated: () -> Unit,
+        onError: (String) -> Unit = {}
+    ) {
+        val executor = ContextCompat.getMainExecutor(activity)
+        val prompt = BiometricPrompt(
+            activity,
+            executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    onAuthenticated()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    onError(errString.toString())
+                }
+            }
+        )
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setAllowedAuthenticators(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                    BiometricManager.Authenticators.BIOMETRIC_WEAK
+            )
+            .setNegativeButtonText(negativeButtonText)
+            .build()
+        prompt.authenticate(promptInfo)
+    }
 
     private fun getOrCreateHardwareKey(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

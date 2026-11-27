@@ -111,6 +111,7 @@ export interface EncryptedAttachmentMeta {
   sizeBytes: number;
   sha256Hex: string;
   ivHex: string;
+  fileKeyHex?: string;
   ciphertextBase64?: string;
   blobSynced?: boolean;
   storageObjectPath?: string;
@@ -239,6 +240,6 @@ export const SENSITIVE_FIELD_KEYS = new Set<string>([
 
 export const APP_BUILD_INFO = {
   appName: 'SafePocket',
-  versionName: '0.5.0',
-  versionCode: 20
+  versionName: '0.6.0-beta.1',
+  versionCode: 21
 } as const;

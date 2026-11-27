@@ -4,9 +4,9 @@ import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.WindowManager
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -14,6 +14,7 @@ import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import com.safepocket.android.data.AndroidSampleVault
 import com.safepocket.android.data.AndroidVaultRepository
+import com.safepocket.android.security.AndroidBiometricKeystoreManager
 import com.safepocket.android.ui.AdaptiveSafePocketShell
 import com.safepocket.android.update.PlayProtectPackageInstaller
 import com.safepocket.shared.error.SafePocketErrorHandler
@@ -37,9 +38,10 @@ data class FoldablePostureState(
  * Single Adaptive Activity for Android 10+ / Android 17+ Smartphones, Unfolded Foldables,
  * and Googlebook OS / ChromeOS Desktop Windows (`SafePocket v0.3`, `Build 5`).
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private var postureState by mutableStateOf(FoldablePostureState())
+    private val biometricKeystoreManager = AndroidBiometricKeystoreManager()
     private lateinit var i18nEngine: LocalizationEngine
     private lateinit var vaultRepository: AndroidVaultRepository
     private lateinit var playProtectInstaller: PlayProtectPackageInstaller
@@ -376,6 +378,16 @@ class MainActivity : ComponentActivity() {
                     editingItem = null
                 },
                 onLockVault = { isVaultLocked = true },
+                canUseBiometricUnlock = biometricKeystoreManager.canAuthenticateBiometrics(this@MainActivity),
+                onRequestBiometricUnlock = {
+                    biometricKeystoreManager.authenticateVaultShield(
+                        activity = this@MainActivity,
+                        title = i18nEngine.t("app_name"),
+                        subtitle = i18nEngine.t("action_unlock_biometric"),
+                        negativeButtonText = i18nEngine.t("security_master_password"),
+                        onAuthenticated = { isVaultLocked = false }
+                    )
+                },
                 onUnlockVaultWithPassword = { candidatePw ->
                     val ok = vaultRepository.verifyMasterPassword(candidatePw)
                     if (ok) isVaultLocked = false
@@ -465,6 +477,36 @@ class MainActivity : ComponentActivity() {
                 onExport1PasswordCsv = { vaultRepository.export1PasswordCsvText(vaultItems).encodeToByteArray() },
                 onExportSafePocketCsv = { vaultRepository.exportSafePocketCsvText(vaultItems).encodeToByteArray() },
                 onExportEmergencyKitHtml = { vaultRepository.buildEmergencyKitHtml().encodeToByteArray() },
+                onAttachDocumentScan = { target, fileName, mimeType, rawBytes, side ->
+                    val (updatedItem, updatedList) = vaultRepository.attachScanBytesToItem(
+                        target = target,
+                        fileName = fileName,
+                        mimeType = mimeType,
+                        rawBytes = rawBytes,
+                        side = side,
+                        currentItems = vaultItems
+                    )
+                    vaultItems = updatedList
+                    if (selectedItem?.id == updatedItem.id) {
+                        selectedItem = updatedItem
+                    }
+                    statusTick++
+                },
+                onDeleteDocumentAttachment = { target, attachmentId ->
+                    val (updatedItem, updatedList) = vaultRepository.removeAttachmentFromItem(
+                        target = target,
+                        attachmentId = attachmentId,
+                        currentItems = vaultItems
+                    )
+                    vaultItems = updatedList
+                    if (selectedItem?.id == updatedItem.id) {
+                        selectedItem = updatedItem
+                    }
+                    statusTick++
+                },
+                onDecryptDocumentAttachment = { target, attachmentId ->
+                    vaultRepository.decryptAttachmentBytesInRam(target, attachmentId)
+                },
                 onDropDocumentAttachment = { true }
             )
         }

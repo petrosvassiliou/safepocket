@@ -255,6 +255,20 @@ struct MacVaultField: Identifiable, Codable, Equatable {
     var isSensitive: Bool = false
 }
 
+struct MacVaultAttachment: Identifiable, Codable, Equatable {
+    var id: String
+    var fileName: String
+    var mimeType: String
+    var side: String? = "front"
+    var sizeBytes: Int64
+    var sha256Hex: String
+    var ivHex: String
+    var fileKeyHex: String? = nil
+    var ciphertextBase64: String? = nil
+    var blobSynced: Bool = false
+    var storageObjectPath: String? = nil
+}
+
 struct MacVaultEntry: Identifiable, Codable, Equatable {
     var id: String
     var category: String
@@ -262,6 +276,7 @@ struct MacVaultEntry: Identifiable, Codable, Equatable {
     var subtitle: String
     var fields: [MacVaultField]
     var tags: [String] = []
+    var attachments: [MacVaultAttachment] = []
     var customColorHex: String?
     var networkBrand: String?
     var pinned: Bool
@@ -269,6 +284,61 @@ struct MacVaultEntry: Identifiable, Codable, Equatable {
     var isSampleItem: Bool
     var updatedAt: Date
     var hlcPacked: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case id, category, title, subtitle, fields, tags, attachments
+        case customColorHex, networkBrand, pinned, favorite, isSampleItem, updatedAt, hlcPacked
+    }
+
+    init(
+        id: String,
+        category: String,
+        title: String,
+        subtitle: String,
+        fields: [MacVaultField],
+        tags: [String] = [],
+        attachments: [MacVaultAttachment] = [],
+        customColorHex: String? = nil,
+        networkBrand: String? = nil,
+        pinned: Bool,
+        favorite: Bool,
+        isSampleItem: Bool,
+        updatedAt: Date,
+        hlcPacked: String = ""
+    ) {
+        self.id = id
+        self.category = category
+        self.title = title
+        self.subtitle = subtitle
+        self.fields = fields
+        self.tags = tags
+        self.attachments = attachments
+        self.customColorHex = customColorHex
+        self.networkBrand = networkBrand
+        self.pinned = pinned
+        self.favorite = favorite
+        self.isSampleItem = isSampleItem
+        self.updatedAt = updatedAt
+        self.hlcPacked = hlcPacked
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.category = try c.decode(String.self, forKey: .category)
+        self.title = try c.decode(String.self, forKey: .title)
+        self.subtitle = try c.decodeIfPresent(String.self, forKey: .subtitle) ?? ""
+        self.fields = try c.decodeIfPresent([MacVaultField].self, forKey: .fields) ?? []
+        self.tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        self.attachments = try c.decodeIfPresent([MacVaultAttachment].self, forKey: .attachments) ?? []
+        self.customColorHex = try c.decodeIfPresent(String.self, forKey: .customColorHex)
+        self.networkBrand = try c.decodeIfPresent(String.self, forKey: .networkBrand)
+        self.pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        self.isSampleItem = try c.decodeIfPresent(Bool.self, forKey: .isSampleItem) ?? false
+        self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        self.hlcPacked = try c.decodeIfPresent(String.self, forKey: .hlcPacked) ?? ""
+    }
 
     var primaryField: MacVaultField? {
         let priority: [String: [String]] = [

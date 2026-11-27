@@ -4,7 +4,14 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import android.os.PersistableBundle
+import android.provider.OpenableColumns
+import androidx.compose.ui.graphics.asImageBitmap
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
@@ -152,6 +159,8 @@ fun AdaptiveSafePocketShell(
     onNewItemWithCategory: (VaultCategory) -> Unit = { onNewItem() },
     onDismissEditor: () -> Unit = {},
     onLockVault: () -> Unit,
+    canUseBiometricUnlock: Boolean = false,
+    onRequestBiometricUnlock: () -> Unit = {},
     onUnlockVaultWithPassword: suspend (String) -> Boolean = { true },
     onOpenSettings: () -> Unit,
     onDismissSettings: () -> Unit = {},
@@ -175,6 +184,9 @@ fun AdaptiveSafePocketShell(
     onExport1PasswordCsv: suspend () -> ByteArray = { ByteArray(0) },
     onExportSafePocketCsv: suspend () -> ByteArray = { ByteArray(0) },
     onExportEmergencyKitHtml: () -> ByteArray = { ByteArray(0) },
+    onAttachDocumentScan: suspend (VaultItemPayload, String, String, ByteArray, String) -> Unit = { _, _, _, _, _ -> },
+    onDeleteDocumentAttachment: suspend (VaultItemPayload, String) -> Unit = { _, _ -> },
+    onDecryptDocumentAttachment: suspend (VaultItemPayload, String) -> ByteArray = { _, _ -> ByteArray(0) },
     onDropDocumentAttachment: (DragAndDropEvent) -> Boolean
 ) {
     val activeLocale by i18n.activeLocale.collectAsState()
@@ -186,6 +198,7 @@ fun AdaptiveSafePocketShell(
     var clipboardJob by remember { mutableStateOf<Job?>(null) }
     var clipboardCountdownSecs by remember { mutableStateOf<Int?>(null) }
     var presentingPassItem by remember { mutableStateOf<VaultItemPayload?>(null) }
+    var activeScanPreview by remember { mutableStateOf<AndroidDecryptedScanPreview?>(null) }
     var showCommandPalette by remember { mutableStateOf(false) }
     var expiringOnly by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -251,6 +264,9 @@ fun AdaptiveSafePocketShell(
     }
     var lockOnStandby by remember {
         mutableStateOf(prefs.getBoolean("lock_on_standby", true))
+    }
+    var biometricsEnabled by remember {
+        mutableStateOf(prefs.getBoolean("biometrics_enabled", true))
     }
 
     DisposableEffect(context, lockOnStandby) {
@@ -364,6 +380,12 @@ fun AdaptiveSafePocketShell(
         }
     }
 
+    LaunchedEffect(isVaultLocked) {
+        if (isVaultLocked) {
+            activeScanPreview = null
+        }
+    }
+
     val copyItemPrimaryField: (VaultItemPayload) -> Unit = { target ->
         val primary = target.primaryCopyableField()
         if (primary != null) {
@@ -388,6 +410,27 @@ fun AdaptiveSafePocketShell(
             copyWith30sHygiene(resolvedLabel, secondary.value, true)
         } else {
             copyItemPrimaryField(target)
+        }
+    }
+
+    val openDecryptedScanModal: (VaultItemPayload, EncryptedAttachmentRef) -> Unit = { owner, att ->
+        coroutineScope.launch {
+            runCatching {
+                val plainBytes = onDecryptDocumentAttachment(owner, att.id)
+                activeScanPreview = AndroidDecryptedScanPreview(
+                    itemId = owner.id,
+                    attachmentId = att.id,
+                    fileName = att.fileName,
+                    mimeType = att.mimeType,
+                    side = att.side ?: "front",
+                    sha256Hex = att.sha256Hex,
+                    decryptedBytes = plainBytes
+                )
+            }.onFailure { err ->
+                copiedNotice = err.message ?: "Decryption failed"
+                delay(3_500L)
+                copiedNotice = null
+            }
         }
     }
 
@@ -446,6 +489,8 @@ fun AdaptiveSafePocketShell(
                                         manualLocaleOverride = manualLocaleOverride,
                                         onSelectLocaleOverride = onSelectLocaleOverride,
                                         requiresPassword = hasCustomMasterPassword,
+                                        showBiometricButton = canUseBiometricUnlock && biometricsEnabled,
+                                        onBiometricUnlock = onRequestBiometricUnlock,
                                         onUnlockWithPassword = onUnlockVaultWithPassword
                                     )
                                 } else {
@@ -619,7 +664,27 @@ fun AdaptiveSafePocketShell(
                                                             onTogglePin = onTogglePinItem,
                                                             onToggleFavorite = onToggleFavoriteItem,
                                                             onDelete = onDeleteItem,
-                                                            onPresentPass = { presentingPassItem = it }
+                                                             onPresentPass = { presentingPassItem = it },
+                                                             onAttachScan = { target, fName, mime, bytes, side ->
+                                                                 coroutineScope.launch {
+                                                                     runCatching {
+                                                                         onAttachDocumentScan(target, fName, mime, bytes, side)
+                                                                     }.onFailure { err ->
+                                                                         copiedNotice = err.message ?: i18n.t("scan_size_limit_error")
+                                                                         delay(3_500L)
+                                                                         copiedNotice = null
+                                                                     }
+                                                                 }
+                                                             },
+                                                             onPreviewScan = openDecryptedScanModal,
+                                                             onDeleteScan = { target, attId ->
+                                                                 coroutineScope.launch {
+                                                                     onDeleteDocumentAttachment(target, attId)
+                                                                     if (activeScanPreview?.attachmentId == attId) {
+                                                                         activeScanPreview = null
+                                                                     }
+                                                                 }
+                                                             }
                                                         )
                                                     }
                                                     HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
@@ -810,7 +875,27 @@ fun AdaptiveSafePocketShell(
                                                                 onTogglePin = onTogglePinItem,
                                                                 onToggleFavorite = onToggleFavoriteItem,
                                                                 onDelete = onDeleteItem,
-                                                                onPresentPass = { presentingPassItem = it }
+                                                                 onPresentPass = { presentingPassItem = it },
+                                                             onAttachScan = { target, fName, mime, bytes, side ->
+                                                                 coroutineScope.launch {
+                                                                     runCatching {
+                                                                         onAttachDocumentScan(target, fName, mime, bytes, side)
+                                                                     }.onFailure { err ->
+                                                                         copiedNotice = err.message ?: i18n.t("scan_size_limit_error")
+                                                                         delay(3_500L)
+                                                                         copiedNotice = null
+                                                                     }
+                                                                 }
+                                                             },
+                                                             onPreviewScan = openDecryptedScanModal,
+                                                             onDeleteScan = { target, attId ->
+                                                                 coroutineScope.launch {
+                                                                     onDeleteDocumentAttachment(target, attId)
+                                                                     if (activeScanPreview?.attachmentId == attId) {
+                                                                         activeScanPreview = null
+                                                                     }
+                                                                 }
+                                                             }
                                                             )
                                                         }
                                                     }
@@ -1060,7 +1145,27 @@ fun AdaptiveSafePocketShell(
                                                                         onDeleteItem(it)
                                                                         onSelectItem(null)
                                                                     },
-                                                                    onPresentPass = { presentingPassItem = it }
+                                                                     onPresentPass = { presentingPassItem = it },
+                                                             onAttachScan = { target, fName, mime, bytes, side ->
+                                                                 coroutineScope.launch {
+                                                                     runCatching {
+                                                                         onAttachDocumentScan(target, fName, mime, bytes, side)
+                                                                     }.onFailure { err ->
+                                                                         copiedNotice = err.message ?: i18n.t("scan_size_limit_error")
+                                                                         delay(3_500L)
+                                                                         copiedNotice = null
+                                                                     }
+                                                                 }
+                                                             },
+                                                             onPreviewScan = openDecryptedScanModal,
+                                                             onDeleteScan = { target, attId ->
+                                                                 coroutineScope.launch {
+                                                                     onDeleteDocumentAttachment(target, attId)
+                                                                     if (activeScanPreview?.attachmentId == attId) {
+                                                                         activeScanPreview = null
+                                                                     }
+                                                                 }
+                                                             }
                                                                 )
                                                             }
                                                         }
@@ -1120,6 +1225,21 @@ fun AdaptiveSafePocketShell(
                             i18n = i18n,
                             item = passTarget,
                             onDismiss = { presentingPassItem = null }
+                        )
+                    }
+
+                    activeScanPreview?.let { scanTarget ->
+                        val ownerItem = items.firstOrNull { it.id == scanTarget.itemId }
+                        AttachmentLightboxDialog(
+                            i18n = i18n,
+                            preview = scanTarget,
+                            siblingAttachments = ownerItem?.attachments.orEmpty(),
+                            onSelectSibling = { nextAtt ->
+                                if (ownerItem != null) {
+                                    openDecryptedScanModal(ownerItem, nextAtt)
+                                }
+                            },
+                            onDismiss = { activeScanPreview = null }
                         )
                     }
 
@@ -1189,6 +1309,11 @@ fun AdaptiveSafePocketShell(
                             onToggleLockOnStandby = { enabled ->
                                 lockOnStandby = enabled
                                 prefs.edit().putBoolean("lock_on_standby", enabled).apply()
+                            },
+                            biometricsEnabled = biometricsEnabled,
+                            onToggleBiometrics = { enabled ->
+                                biometricsEnabled = enabled
+                                prefs.edit().putBoolean("biometrics_enabled", enabled).apply()
                             },
                             manualLocaleOverride = manualLocaleOverride,
                             localDbStatus = localDbStatus,
@@ -2087,7 +2212,10 @@ private fun VaultDetailInspectorPane(
     onTogglePin: (VaultItemPayload) -> Unit,
     onToggleFavorite: (VaultItemPayload) -> Unit,
     onDelete: (VaultItemPayload) -> Unit,
-    onPresentPass: ((VaultItemPayload) -> Unit)? = null
+    onPresentPass: ((VaultItemPayload) -> Unit)? = null,
+    onAttachScan: (VaultItemPayload, String, String, ByteArray, String) -> Unit = { _, _, _, _, _ -> },
+    onPreviewScan: (VaultItemPayload, EncryptedAttachmentRef) -> Unit = { _, _ -> },
+    onDeleteScan: (VaultItemPayload, String) -> Unit = { _, _ -> }
 ) {
     if (selectedItem == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -2251,6 +2379,16 @@ private fun VaultDetailInspectorPane(
                 }
             }
         }
+
+        EncryptedDocumentScansSectionCard(
+            i18n = i18n,
+            item = selectedItem,
+            onAttachScan = { fName, mime, bytes, side ->
+                onAttachScan(selectedItem, fName, mime, bytes, side)
+            },
+            onPreviewScan = { att -> onPreviewScan(selectedItem, att) },
+            onDeleteScan = { attId -> onDeleteScan(selectedItem, attId) }
+        )
     }
 }
 
@@ -2783,6 +2921,8 @@ private fun SafePocketSettingsDialog(
     onSelectAutoLockMinutes: (Int) -> Unit = {},
     lockOnStandby: Boolean = true,
     onToggleLockOnStandby: (Boolean) -> Unit = {},
+    biometricsEnabled: Boolean = true,
+    onToggleBiometrics: (Boolean) -> Unit = {},
     manualLocaleOverride: SupportedLocale?,
     localDbStatus: LocalEncryptedDbStatus?,
     cloudSyncStatus: CloudSyncStatusSnapshot?,
@@ -3807,6 +3947,29 @@ private fun SafePocketSettingsDialog(
                             ) {
                                 Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                     Text(
+                                        text = i18n.t("security_biometrics_toggle"),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = i18n.t("security_biometrics_desc"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = biometricsEnabled,
+                                    onCheckedChange = onToggleBiometrics
+                                )
+                            }
+                            HorizontalDivider()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                    Text(
                                         text = i18n.t("security_lock_on_standby_toggle"),
                                         style = MaterialTheme.typography.bodyLarge,
                                         fontWeight = FontWeight.Medium
@@ -4189,6 +4352,8 @@ private fun LockedVaultView(
     manualLocaleOverride: SupportedLocale?,
     onSelectLocaleOverride: (SupportedLocale?) -> Unit,
     requiresPassword: Boolean,
+    showBiometricButton: Boolean = false,
+    onBiometricUnlock: () -> Unit = {},
     onUnlockWithPassword: suspend (String) -> Boolean
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -4255,24 +4420,36 @@ private fun LockedVaultView(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                SmoothPrimaryButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            val ok = onUnlockWithPassword(password)
-                            if (!ok) {
-                                unlockError = true
-                                shakeOffsetPx.animateTo(-18f, tween(55))
-                                shakeOffsetPx.animateTo(16f, tween(55))
-                                shakeOffsetPx.animateTo(-10f, tween(55))
-                                shakeOffsetPx.animateTo(0f, tween(70))
-                            } else {
-                                password = ""
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(i18n.t("action_unlock_vault"))
+                    SmoothPrimaryButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                val ok = onUnlockWithPassword(password)
+                                if (!ok) {
+                                    unlockError = true
+                                    shakeOffsetPx.animateTo(-18f, tween(55))
+                                    shakeOffsetPx.animateTo(16f, tween(55))
+                                    shakeOffsetPx.animateTo(-10f, tween(55))
+                                    shakeOffsetPx.animateTo(0f, tween(70))
+                                } else {
+                                    password = ""
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(i18n.t("action_unlock_vault"))
+                    }
+                    if (showBiometricButton) {
+                        SmoothTonalButton(
+                            onClick = onBiometricUnlock
+                        ) {
+                            Text("🔓 ${i18n.t("action_unlock_biometric")}")
+                        }
+                    }
                 }
             }
         }
@@ -5078,6 +5255,377 @@ private fun CommandPaletteDialog(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+        }
+    }
+}
+
+private data class AndroidDecryptedScanPreview(
+    val itemId: String,
+    val attachmentId: String,
+    val fileName: String,
+    val mimeType: String,
+    val side: String,
+    val sha256Hex: String,
+    val decryptedBytes: ByteArray
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EncryptedDocumentScansSectionCard(
+    i18n: LocalizationEngine,
+    item: VaultItemPayload,
+    onAttachScan: (fileName: String, mimeType: String, rawBytes: ByteArray, side: String) -> Unit,
+    onPreviewScan: (EncryptedAttachmentRef) -> Unit,
+    onDeleteScan: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var selectedSide by remember(item.id) { mutableStateOf("front") }
+
+    val fileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val resolver = context.contentResolver
+            val mime = resolver.getType(uri) ?: "application/octet-stream"
+            var resolvedName = "scan_${System.currentTimeMillis()}"
+            runCatching {
+                resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (nameIdx >= 0 && !cursor.isNull(nameIdx)) {
+                            resolvedName = cursor.getString(nameIdx)
+                        }
+                    }
+                }
+            }
+            val rawBytes = runCatching {
+                resolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            if (rawBytes != null && rawBytes.isNotEmpty()) {
+                onAttachScan(resolvedName, mime, rawBytes, selectedSide)
+            }
+        }
+    }
+
+    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "📎 ${i18n.t("scan_section_title")}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "(${item.attachments.size})",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SmoothFilterPill(
+                        selected = selectedSide == "front",
+                        onClick = { selectedSide = "front" },
+                        label = i18n.t("scan_side_front")
+                    )
+                    SmoothFilterPill(
+                        selected = selectedSide == "back",
+                        onClick = { selectedSide = "back" },
+                        label = i18n.t("scan_side_back")
+                    )
+                    SmoothPrimaryButton(
+                        onClick = { fileLauncher.launch(arrayOf("image/*", "application/pdf")) },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text(i18n.t("scan_add_file_btn"), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+
+            item.attachments.forEach { att ->
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (att.mimeType == "application/pdf") "📄 ${att.fileName}" else "🖼 ${att.fileName}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                    shape = RoundedCornerShape(5.dp)
+                                ) {
+                                    Text(
+                                        text = if (att.side == "back") i18n.t("scan_side_back") else i18n.t("scan_side_front"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                                Surface(
+                                    color = if (att.blobSynced) Color(0xFFD1FAE5) else MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(5.dp)
+                                ) {
+                                    Text(
+                                        text = if (att.blobSynced) i18n.t("scan_badge_cloud_synced") else i18n.t("scan_badge_local_encrypted"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (att.blobSynced) Color(0xFF065F46) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "${(att.sizeBytes / 1024L).coerceAtLeast(1L)} KB • SHA-256 ${att.sha256Hex.take(12)}…",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SmoothTonalButton(
+                                onClick = { onPreviewScan(att) },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                            ) {
+                                Text(i18n.t("action_preview_scan"), style = MaterialTheme.typography.labelSmall)
+                            }
+                            SmoothOutlinedButton(
+                                onClick = { onDeleteScan(att.id) },
+                                minHeight = 32.dp,
+                                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp)
+                            ) {
+                                Text("🗑", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = Color.Transparent,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    .clickable { fileLauncher.launch(arrayOf("image/*", "application/pdf")) }
+            ) {
+                Text(
+                    text = "📎  ${i18n.t("dropzone_hint")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentLightboxDialog(
+    i18n: LocalizationEngine,
+    preview: AndroidDecryptedScanPreview,
+    siblingAttachments: List<EncryptedAttachmentRef>,
+    onSelectSibling: (EncryptedAttachmentRef) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var zoomPercent by remember(preview.attachmentId) { mutableIntStateOf(100) }
+    val isPdf = preview.mimeType == "application/pdf" || preview.fileName.lowercase().endsWith(".pdf")
+
+    val decodedBitmap: Bitmap? = remember(preview.attachmentId, preview.decryptedBytes) {
+        if (!isPdf) {
+            runCatching {
+                BitmapFactory.decodeByteArray(preview.decryptedBytes, 0, preview.decryptedBytes.size)
+            }.getOrNull()
+        } else null
+    }
+
+    val pdfPages: List<Bitmap> = remember(preview.attachmentId, preview.decryptedBytes) {
+        if (!isPdf) emptyList()
+        else runCatching {
+            val tmpFile = File(context.cacheDir, "ram_pdf_${System.nanoTime()}.tmp")
+            tmpFile.writeBytes(preview.decryptedBytes)
+            val pfd = ParcelFileDescriptor.open(tmpFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            // Unlink immediately so zero directory entry persists on disk
+            tmpFile.delete()
+            pfd.use { fd ->
+                PdfRenderer(fd).use { renderer ->
+                    val count = renderer.pageCount.coerceAtMost(8)
+                    (0 until count).map { pageIdx ->
+                        renderer.openPage(pageIdx).use { page ->
+                            val w = (page.width * 2).coerceAtMost(1800).coerceAtLeast(1)
+                            val h = (page.height * 2).coerceAtMost(2400).coerceAtLeast(1)
+                            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                            bmp.eraseColor(android.graphics.Color.WHITE)
+                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            bmp
+                        }
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 760.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 24.dp),
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "${preview.fileName} (${if (preview.side == "back") i18n.t("scan_side_back") else i18n.t("scan_side_front")})",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "✓ ${i18n.t("scan_ram_verified_badge")} (${preview.sha256Hex.take(16)}…)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (!isPdf) {
+                            listOf(100, 150, 200).forEach { z ->
+                                SmoothFilterPill(
+                                    selected = zoomPercent == z,
+                                    onClick = { zoomPercent = z },
+                                    label = "$z%"
+                                )
+                            }
+                        }
+                        SmoothPrimaryButton(onClick = onDismiss) {
+                            Text(i18n.t("action_close_preview"))
+                        }
+                    }
+                }
+
+                if (siblingAttachments.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        siblingAttachments.forEach { sib ->
+                            SmoothFilterPill(
+                                selected = sib.id == preview.attachmentId,
+                                onClick = { onSelectSibling(sib) },
+                                label = sib.fileName
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 260.dp, max = 480.dp)
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState()),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        isPdf && pdfPages.isNotEmpty() -> {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                pdfPages.forEachIndexed { idx, pageBmp ->
+                                    Image(
+                                        bitmap = pageBmp.asImageBitmap(),
+                                        contentDescription = "${preview.fileName} p.${idx + 1}",
+                                        modifier = Modifier.width(560.dp)
+                                    )
+                                }
+                            }
+                        }
+                        decodedBitmap != null -> {
+                            val baseW = (460 * zoomPercent / 100).dp
+                            Image(
+                                bitmap = decodedBitmap.asImageBitmap(),
+                                contentDescription = preview.fileName,
+                                modifier = Modifier.width(baseW)
+                            )
+                        }
+                        else -> {
+                            Text(
+                                text = i18n.t("scan_ram_verified_badge"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         }

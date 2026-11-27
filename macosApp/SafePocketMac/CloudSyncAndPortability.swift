@@ -80,6 +80,10 @@ struct MacCanonicalWireAttachment: Codable {
     var sizeBytes: Int64
     var sha256Hex: String
     var ivHex: String? = nil
+    var fileKeyHex: String? = nil
+    var ciphertextBase64: String? = nil
+    var blobSynced: Bool? = nil
+    var storageObjectPath: String? = nil
 }
 
 struct MacCanonicalWireVaultItem: Codable {
@@ -154,6 +158,22 @@ extension MacVaultEntry {
             )
         }
 
+        let wireAttachments = attachments.map { a in
+            MacCanonicalWireAttachment(
+                id: a.id,
+                fileName: a.fileName,
+                mimeType: a.mimeType,
+                side: a.side,
+                sizeBytes: a.sizeBytes,
+                sha256Hex: a.sha256Hex,
+                ivHex: a.ivHex,
+                fileKeyHex: a.fileKeyHex,
+                ciphertextBase64: a.sizeBytes <= 16_384 ? a.ciphertextBase64 : nil,
+                blobSynced: a.blobSynced,
+                storageObjectPath: a.storageObjectPath
+            )
+        }
+
         let wire = MacCanonicalWireVaultItem(
             schemaVersion: 1,
             id: id,
@@ -167,7 +187,7 @@ extension MacVaultEntry {
             cardTheme: theme,
             documentSubtype: nil,
             fields: wireFields,
-            attachments: [],
+            attachments: wireAttachments,
             createdAtEpochMs: epochMs,
             updatedAtEpochMs: epochMs
         )
@@ -187,6 +207,21 @@ extension MacVaultEntry {
                     isSensitive: wf.isSensitive
                 )
             }
+            let mappedAttachments: [MacVaultAttachment] = wire.attachments.map { wa in
+                MacVaultAttachment(
+                    id: wa.id,
+                    fileName: wa.fileName,
+                    mimeType: wa.mimeType,
+                    side: wa.side ?? "front",
+                    sizeBytes: wa.sizeBytes,
+                    sha256Hex: wa.sha256Hex,
+                    ivHex: wa.ivHex ?? "",
+                    fileKeyHex: wa.fileKeyHex,
+                    ciphertextBase64: wa.ciphertextBase64,
+                    blobSynced: wa.blobSynced ?? false,
+                    storageObjectPath: wa.storageObjectPath
+                )
+            }
             let updatedDate = Date(timeIntervalSince1970: Double(wire.updatedAtEpochMs) / 1000.0)
             return MacVaultEntry(
                 id: wire.id,
@@ -195,6 +230,7 @@ extension MacVaultEntry {
                 subtitle: wire.subtitle,
                 fields: mappedFields,
                 tags: wire.tags,
+                attachments: mappedAttachments,
                 customColorHex: wire.cardTheme?.customColorHex,
                 networkBrand: wire.cardTheme?.networkBrand,
                 pinned: wire.pinned ?? false,
@@ -479,6 +515,127 @@ enum MacZeroKnowledgeCrypto {
         let tag = combined.suffix(16)
         let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: cipherBody, tag: tag)
         return try AES.GCM.open(box, using: key, authenticating: aad)
+    }
+
+    static func generateAttachmentKeyHex() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func constantTimeHexEquals(_ a: String, _ b: String) -> Bool {
+        let lhs = Array(a.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().utf8)
+        let rhs = Array(b.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().utf8)
+        guard lhs.count == rhs.count, !lhs.isEmpty else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<lhs.count {
+            diff |= (lhs[i] ^ rhs[i])
+        }
+        return diff == 0
+    }
+
+    static func encryptAttachmentBlob(
+        attachmentId: String,
+        plaintext: Data,
+        fileKeyHex: String
+    ) throws -> (ivHex: String, sha256Hex: String, encryptedBytes: Data) {
+        guard let key = symmetricKeyFromHex(fileKeyHex) else {
+            throw NSError(domain: "SafePocketCrypto", code: -21, userInfo: [NSLocalizedDescriptionKey: "Invalid 256-bit attachment key"])
+        }
+        let nonce = AES.GCM.Nonce()
+        let aad = Data("safepocket:attachment:\(attachmentId)".utf8)
+        let sealed = try AES.GCM.seal(plaintext, using: key, nonce: nonce, authenticating: aad)
+        let ivHex = Data(nonce).map { String(format: "%02x", $0) }.joined()
+        let encBytes = Data(sealed.ciphertext) + Data(sealed.tag)
+        let digest = sha256Hex(encBytes)
+        return (ivHex, digest, encBytes)
+    }
+
+    static func decryptAttachmentBlob(
+        attachmentId: String,
+        ivHex: String,
+        expectedSha256Hex: String,
+        encryptedBytes: Data,
+        fileKeyHex: String?,
+        fallbackVaultKey: SymmetricKey
+    ) throws -> Data {
+        let actualSha = sha256Hex(encryptedBytes)
+        guard constantTimeHexEquals(actualSha, expectedSha256Hex) else {
+            throw NSError(domain: "SafePocketCrypto", code: -22, userInfo: [NSLocalizedDescriptionKey: "Attachment SHA-256 integrity check failed — tampering detected"])
+        }
+        guard let ivData = Data(hexString: ivHex), encryptedBytes.count >= 16 else {
+            throw NSError(domain: "SafePocketCrypto", code: -23, userInfo: [NSLocalizedDescriptionKey: "Malformed encrypted attachment envelope"])
+        }
+        let targetKey: SymmetricKey
+        if let fk = fileKeyHex?.trimmingCharacters(in: .whitespacesAndNewlines), !fk.isEmpty,
+           let parsed = symmetricKeyFromHex(fk) {
+            targetKey = parsed
+        } else {
+            targetKey = fallbackVaultKey
+        }
+        let nonce = try AES.GCM.Nonce(data: ivData)
+        let cipherBody = encryptedBytes.prefix(encryptedBytes.count - 16)
+        let tag = encryptedBytes.suffix(16)
+        let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: cipherBody, tag: tag)
+        let aad = Data("safepocket:attachment:\(attachmentId)".utf8)
+        return try AES.GCM.open(box, using: targetKey, authenticating: aad)
+    }
+}
+
+enum MacEncryptedBlobStore {
+    private static let safeIdRegex = try! NSRegularExpression(pattern: "^[a-zA-Z0-9_-]+$")
+
+    static func isSafeAttachmentId(_ raw: String) -> Bool {
+        let range = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+        return safeIdRegex.firstMatch(in: raw, options: [], range: range) != nil
+    }
+
+    private static var blobsDirectory: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("SafePocket", isDirectory: true)
+            .appendingPathComponent("blobs", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(
+                at: dir,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
+        return dir
+    }
+
+    static func saveEncryptedBlob(_ data: Data, attachmentId: String) throws {
+        guard isSafeAttachmentId(attachmentId) else {
+            throw NSError(domain: "SafePocketBlobStore", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unsafe attachment ID"])
+        }
+        var url = blobsDirectory.appendingPathComponent("\(attachmentId).enc")
+        try data.write(to: url, options: .atomic)
+        _ = chmod(url.path, 0o600)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
+    }
+
+    static func loadEncryptedBlob(attachmentId: String) -> Data? {
+        guard isSafeAttachmentId(attachmentId) else { return nil }
+        let url = blobsDirectory.appendingPathComponent("\(attachmentId).enc")
+        return try? Data(contentsOf: url)
+    }
+
+    static func hasLocalEncryptedBlob(attachmentId: String) -> Bool {
+        guard isSafeAttachmentId(attachmentId) else { return false }
+        let url = blobsDirectory.appendingPathComponent("\(attachmentId).enc")
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    static func deleteEncryptedBlob(attachmentId: String) {
+        guard isSafeAttachmentId(attachmentId) else { return }
+        let url = blobsDirectory.appendingPathComponent("\(attachmentId).enc")
+        try? FileManager.default.removeItem(at: url)
     }
 }
 
@@ -850,6 +1007,101 @@ enum MacCloudSyncClient {
             )
         }
         return out
+    }
+
+    static func uploadEncryptedBlobToFirebaseStorage(
+        attachmentId: String,
+        encryptedBytes: Data,
+        sha256Hex: String,
+        session: MacCloudUserSession,
+        config: MacCloudEndpointConfig
+    ) async throws -> String {
+        guard MacEncryptedBlobStore.isSafeAttachmentId(attachmentId) else {
+            throw NSError(domain: "SafePocketCloudStorage", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid attachmentId"])
+        }
+        guard encryptedBytes.count > 0 && encryptedBytes.count < 25 * 1024 * 1024 else {
+            throw NSError(domain: "SafePocketCloudStorage", code: -2, userInfo: [NSLocalizedDescriptionKey: "Encrypted blob exceeds 25 MiB limit"])
+        }
+        let cleanBucket = config.firebaseStorageBucket.trimmingCharacters(in: .whitespacesAndNewlines)
+        let objectPath = "users/\(session.uid)/vaults/\(config.vaultCollectionId)/blobs/\(attachmentId).enc"
+        if session.idToken.hasPrefix("local-fb-jwt-") || cleanBucket.isEmpty {
+            return objectPath
+        }
+        let encodedBucket = cleanBucket.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? cleanBucket
+        var allowedObj = CharacterSet.urlQueryAllowed
+        allowedObj.remove(charactersIn: "/?&=+")
+        let encodedObj = objectPath.addingPercentEncoding(withAllowedCharacters: allowedObj) ?? objectPath
+        guard let url = URL(string: "https://firebasestorage.googleapis.com/v0/b/\(encodedBucket)/o?uploadType=multipart&name=\(encodedObj)") else {
+            throw URLError(.badURL)
+        }
+
+        let boundary = "safepocket_zk_storage_blob_v1"
+        let metaObj: [String: Any] = [
+            "name": objectPath,
+            "contentType": "application/octet-stream",
+            "metadata": [
+                "ciphertextSha256": sha256Hex.lowercased()
+            ]
+        ]
+        let metaData = try JSONSerialization.data(withJSONObject: metaObj)
+        var body = Data("--\(boundary)\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n".utf8)
+        body.append(metaData)
+        body.append(Data("\r\n--\(boundary)\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
+        body.append(encryptedBytes)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(sanitizeBearerToken(session.idToken))", forHTTPHeaderField: "Authorization")
+        req.setValue("multipart/related; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 45
+        req.httpBody = body
+
+        let (respData, resp) = try await URLSession.shared.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let raw = String(data: respData, encoding: .utf8) ?? ""
+            throw NSError(domain: "SafePocketCloudStorage", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "Firebase Storage upload failed (\(http.statusCode)): \(raw.prefix(140))"])
+        }
+        return objectPath
+    }
+
+    static func downloadEncryptedBlobFromFirebaseStorage(
+        attachmentId: String,
+        expectedSha256Hex: String,
+        session: MacCloudUserSession,
+        config: MacCloudEndpointConfig
+    ) async throws -> Data? {
+        guard MacEncryptedBlobStore.isSafeAttachmentId(attachmentId) else { return nil }
+        let cleanBucket = config.firebaseStorageBucket.trimmingCharacters(in: .whitespacesAndNewlines)
+        if session.idToken.hasPrefix("local-fb-jwt-") || cleanBucket.isEmpty {
+            return nil
+        }
+        let objectPath = "users/\(session.uid)/vaults/\(config.vaultCollectionId)/blobs/\(attachmentId).enc"
+        let encodedBucket = cleanBucket.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? cleanBucket
+        var allowedObj = CharacterSet.urlPathAllowed
+        allowedObj.remove(charactersIn: "/")
+        let encodedObj = objectPath.addingPercentEncoding(withAllowedCharacters: allowedObj) ?? objectPath
+        guard let url = URL(string: "https://firebasestorage.googleapis.com/v0/b/\(encodedBucket)/o/\(encodedObj)?alt=media") else {
+            throw URLError(.badURL)
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(sanitizeBearerToken(session.idToken))", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 45
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        if let http = resp as? HTTPURLResponse {
+            if http.statusCode == 404 { return nil }
+            if !(200..<300).contains(http.statusCode) {
+                throw NSError(domain: "SafePocketCloudStorage", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "Firebase Storage download failed (\(http.statusCode))"])
+            }
+        }
+        let actualSha = MacZeroKnowledgeCrypto.sha256Hex(data)
+        guard MacZeroKnowledgeCrypto.constantTimeHexEquals(actualSha, expectedSha256Hex) else {
+            throw NSError(domain: "SafePocketCloudStorage", code: -99, userInfo: [NSLocalizedDescriptionKey: "Firebase Storage .enc SHA-256 integrity check failed"])
+        }
+        return data
     }
 }
 

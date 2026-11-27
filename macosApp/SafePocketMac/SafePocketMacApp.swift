@@ -45,6 +45,7 @@ struct SafePocketMacApp: App {
     @StateObject private var vaultState = MacVaultViewModel()
     @StateObject private var updater = MacSparkleUpdateController()
     @AppStorage("safepocket.theme_mode") private var themeMode: String = "light"
+    @AppStorage("safepocket.menubar_enabled") private var menuBarEnabled: Bool = true
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -122,6 +123,17 @@ struct SafePocketMacApp: App {
                 .keyboardShortcut("p", modifiers: [.command])
             }
         }
+
+        MenuBarExtra(
+            "SafePocket",
+            systemImage: vaultState.isLocked ? "lock.shield" : "shield.lefthalf.filled",
+            isInserted: $menuBarEnabled
+        ) {
+            MacMenuBarQuickVaultView(vaultState: vaultState, updater: updater)
+                .preferredColorScheme(resolvedColorScheme)
+                .tint(vaultState.materialAccent.swiftUIColor)
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -160,9 +172,9 @@ final class MacSparkleUpdateController: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var lastUpdateError: String?
 
-    let currentVersionName = "0.5.0"
-    let currentVersionCode = 20
-    let currentVersionDisplay = "SafePocket v0.5.0 (Build 20)"
+    let currentVersionName = "0.6.0-beta.1"
+    let currentVersionCode = 21
+    let currentVersionDisplay = "SafePocket v0.6.0-beta.1 (Build 21)"
 
     static let pinnedEd25519PublicKeyHex = "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be"
     static let defaultManifestURL = URL(
@@ -388,6 +400,16 @@ struct MacDiagnosticEntry: Identifiable {
     let scrubbedDetail: String
 }
 
+struct MacDecryptedAttachmentPreview: Identifiable {
+    let id: String
+    let entryId: String
+    let fileName: String
+    let mimeType: String
+    let side: String
+    let sha256Hex: String
+    let decryptedBytes: Data
+}
+
 @MainActor
 final class MacVaultViewModel: ObservableObject {
     let i18n = MacLocalizationEngine()
@@ -420,6 +442,16 @@ final class MacVaultViewModel: ObservableObject {
     @Published var lockOnStandby: Bool {
         didSet {
             UserDefaults.standard.set(lockOnStandby, forKey: "safepocket.lock_on_standby")
+        }
+    }
+    @Published var biometricsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(biometricsEnabled, forKey: "safepocket.biometrics_enabled")
+        }
+    }
+    @Published var menuBarEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(menuBarEnabled, forKey: "safepocket.menubar_enabled")
         }
     }
     @Published var includeLoginsOnImport: Bool {
@@ -478,6 +510,7 @@ final class MacVaultViewModel: ObservableObject {
     @Published var clipboardCountdownSeconds: Int? = nil
     @Published var clipboardClearedFlash: Bool = false
     @Published var plainCopiedBanner: String? = nil
+    @Published var activeAttachmentPreview: MacDecryptedAttachmentPreview? = nil
 
     private var clipboardClearTask: Task<Void, Never>?
     private var inactivityTimerTask: Task<Void, Never>?
@@ -519,6 +552,16 @@ final class MacVaultViewModel: ObservableObject {
             self.lockOnStandby = true
         } else {
             self.lockOnStandby = UserDefaults.standard.bool(forKey: "safepocket.lock_on_standby")
+        }
+        if UserDefaults.standard.object(forKey: "safepocket.biometrics_enabled") == nil {
+            self.biometricsEnabled = true
+        } else {
+            self.biometricsEnabled = UserDefaults.standard.bool(forKey: "safepocket.biometrics_enabled")
+        }
+        if UserDefaults.standard.object(forKey: "safepocket.menubar_enabled") == nil {
+            self.menuBarEnabled = true
+        } else {
+            self.menuBarEnabled = UserDefaults.standard.bool(forKey: "safepocket.menubar_enabled")
         }
         self.includeLoginsOnImport = UserDefaults.standard.bool(forKey: "safepocket.import_include_logins")
         self.masterPasswordHint = UserDefaults.standard.string(forKey: "safepocket.master_pw_hint") ?? ""
@@ -673,11 +716,16 @@ final class MacVaultViewModel: ObservableObject {
         return days >= 0 && days <= 180
     }
 
+    func isMissingBackupScan(_ item: MacVaultEntry) -> Bool {
+        let isTravelDoc = item.category == "OFFICIAL_DOCUMENT" || item.category == "IDENTITY"
+        return isTravelDoc && item.attachments.isEmpty
+    }
+
     func needsReadinessAttention(_ item: MacVaultEntry) -> Bool {
         if let days = item.daysUntilExpiry(), days <= expiryWindowDays {
             return true
         }
-        return isTravelSixMonthWarning(item)
+        return isTravelSixMonthWarning(item) || isMissingBackupScan(item)
     }
 
     var readinessAttentionCount: Int {
@@ -1178,7 +1226,50 @@ final class MacVaultViewModel: ObservableObject {
                     }
                 }
 
-                // 3. PUSH ONLY WINNING OUTBOUND DELTAS
+                // 3.Upload any unsynced local .enc attachment blobs BEFORE pushing item deltas
+                for (entityId, var entryVal) in localEntryById where !entryVal.isBuiltInSampleEntry && !entryVal.attachments.isEmpty {
+                    var metaMutated = false
+                    for attIdx in entryVal.attachments.indices {
+                        let att = entryVal.attachments[attIdx]
+                        if !att.blobSynced, let localEnc = MacEncryptedBlobStore.loadEncryptedBlob(attachmentId: att.id) {
+                            if let storagePath = try? await MacCloudSyncClient.uploadEncryptedBlobToFirebaseStorage(
+                                attachmentId: att.id,
+                                encryptedBytes: localEnc,
+                                sha256Hex: att.sha256Hex,
+                                session: activeSession,
+                                config: endpointConfig
+                            ) {
+                                entryVal.attachments[attIdx].blobSynced = true
+                                entryVal.attachments[attIdx].storageObjectPath = storagePath
+                                metaMutated = true
+                            }
+                        } else if !MacEncryptedBlobStore.hasLocalEncryptedBlob(attachmentId: att.id),
+                                  att.ciphertextBase64 == nil {
+                            // Lazy prefetch missing remote .enc blob into local encrypted store
+                            if let remoteEnc = try? await MacCloudSyncClient.downloadEncryptedBlobFromFirebaseStorage(
+                                attachmentId: att.id,
+                                expectedSha256Hex: att.sha256Hex,
+                                session: activeSession,
+                                config: endpointConfig
+                            ) {
+                                try? MacEncryptedBlobStore.saveEncryptedBlob(remoteEnc, attachmentId: att.id)
+                                if !entryVal.attachments[attIdx].blobSynced {
+                                    entryVal.attachments[attIdx].blobSynced = true
+                                    metaMutated = true
+                                }
+                            }
+                        }
+                    }
+                    if metaMutated {
+                        localEntryById[entityId] = entryVal
+                        // Refresh outbound delta if this item was already queued to push
+                        if let outIdx = outboundDeltas.firstIndex(where: { $0.entityId == entityId }) {
+                            outboundDeltas[outIdx] = try buildOutboundItemDelta(entryVal, cloudKey: cloudKey)
+                        }
+                    }
+                }
+
+                // 4. PUSH ONLY WINNING OUTBOUND DELTAS
                 var pushed = 0
                 if !outboundDeltas.isEmpty {
                     pushed = try await MacCloudSyncClient.pushDeltasToFirestore(
@@ -1605,15 +1696,19 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     func unlockWithTouchID() async -> Bool {
+        guard biometricsEnabled else { return false }
         let context = LAContext()
         var authError: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &authError) else {
+        let policy: LAPolicy = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &authError)
+            ? .deviceOwnerAuthenticationWithBiometrics
+            : .deviceOwnerAuthentication
+        guard context.canEvaluatePolicy(policy, error: &authError) else {
             return false
         }
         do {
             let ok = try await context.evaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics,
-                localizedReason: "Unlock your zero-knowledge SafePocket vault"
+                policy,
+                localizedReason: t("action_unlock_biometric")
             )
             if ok {
                 isLocked = false
@@ -1623,6 +1718,23 @@ final class MacVaultViewModel: ObservableObject {
         } catch {
             recordDiagnostic(operation: "unlock.touchId", detail: error.localizedDescription, isError: true)
             return false
+        }
+    }
+
+    func copySecondarySecret(for item: MacVaultEntry) {
+        let secondaryKeys = ["field_cvv", "field_pin", "field_bic", "field_routing_number", "field_routing_code"]
+        if let sec = item.fields.first(where: { secondaryKeys.contains($0.labelKey) && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            copyFieldWithClipboardHygiene(sec.value, isSensitive: true)
+        } else if !item.primaryValue.isEmpty {
+            copyFieldWithClipboardHygiene(item.primaryValue, isSensitive: true)
+        }
+    }
+
+    func activateMainWindow() {
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        for window in NSApplication.shared.windows where window.canBecomeKey {
+            window.makeKeyAndOrderFront(nil)
         }
     }
 
@@ -1682,7 +1794,196 @@ final class MacVaultViewModel: ObservableObject {
     }
 
     func lockVault() {
+        activeAttachmentPreview = nil
         isLocked = true
+    }
+
+    // MARK: - Encrypted Document Scans & Zero-Knowledge Cloud Blob Sync
+
+    private static func inferMimeType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "pdf": return "application/pdf"
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "webp": return "image/webp"
+        case "heic", "heif": return "image/heic"
+        case "svg": return "image/svg+xml"
+        default: return "application/octet-stream"
+        }
+    }
+
+    func attachScanFiles(to entryId: String, urls: [URL], side: String) async {
+        guard let idx = entries.firstIndex(where: { $0.id == entryId }), !urls.isEmpty else { return }
+        var target = entries[idx]
+        var addedCount = 0
+
+        for (offset, fileURL) in urls.enumerated() {
+            let scoped = fileURL.startAccessingSecurityScopedResource()
+            defer { if scoped { fileURL.stopAccessingSecurityScopedResource() } }
+            guard let rawData = try? Data(contentsOf: fileURL), !rawData.isEmpty else { continue }
+            if rawData.count >= 24 * 1024 * 1024 {
+                statusNotice = "⚠ \(t("scan_size_limit_error"))"
+                continue
+            }
+
+            let epochMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let attId = "att_\(epochMs)_\(offset)"
+            let fileKeyHex = MacZeroKnowledgeCrypto.generateAttachmentKeyHex()
+            do {
+                let enc = try MacZeroKnowledgeCrypto.encryptAttachmentBlob(
+                    attachmentId: attId,
+                    plaintext: rawData,
+                    fileKeyHex: fileKeyHex
+                )
+                try MacEncryptedBlobStore.saveEncryptedBlob(enc.encryptedBytes, attachmentId: attId)
+
+                var synced = false
+                var storagePath: String? = nil
+                if storageMode == .cloudSync, cloudProvider == .firebase, var session = cloudSession, isNetworkOnline {
+                    if let refreshed = try? await MacCloudSyncClient.refreshFirebaseTokenIfPossible(
+                        session: session,
+                        apiKey: endpointConfig.firebaseWebApiKey,
+                        expectedProjectId: endpointConfig.firebaseProjectId,
+                        force: false
+                    ) {
+                        session = refreshed
+                        cloudSession = refreshed
+                    }
+                    if let uploadedPath = try? await MacCloudSyncClient.uploadEncryptedBlobToFirebaseStorage(
+                        attachmentId: attId,
+                        encryptedBytes: enc.encryptedBytes,
+                        sha256Hex: enc.sha256Hex,
+                        session: session,
+                        config: endpointConfig
+                    ) {
+                        synced = true
+                        storagePath = uploadedPath
+                    }
+                }
+
+                let mime = Self.inferMimeType(for: fileURL)
+                let resolvedSide = mime == "application/pdf" ? "front" : side
+                let inlineB64 = enc.encryptedBytes.count <= 16_384 ? enc.encryptedBytes.base64EncodedString() : nil
+                target.attachments.append(
+                    MacVaultAttachment(
+                        id: attId,
+                        fileName: fileURL.lastPathComponent,
+                        mimeType: mime,
+                        side: resolvedSide,
+                        sizeBytes: Int64(rawData.count),
+                        sha256Hex: enc.sha256Hex,
+                        ivHex: enc.ivHex,
+                        fileKeyHex: fileKeyHex,
+                        ciphertextBase64: inlineB64,
+                        blobSynced: synced,
+                        storageObjectPath: storagePath
+                    )
+                )
+                addedCount += 1
+            } catch {
+                recordDiagnostic(operation: "scan.encrypt", detail: error.localizedDescription, isError: true)
+            }
+        }
+
+        guard addedCount > 0 else { return }
+        target.isSampleItem = false
+        target.updatedAt = Date()
+        target.hlcPacked = nextHlcPacked(for: target.updatedAt)
+        entries[idx] = target
+        recalculateStorageIsolationCounts()
+        persistActiveStorageSnapshot()
+
+        if storageMode == .cloudSync {
+            pendingOfflineOutboxIds.insert(target.id)
+            if isNetworkOnline && isCloudAuthenticated {
+                await reconcileCloudSessionAutomatically()
+            }
+        }
+        statusNotice = "✓ \(t("scan_section_title")) (\(addedCount))"
+    }
+
+    func deleteAttachment(from entryId: String, attachmentId: String) {
+        guard let idx = entries.firstIndex(where: { $0.id == entryId }) else { return }
+        MacEncryptedBlobStore.deleteEncryptedBlob(attachmentId: attachmentId)
+        if activeAttachmentPreview?.id == attachmentId {
+            activeAttachmentPreview = nil
+        }
+        var target = entries[idx]
+        target.attachments.removeAll { $0.id == attachmentId }
+        target.isSampleItem = false
+        target.updatedAt = Date()
+        target.hlcPacked = nextHlcPacked(for: target.updatedAt)
+        entries[idx] = target
+        recalculateStorageIsolationCounts()
+        persistActiveStorageSnapshot()
+
+        if storageMode == .cloudSync {
+            pendingOfflineOutboxIds.insert(target.id)
+            if isNetworkOnline && isCloudAuthenticated {
+                Task { await reconcileCloudSessionAutomatically() }
+            }
+        }
+    }
+
+    func openAttachmentPreview(entryId: String, attachmentId: String) async {
+        guard let entry = entries.first(where: { $0.id == entryId }),
+              let att = entry.attachments.first(where: { $0.id == attachmentId }) else { return }
+
+        do {
+            var cipherBytes = MacEncryptedBlobStore.loadEncryptedBlob(attachmentId: att.id)
+            if cipherBytes == nil, let b64 = att.ciphertextBase64, let inline = Data(base64Encoded: b64) {
+                cipherBytes = inline
+            }
+            if cipherBytes == nil, storageMode == .cloudSync, cloudProvider == .firebase, var session = cloudSession {
+                session = try await MacCloudSyncClient.refreshFirebaseTokenIfPossible(
+                    session: session,
+                    apiKey: endpointConfig.firebaseWebApiKey,
+                    expectedProjectId: endpointConfig.firebaseProjectId,
+                    force: false
+                )
+                cloudSession = session
+                if let downloaded = try await MacCloudSyncClient.downloadEncryptedBlobFromFirebaseStorage(
+                    attachmentId: att.id,
+                    expectedSha256Hex: att.sha256Hex,
+                    session: session,
+                    config: endpointConfig
+                ) {
+                    try? MacEncryptedBlobStore.saveEncryptedBlob(downloaded, attachmentId: att.id)
+                    cipherBytes = downloaded
+                    if let eIdx = entries.firstIndex(where: { $0.id == entryId }),
+                       let aIdx = entries[eIdx].attachments.firstIndex(where: { $0.id == attachmentId }) {
+                        entries[eIdx].attachments[aIdx].blobSynced = true
+                        persistActiveStorageSnapshot()
+                    }
+                }
+            }
+            guard let resolvedCipher = cipherBytes else {
+                throw NSError(domain: "SafePocketBlobStore", code: 404, userInfo: [NSLocalizedDescriptionKey: "Encrypted attachment ciphertext not available offline yet"])
+            }
+            let localKey = MacZeroKnowledgeCrypto.deriveVaultSymmetricKey(
+                masterPassword: activeMasterPassword,
+                secretKey: secretKeyFormatted
+            )
+            let decrypted = try MacZeroKnowledgeCrypto.decryptAttachmentBlob(
+                attachmentId: att.id,
+                ivHex: att.ivHex,
+                expectedSha256Hex: att.sha256Hex,
+                encryptedBytes: resolvedCipher,
+                fileKeyHex: att.fileKeyHex,
+                fallbackVaultKey: localKey
+            )
+            activeAttachmentPreview = MacDecryptedAttachmentPreview(
+                id: att.id,
+                entryId: entry.id,
+                fileName: att.fileName,
+                mimeType: att.mimeType,
+                side: att.side ?? "front",
+                sha256Hex: att.sha256Hex,
+                decryptedBytes: decrypted
+            )
+        } catch {
+            recordDiagnostic(operation: "scan.preview", detail: error.localizedDescription, isError: true)
+        }
     }
 
     private static func buildSampleEntries() -> [MacVaultEntry] {

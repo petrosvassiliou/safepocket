@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import PDFKit
+import UniformTypeIdentifiers
 
 /// Native Apple HIG 3-Column NavigationSplitView for SafePocket v0.3.7 (Build 12) with 100% Cross-Platform Parity.
 struct MacVaultSplitView: View {
@@ -97,6 +99,9 @@ struct MacVaultSplitView: View {
         }
         .sheet(item: $presentingPassEntry) { passEntry in
             MacPassPresentationSheet(vaultState: vaultState, entry: passEntry)
+        }
+        .sheet(item: $vaultState.activeAttachmentPreview) { preview in
+            MacAttachmentLightboxSheet(vaultState: vaultState, preview: preview)
         }
         .sheet(isPresented: $vaultState.presentCommandPalette) {
             MacCommandPaletteSheet(vaultState: vaultState) { passTarget in
@@ -200,13 +205,15 @@ struct MacVaultSplitView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
 
-                    Button {
-                        Task { _ = await vaultState.unlockWithTouchID() }
-                    } label: {
-                        Label("Touch ID", systemImage: "touchid")
+                    if vaultState.biometricsEnabled {
+                        Button {
+                            Task { _ = await vaultState.unlockWithTouchID() }
+                        } label: {
+                            Label("Touch ID", systemImage: "touchid")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
                 }
             }
             .padding(28)
@@ -349,6 +356,14 @@ struct MacVaultSplitView: View {
                                 .padding(.vertical, 2)
                                 .background(Color.orange.opacity(0.18), in: Capsule())
                                 .foregroundStyle(.orange)
+                        }
+                        if vaultState.isMissingBackupScan(entry) {
+                            Text(vaultState.t("readiness_missing_scan_badge"))
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.14), in: Capsule())
+                                .foregroundStyle(.secondary)
                         }
                         if let days = entry.daysUntilExpiry(), days <= vaultState.expiryWindowDays {
                             Text(days < 0 ? vaultState.t("badge_expired") : "\(days)d")
@@ -785,6 +800,8 @@ struct MacVaultSplitView: View {
                                 }
                             }
                         }
+
+                        MacDocumentScansSectionCard(vaultState: vaultState, entry: selected)
                     }
                     .frame(maxWidth: 760, alignment: .leading)
                     .padding(.horizontal, 28)
@@ -3002,6 +3019,20 @@ struct MacSettingsAndAboutView: View {
                     Toggle(vaultState.t("settings_auto_download_logos_toggle"), isOn: $vaultState.autoDownloadLogos)
 
                     VStack(alignment: .leading, spacing: 3) {
+                        Toggle(vaultState.t("security_biometrics_toggle"), isOn: $vaultState.biometricsEnabled)
+                        Text(vaultState.t("security_biometrics_desc"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Toggle(vaultState.t("security_menubar_toggle"), isOn: $vaultState.menuBarEnabled)
+                        Text(vaultState.t("security_menubar_toggle_desc"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
                         Toggle(vaultState.t("security_lock_on_standby_toggle"), isOn: $vaultState.lockOnStandby)
                         Text(vaultState.t("security_lock_on_standby_desc"))
                             .font(.caption)
@@ -3367,4 +3398,566 @@ struct MacCommandPaletteSheet: View {
         }
     }
 }
+
+// MARK: - Encrypted Document Scans & Zero-Knowledge Cloud Blob Sync (v0.6.0-beta.1)
+
+struct MacDocumentScansSectionCard: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+    let entry: MacVaultEntry
+    @State private var selectedSide: String = "front"
+    @State private var isDropTargeted: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Label(vaultState.t("scan_section_title"), systemImage: "doc.viewfinder")
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundStyle(.primary)
+
+                Text("(\(entry.attachments.count))")
+                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Picker("", selection: $selectedSide) {
+                    Text(vaultState.t("scan_side_front")).tag("front")
+                    Text(vaultState.t("scan_side_back")).tag("back")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 190)
+
+                Button {
+                    openScanFilePicker()
+                } label: {
+                    Label(vaultState.t("scan_add_file_btn"), systemImage: "paperclip")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            ForEach(entry.attachments) { att in
+                HStack(spacing: 12) {
+                    Image(systemName: att.mimeType == "application/pdf" ? "doc.richtext.fill" : "photo.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                        .frame(width: 26)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(att.fileName)
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .lineLimit(1)
+
+                            Text(att.side == "back" ? vaultState.t("scan_side_back") : vaultState.t("scan_side_front"))
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(vaultState.materialAccent.swiftUIColor.opacity(0.14), in: Capsule())
+                                .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+
+                            Text(att.blobSynced ? vaultState.t("scan_badge_cloud_synced") : vaultState.t("scan_badge_local_encrypted"))
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    (att.blobSynced ? Color.green : Color.secondary).opacity(0.15),
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(att.blobSynced ? .green : .secondary)
+                        }
+
+                        Text("\(ByteCountFormatter.string(fromByteCount: att.sizeBytes, countStyle: .file)) • AES-256-GCM • SHA-256 \(String(att.sha256Hex.prefix(16)))…")
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        Task {
+                            await vaultState.openAttachmentPreview(entryId: entry.id, attachmentId: att.id)
+                        }
+                    } label: {
+                        Label(vaultState.t("action_preview_scan"), systemImage: "eye")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button(role: .destructive) {
+                        vaultState.deleteAttachment(from: entry.id, attachmentId: att.id)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.doc")
+                    .foregroundStyle(.secondary)
+                Text(vaultState.t("dropzone_hint"))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(
+                        isDropTargeted ? vaultState.materialAccent.swiftUIColor : Color.secondary.opacity(0.32),
+                        style: StrokeStyle(lineWidth: 1.3, dash: [5, 4])
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .onTapGesture {
+                openScanFilePicker()
+            }
+            .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+                handleDroppedFileProviders(providers)
+            }
+        }
+        .padding(16)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.09), lineWidth: 1)
+        )
+    }
+
+    private func openScanFilePicker() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.image, .pdf]
+        if panel.runModal() == .OK, !panel.urls.isEmpty {
+            let side = selectedSide
+            let urls = panel.urls
+            Task {
+                await vaultState.attachScanFiles(to: entry.id, urls: urls, side: side)
+            }
+        }
+    }
+
+    private func handleDroppedFileProviders(_ providers: [NSItemProvider]) -> Bool {
+        guard !providers.isEmpty else { return false }
+        let side = selectedSide
+        let targetEntryId = entry.id
+        for provider in providers {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let fileURL = url else { return }
+                Task { @MainActor in
+                    await vaultState.attachScanFiles(to: targetEntryId, urls: [fileURL], side: side)
+                }
+            }
+        }
+        return true
+    }
+}
+
+struct MacInMemoryPdfView: NSViewRepresentable {
+    let pdfData: Data
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displaysPageBreaks = true
+        view.document = PDFDocument(data: pdfData)
+        return view
+    }
+
+    func updateNSView(_ nsView: PDFView, context: Context) {
+        nsView.document = PDFDocument(data: pdfData)
+    }
+}
+
+struct MacAttachmentLightboxSheet: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+    let preview: MacDecryptedAttachmentPreview
+    @State private var zoomScale: CGFloat = 1.0
+
+    var body: some View {
+        let ownerEntry = vaultState.entries.first(where: { $0.id == preview.entryId })
+        let isPdf = preview.mimeType == "application/pdf" || preview.fileName.lowercased().hasSuffix(".pdf")
+
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(preview.fileName) (\(preview.side == "back" ? vaultState.t("scan_side_back") : vaultState.t("scan_side_front")))")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("✓ \(vaultState.t("scan_ram_verified_badge")) (\(String(preview.sha256Hex.prefix(16)))…)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                }
+
+                Spacer()
+
+                if !isPdf {
+                    HStack(spacing: 4) {
+                        ForEach([1.0, 1.5, 2.0], id: \.self) { scale in
+                            Button("\(Int(scale * 100))%") {
+                                zoomScale = CGFloat(scale)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+
+                Button {
+                    saveDecryptedCopyToDisk()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(vaultState.t("action_close_preview")) {
+                    vaultState.activeAttachmentPreview = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(.bar)
+
+            if let owner = ownerEntry, owner.attachments.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(owner.attachments) { sibling in
+                            Button {
+                                Task {
+                                    await vaultState.openAttachmentPreview(entryId: owner.id, attachmentId: sibling.id)
+                                }
+                            } label: {
+                                Text(sibling.fileName)
+                                    .font(.system(size: 11.5, weight: sibling.id == preview.id ? .bold : .regular))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        sibling.id == preview.id
+                                            ? vaultState.materialAccent.swiftUIColor.opacity(0.18)
+                                            : Color.secondary.opacity(0.10),
+                                        in: Capsule()
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 6)
+                }
+                Divider()
+            }
+
+            Divider()
+
+            Group {
+                if isPdf {
+                    MacInMemoryPdfView(pdfData: preview.decryptedBytes)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let nsImg = NSImage(data: preview.decryptedBytes) {
+                    ScrollView([.horizontal, .vertical]) {
+                        Image(nsImage: nsImg)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(
+                                width: max(520, 680 * zoomScale),
+                                height: max(380, 480 * zoomScale)
+                            )
+                            .padding(20)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Text(vaultState.t("search_empty_title"))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .background(Color(nsColor: .underPageBackgroundColor))
+        }
+        .frame(minWidth: 760, minHeight: 560)
+    }
+
+    private func saveDecryptedCopyToDisk() {
+        let savePanel = NSSavePanel()
+        savePanel.nameFieldStringValue = preview.fileName
+        if savePanel.runModal() == .OK, let outURL = savePanel.url {
+            try? preview.decryptedBytes.write(to: outURL, options: .atomic)
+        }
+    }
+}
+
+// MARK: - macOS Menu Bar Quick-Vault Popover (v0.6 Phase 2)
+
+struct MacMenuBarQuickVaultView: View {
+    @ObservedObject var vaultState: MacVaultViewModel
+    @ObservedObject var updater: MacSparkleUpdateController
+    @State private var quickQuery: String = ""
+    @State private var menuUnlockPassword: String = ""
+    @State private var menuUnlockError: Bool = false
+    @State private var expandedSepaItemId: String? = nil
+
+    private var quickMatches: [MacVaultEntry] {
+        let q = quickQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = vaultState.entries.filter { entry in
+            guard !q.isEmpty else { return true }
+            return entry.title.lowercased().contains(q)
+                || entry.subtitle.lowercased().contains(q)
+                || entry.tags.contains(where: { $0.lowercased().contains(q) })
+                || entry.fields.contains(where: { $0.value.lowercased().contains(q) })
+        }
+        return Array(
+            filtered.sorted { lhs, rhs in
+                if lhs.pinned != rhs.pinned { return lhs.pinned && !rhs.pinned }
+                return lhs.updatedAt > rhs.updatedAt
+            }.prefix(10)
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 8) {
+                Image(systemName: vaultState.isLocked ? "lock.shield.fill" : "shield.lefthalf.filled")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                Text(vaultState.t("app_name"))
+                    .font(.system(size: 13.5, weight: .bold))
+                Spacer()
+                if !vaultState.isLocked {
+                    Button {
+                        vaultState.lockVault()
+                    } label: {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 11.5))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help(vaultState.t("action_lock_vault"))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.bar)
+
+            Divider()
+
+            if vaultState.isLocked {
+                VStack(spacing: 12) {
+                    Image(systemName: "lock.shield")
+                        .font(.system(size: 28))
+                        .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+
+                    if vaultState.biometricsEnabled {
+                        Button {
+                            Task { _ = await vaultState.unlockWithTouchID() }
+                        } label: {
+                            Label(vaultState.t("action_unlock_biometric"), systemImage: "touchid")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                    }
+
+                    HStack(spacing: 6) {
+                        SecureField(vaultState.t("security_master_password"), text: $menuUnlockPassword)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit {
+                                submitMenuPasswordUnlock()
+                            }
+                        Button(vaultState.t("action_unlock_vault")) {
+                            submitMenuPasswordUnlock()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    if menuUnlockError {
+                        Text(vaultState.t("security_invalid_master_password"))
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                }
+                .padding(16)
+            } else {
+                VStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField(vaultState.t("security_menubar_search_placeholder"), text: $quickQuery)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12.5))
+                        if !quickQuery.isEmpty {
+                            Button {
+                                quickQuery = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.09), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+
+                    if let secs = vaultState.clipboardCountdownSeconds {
+                        HStack(spacing: 8) {
+                            Image(systemName: "timer")
+                                .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                            Text(vaultState.t("clipboard_hygiene_active", ["seconds": String(secs)]))
+                                .font(.system(size: 11, weight: .medium))
+                            Spacer()
+                            Button(vaultState.t("action_clear_now")) {
+                                vaultState.scrubClipboardNow()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(vaultState.materialAccent.swiftUIColor.opacity(0.10))
+                    }
+
+                    ScrollView {
+                        VStack(spacing: 4) {
+                            ForEach(quickMatches) { item in
+                                let compactPrimary = item.primaryValue
+                                    .replacingOccurrences(of: " ", with: "")
+                                    .replacingOccurrences(of: "-", with: "")
+                                let tail = compactPrimary.count >= 4 ? "•• \(compactPrimary.suffix(4))" : ""
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack(spacing: 4) {
+                                                if item.pinned {
+                                                    Image(systemName: "pin.fill")
+                                                        .font(.system(size: 9))
+                                                        .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+                                                }
+                                                Text(item.title)
+                                                    .font(.system(size: 12.5, weight: .semibold))
+                                                    .lineLimit(1)
+                                            }
+                                            HStack(spacing: 6) {
+                                                Text(vaultState.displaySubtitle(for: item))
+                                                    .font(.system(size: 10.5))
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+                                                if !tail.isEmpty {
+                                                    Text(tail)
+                                                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                        }
+
+                                        Spacer(minLength: 4)
+
+                                        if !item.primaryValue.isEmpty {
+                                            Button {
+                                                vaultState.copyFieldWithClipboardHygiene(item.primaryValue, isSensitive: true)
+                                            } label: {
+                                                Image(systemName: "doc.on.doc")
+                                            }
+                                            .buttonStyle(.borderedProminent)
+                                            .controlSize(.small)
+                                            .help(vaultState.t("context_copy_primary"))
+                                        }
+
+                                        Button {
+                                            vaultState.copySecondarySecret(for: item)
+                                        } label: {
+                                            Text("⇧↵")
+                                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+
+                                        if item.category == "BANK_ACCOUNT" {
+                                            Button {
+                                                expandedSepaItemId = (expandedSepaItemId == item.id) ? nil : item.id
+                                            } label: {
+                                                Image(systemName: "qrcode")
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                            .help(vaultState.t("sepa_qr_title"))
+                                        }
+                                    }
+
+                                    if expandedSepaItemId == item.id && item.category == "BANK_ACCOUNT" {
+                                        MacSepaQrSectionCard(vaultState: vaultState, entry: item)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(
+                                    Color(nsColor: .controlBackgroundColor).opacity(0.65),
+                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 8)
+                    }
+                    .frame(maxHeight: 310)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Button {
+                    vaultState.activateMainWindow()
+                } label: {
+                    Label(vaultState.t("security_menubar_open_main"), systemImage: "macwindow")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(vaultState.materialAccent.swiftUIColor)
+
+                Spacer()
+
+                Text("v\(updater.currentVersionName)")
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.bar)
+        }
+        .frame(width: 360)
+    }
+
+    private func submitMenuPasswordUnlock() {
+        if vaultState.unlockWithMasterPassword(menuUnlockPassword) {
+            menuUnlockPassword = ""
+            menuUnlockError = false
+        } else {
+            menuUnlockError = true
+        }
+    }
+}
+
+
 

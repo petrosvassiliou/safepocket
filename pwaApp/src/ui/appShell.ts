@@ -188,11 +188,14 @@ interface ItemEditorDraft {
 }
 
 interface EphemeralScanPreview {
+  itemId: string;
+  attachmentId: string;
   fileName: string;
   mimeType: string;
   side?: 'front' | 'back';
   sha256Hex: string;
   objectUrl: string;
+  zoomPercent: 100 | 150 | 200;
 }
 
 const DEMO_DEFAULT_PASSWORD = 'correct-horse-vault-admin';
@@ -1925,6 +1928,7 @@ export class SafePocketAppShell {
         attachmentId: att.id,
         ivHex: att.ivHex,
         expectedSha256Hex: att.sha256Hex,
+        fileKeyHex: att.fileKeyHex,
         encryptedBytes: resolvedCipherBytes,
         ciphertextBase64: att.ciphertextBase64
       });
@@ -1933,11 +1937,14 @@ export class SafePocketAppShell {
         type: att.mimeType || 'application/octet-stream'
       });
       this.activePreview = {
+        itemId: item.id,
+        attachmentId: att.id,
         fileName: att.fileName,
         mimeType: att.mimeType,
         side: att.side,
         sha256Hex: att.sha256Hex,
-        objectUrl: URL.createObjectURL(blob)
+        objectUrl: URL.createObjectURL(blob),
+        zoomPercent: 100
       };
       this.render();
     } catch (err) {
@@ -4086,8 +4093,8 @@ export class SafePocketAppShell {
                 ? this.i18n.t('scan_side_back')
                 : this.i18n.t('scan_side_front');
             const syncPill = att.blobSynced
-              ? `<span class="sp-badge" style="background:rgba(16,185,129,0.14);color:#059669;">${renderIconSvg('cloud', 11)} EU .enc</span>`
-              : `<span class="sp-badge" style="background:var(--bg-canvas);border:1px solid var(--border-subtle);color:var(--text-secondary);">${renderIconSvg('shield', 11)} Local .enc</span>`;
+              ? `<span class="sp-badge" style="background:rgba(16,185,129,0.14);color:#059669;">${renderIconSvg('cloud', 11)} ${this.escape(this.i18n.t('scan_badge_cloud_synced'))}</span>`
+              : `<span class="sp-badge" style="background:var(--bg-canvas);border:1px solid var(--border-subtle);color:var(--text-secondary);">${renderIconSvg('shield', 11)} ${this.escape(this.i18n.t('scan_badge_local_encrypted'))}</span>`;
             return `
               <div class="sp-field-card" style="padding:10px 14px;">
                 <div class="sp-field-meta">
@@ -4139,6 +4146,35 @@ export class SafePocketAppShell {
       this.activePreview.side === 'back'
         ? this.i18n.t('scan_side_back')
         : this.i18n.t('scan_side_front');
+    const ownerItem = this.items.find((i) => i.id === this.activePreview?.itemId);
+    const siblingPills =
+      ownerItem && ownerItem.attachments.length > 1
+        ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+            ${ownerItem.attachments
+              .map(
+                (a) =>
+                  `<button type="button" class="sp-btn ${
+                    a.id === this.activePreview?.attachmentId ? 'sp-btn-tonal' : ''
+                  }" data-preview-att="${this.escape(a.id)}" style="min-height:26px;padding:2px 9px;font-size:11.5px;">${this.escape(
+                    a.fileName
+                  )}</button>`
+              )
+              .join('')}
+          </div>`
+        : '';
+    const zoomBar = !isPdf
+      ? `<div style="display:inline-flex;gap:4px;align-items:center;">
+          ${([100, 150, 200] as const)
+            .map(
+              (z) =>
+                `<button type="button" class="sp-btn ${
+                  this.activePreview?.zoomPercent === z ? 'sp-btn-tonal' : ''
+                }" data-preview-zoom="${z}" style="min-height:28px;padding:2px 8px;font-size:11.5px;">${z}%</button>`
+            )
+            .join('')}
+        </div>`
+      : '';
+    const zoomScale = (this.activePreview.zoomPercent || 100) / 100;
 
     return `
       <div class="sp-overlay" id="sp-preview-backdrop" style="z-index:975;">
@@ -4149,12 +4185,14 @@ export class SafePocketAppShell {
                 ${this.escape(this.activePreview.fileName)} (${this.escape(sideLabel)})
               </div>
               <div style="font-size:11px;font-family:var(--font-mono);color:var(--accent-primary);">
-                ✓ SHA-256 Verified (${this.escape(
-                  this.activePreview.sha256Hex.slice(0, 20)
-                )}…) • Ephemeral RAM Blob
+                ✓ ${this.escape(this.i18n.t('scan_ram_verified_badge'))} (${this.escape(
+                  this.activePreview.sha256Hex.slice(0, 16)
+                )}…)
               </div>
+              ${siblingPills}
             </div>
-            <div style="display:flex;align-items:center;gap:8px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              ${zoomBar}
               <a
                 href="${this.escape(this.activePreview.objectUrl)}"
                 download="${this.escape(this.activePreview.fileName)}"
@@ -4166,7 +4204,7 @@ export class SafePocketAppShell {
               </button>
             </div>
           </div>
-          <div class="sp-preview-frame">
+          <div class="sp-preview-frame" style="overflow:auto;">
             ${
               isPdf
                 ? `<iframe src="${this.escape(
@@ -4174,7 +4212,9 @@ export class SafePocketAppShell {
                   )}" title="${this.escape(this.activePreview.fileName)}"></iframe>`
                 : `<img src="${this.escape(
                     this.activePreview.objectUrl
-                  )}" alt="${this.escape(this.activePreview.fileName)}" />`
+                  )}" alt="${this.escape(
+                    this.activePreview.fileName
+                  )}" style="transform:scale(${zoomScale});transform-origin:top center;transition:transform 0.16s ease;" />`
             }
           </div>
         </div>
@@ -5543,10 +5583,40 @@ export class SafePocketAppShell {
             )}"
             style="font-size:12px;"
           />
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                ${this.escape(this.i18n.t('security_biometrics_toggle'))}
+                ${
+                  WebAuthnBiometricUnlock.hasEnrolledPasskey()
+                    ? `<span class="sp-badge" style="background:rgba(16,185,129,0.15);color:#059669;">✓ ${this.escape(
+                        this.i18n.t('security_biometrics_enrolled_badge')
+                      )}</span>`
+                    : ''
+                }
+              </div>
+              <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;">
+                ${this.escape(this.i18n.t('security_biometrics_desc'))}
+              </div>
+            </div>
+            <div style="display:inline-flex;gap:6px;flex-wrap:wrap;">
+              <button type="button" id="sp-enroll-passkey" class="sp-btn ${
+                WebAuthnBiometricUnlock.hasEnrolledPasskey() ? 'sp-btn-tonal' : ''
+              }">
+                ${renderIconSvg('key', 14)} ${this.escape(
+                  this.i18n.t('action_unlock_biometric')
+                )}
+              </button>
+              ${
+                WebAuthnBiometricUnlock.hasEnrolledPasskey()
+                  ? `<button type="button" id="sp-remove-passkey" class="sp-btn">
+                       ${this.escape(this.i18n.t('security_biometrics_remove_btn'))}
+                     </button>`
+                  : ''
+              }
+            </div>
+          </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button type="button" id="sp-enroll-passkey" class="sp-btn">
-              ${renderIconSvg('key', 14)} ${this.escape(this.i18n.t('security_biometrics_toggle'))}
-            </button>
             <button type="button" id="sp-settings-print-kit" class="sp-btn sp-btn-primary">
               ${renderIconSvg('print', 14)} ${this.escape(this.i18n.t('emergency_kit_print_btn'))}
             </button>
@@ -7055,6 +7125,11 @@ export class SafePocketAppShell {
     this.root
       .querySelector('#sp-biometric-unlock-btn')
       ?.addEventListener('click', async () => {
+        if (!WebAuthnBiometricUnlock.hasEnrolledPasskey()) {
+          this.unlockError = this.i18n.t('security_biometrics_not_enrolled_hint');
+          this.render();
+          return;
+        }
         const ok = await WebAuthnBiometricUnlock.authenticateBiometric().catch(
           () => false
         );
@@ -8788,7 +8863,25 @@ export class SafePocketAppShell {
           target.attachments = target.attachments.filter((a) => a.id !== attId);
           target.updatedAtEpochMs = Date.now();
           await this.persistSingleItemEncrypted(target);
+          if (this.syncCoordinator.isCloudSyncEnabled) {
+            void this.runAutomaticCloudReconcile(false, true);
+          }
           this.render();
+        });
+      });
+
+    this.root
+      .querySelectorAll<HTMLElement>('[data-preview-zoom]')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const zoom = Number(btn.dataset.previewZoom);
+          if (
+            this.activePreview &&
+            (zoom === 100 || zoom === 150 || zoom === 200)
+          ) {
+            this.activePreview.zoomPercent = zoom;
+            this.render();
+          }
         });
       });
 
@@ -9441,9 +9534,17 @@ export class SafePocketAppShell {
         );
         this.showToast(
           ok
-            ? 'Hardware Passkey enrolled'
+            ? `✓ ${this.i18n.t('security_biometrics_enrolled_badge')}`
             : 'WebAuthn requires interactive top-level browser gesture'
         );
+        this.render();
+      });
+
+    this.root
+      .querySelector('#sp-remove-passkey')
+      ?.addEventListener('click', () => {
+        WebAuthnBiometricUnlock.unenrollPasskey();
+        this.render();
       });
 
     this.root
@@ -9513,13 +9614,19 @@ export class SafePocketAppShell {
 
     for (let idx = 0; idx < payloads.length; idx++) {
       const p = payloads[idx];
+      if (p.bytes.byteLength >= 24 * 1024 * 1024) {
+        this.showToast(this.i18n.t('scan_size_limit_error'));
+        continue;
+      }
       const attId = `att_${Date.now()}_${idx}`;
+      const fileKeyHex = this.crypto.generateAttachmentKeyHex();
       const encryptedAtt = await this.crypto.encryptBinaryAttachment(
         attId,
         p.fileName,
         p.mimeType || 'application/octet-stream',
         p.bytes,
-        this.uploadScanSide
+        this.uploadScanSide,
+        fileKeyHex
       );
       await this.opfsStore.writeEncryptedBlob(
         attId,
@@ -9546,6 +9653,7 @@ export class SafePocketAppShell {
         sizeBytes: encryptedAtt.sizeBytes,
         sha256Hex: encryptedAtt.sha256Hex,
         ivHex: encryptedAtt.ivHex,
+        fileKeyHex: encryptedAtt.fileKeyHex,
         ciphertextBase64:
           encryptedAtt.encryptedBytes.byteLength <= 16_384
             ? encryptedAtt.ciphertextBase64
@@ -9553,6 +9661,8 @@ export class SafePocketAppShell {
         blobSynced: false
       });
     }
+
+    if (pendingUploadBlobs.length === 0) return;
 
     if (this.syncCoordinator.isCloudSyncEnabled) {
       try {
@@ -9589,15 +9699,7 @@ export class SafePocketAppShell {
     target.updatedAtEpochMs = Date.now();
     await this.persistSingleItemEncrypted(target);
     if (this.syncCoordinator.isCloudSyncEnabled) {
-      try {
-        const allRows = await this.localDb.loadAllRowsIncludingTombstones();
-        await this.syncCoordinator.syncEncryptedRowsIfEnabled(
-          'default-vault',
-          allRows.filter((r) => r.id === target.id)
-        );
-      } catch {
-        // Offline-first: CRDT delta remains queued locally
-      }
+      void this.runAutomaticCloudReconcile(false, true);
     }
     this.render();
     const syncedAll = pendingUploadBlobs.every(

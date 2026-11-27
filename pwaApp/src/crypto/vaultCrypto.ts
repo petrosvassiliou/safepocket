@@ -403,12 +403,17 @@ export class ZeroKnowledgeVaultCrypto {
     };
   }
 
+  generateAttachmentKeyHex(): string {
+    return bytesToHex(crypto.getRandomValues(new Uint8Array(32))).toLowerCase();
+  }
+
   async encryptBinaryAttachment(
     attachmentId: string,
     fileName: string,
     mimeType: string,
     rawBytes: Uint8Array,
-    side?: 'front' | 'back'
+    side?: 'front' | 'back',
+    fileKeyHex?: string
   ): Promise<{
     id: string;
     fileName: string;
@@ -417,17 +422,21 @@ export class ZeroKnowledgeVaultCrypto {
     sizeBytes: number;
     sha256Hex: string;
     ivHex: string;
+    fileKeyHex?: string;
     ciphertextBase64: string;
     encryptedBytes: Uint8Array;
   }> {
-    if (!this.vaultKey) {
+    const targetKey = fileKeyHex
+      ? await this.importAesKeyFromHex(fileKeyHex, ['encrypt'])
+      : this.vaultKey;
+    if (!targetKey) {
       throw new Error('SafePocket vault is locked');
     }
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const aad = new TextEncoder().encode(`safepocket:attachment:${attachmentId}`);
     const encrypted = await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 },
-      this.vaultKey,
+      targetKey,
       rawBytes as BufferSource
     );
     const encBytes = new Uint8Array(encrypted);
@@ -444,6 +453,7 @@ export class ZeroKnowledgeVaultCrypto {
       sizeBytes: rawBytes.byteLength,
       sha256Hex: digest,
       ivHex: bytesToHex(iv),
+      fileKeyHex: fileKeyHex ? fileKeyHex.trim().toLowerCase() : undefined,
       ciphertextBase64: btoa(binary),
       encryptedBytes: encBytes
     };
@@ -457,10 +467,14 @@ export class ZeroKnowledgeVaultCrypto {
     attachmentId: string;
     ivHex: string;
     expectedSha256Hex: string;
+    fileKeyHex?: string;
     encryptedBytes?: Uint8Array;
     ciphertextBase64?: string;
   }): Promise<Uint8Array> {
-    if (!this.vaultKey) {
+    const targetKey = params.fileKeyHex?.trim()
+      ? await this.importAesKeyFromHex(params.fileKeyHex, ['decrypt'])
+      : this.vaultKey;
+    if (!targetKey) {
       throw new Error('SafePocket vault is locked');
     }
     let cipherBytes = params.encryptedBytes;
@@ -491,7 +505,7 @@ export class ZeroKnowledgeVaultCrypto {
         additionalData: aad,
         tagLength: 128
       },
-      this.vaultKey,
+      targetKey,
       cipherBytes as BufferSource
     );
     return new Uint8Array(decryptedBuffer);

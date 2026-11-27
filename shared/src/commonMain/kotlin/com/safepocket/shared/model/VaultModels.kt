@@ -275,7 +275,12 @@ data class EncryptedAttachmentRef(
     val mimeType: String,           // application/pdf, image/png, image/jpeg, image/webp
     val side: String? = null,       // "front" | "back" | null
     val sizeBytes: Long,
-    val sha256Hex: String
+    val sha256Hex: String,
+    val ivHex: String = "",
+    val fileKeyHex: String? = null,
+    val ciphertextBase64: String? = null,
+    val blobSynced: Boolean = false,
+    val storageObjectPath: String? = null
 )
 
 object CardPalettes {

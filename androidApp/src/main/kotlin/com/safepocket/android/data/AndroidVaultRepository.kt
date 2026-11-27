@@ -26,8 +26,10 @@ import com.safepocket.shared.crypto.ZeroKnowledgeEncryptionService
 import com.safepocket.shared.error.SafePocketErrorHandler
 import com.safepocket.shared.intelligence.SmartFieldIntelligenceEngine
 import com.safepocket.shared.intelligence.WebsiteReachabilityResult
+import com.safepocket.shared.model.EncryptedAttachmentRef
 import com.safepocket.shared.model.VaultItemPayload
 import com.safepocket.shared.model.VaultStorageMode
+import java.io.File
 import com.safepocket.shared.onboarding.EmergencyKitGenerator
 import com.safepocket.shared.sync.CloudAuthExpiredException
 import com.safepocket.shared.sync.CloudSyncAdapter
@@ -1130,6 +1132,64 @@ class AndroidVaultRepository(
                     }
                 }
 
+                // 3b. Upload any unsynced local .enc attachment blobs & prefetch missing remote .enc blobs
+                val activePostReconcile = if (db != null) {
+                    db.safePocketVaultQueries.selectAllActiveItems().executeAsList().mapNotNull { decryptDbRowOrNull(it) }
+                } else {
+                    emptyList()
+                }
+                for (entry in activePostReconcile) {
+                    if (entry.isBuiltInSample() || entry.attachments.isEmpty()) continue
+                    var entryMetaMutated = false
+                    val refreshedAtts = entry.attachments.map { att ->
+                        val localEncFile = localEncryptedBlobFile(att.id)
+                        when {
+                            !att.blobSynced && localEncFile != null && localEncFile.exists() -> {
+                                val encBytes = localEncFile.readBytes()
+                                val uploaded = runCatching {
+                                    adapter.uploadEncryptedAttachmentBlob(
+                                        vaultId = CLOUD_VAULT_COLLECTION_ID,
+                                        attachmentId = att.id,
+                                        encryptedBytes = encBytes,
+                                        expectedSha256Hex = att.sha256Hex
+                                    )
+                                }.isSuccess
+                                if (uploaded) {
+                                    entryMetaMutated = true
+                                    att.copy(blobSynced = true)
+                                } else att
+                            }
+                            (localEncFile == null || !localEncFile.exists()) && att.ciphertextBase64 == null -> {
+                                val downloaded = runCatching {
+                                    adapter.downloadEncryptedAttachmentBlob(CLOUD_VAULT_COLLECTION_ID, att.id)
+                                }.getOrNull()
+                                if (downloaded != null && verifyBlobSha256ConstantTime(downloaded, att.sha256Hex)) {
+                                    localEncFile?.writeBytes(downloaded)
+                                    if (!att.blobSynced) {
+                                        entryMetaMutated = true
+                                        att.copy(blobSynced = true)
+                                    } else att
+                                } else att
+                            }
+                            else -> att
+                        }
+                    }
+                    if (entryMetaMutated && db != null) {
+                        val updatedEntry = entry.copy(attachments = refreshedAtts)
+                        val nextHlc = nextHlcPacked(updatedEntry.updatedAtEpochMs)
+                        val nextVv = mapOf(nodeId to updatedEntry.updatedAtEpochMs)
+                        upsertSingleItemInternal(db, updatedEntry, hlcOverride = nextHlc, vvOverride = nextVv)
+                        val cloudRec = encryptItemWithKey(
+                            updatedEntry,
+                            cloudKey,
+                            hlcOverride = nextHlc,
+                            vvOverride = nextVv
+                        )
+                        deltasToPush.removeAll { it.entityId == updatedEntry.id }
+                        deltasToPush += cloudRec
+                    }
+                }
+
                 // 4. PUSH ONLY WINNING LOCAL DELTAS (zero unnecessary Firestore writes when idle!)
                 val pushRes = if (deltasToPush.isNotEmpty()) {
                     adapter.pushEncryptedDeltas(CLOUD_VAULT_COLLECTION_ID, deltasToPush)
@@ -1308,6 +1368,152 @@ class AndroidVaultRepository(
             ),
             passwordHint = passwordHint
         )
+
+    // =========================================================================
+    // ENCRYPTED DOCUMENT SCANS & ZERO-KNOWLEDGE CLOUD BLOB SYNC (`v0.6`)
+    // =========================================================================
+
+    private val safeAttachmentIdRegex = Regex("^[a-zA-Z0-9_-]+$")
+
+    private fun encryptedBlobsDir(): File =
+        File(context.filesDir, "encrypted_blobs").apply {
+            if (!exists()) mkdirs()
+        }
+
+    private fun localEncryptedBlobFile(attachmentId: String): File? {
+        if (!safeAttachmentIdRegex.matches(attachmentId)) return null
+        return File(encryptedBlobsDir(), "$attachmentId.enc")
+    }
+
+    private suspend fun verifyBlobSha256ConstantTime(cipherBytes: ByteArray, expectedHex: String): Boolean {
+        val actualHex = ZeroKnowledgeEncryptionService.bytesToHex(primitives.sha256(cipherBytes)).lowercase()
+        val exp = expectedHex.trim().lowercase()
+        if (actualHex.length != exp.length || actualHex.isEmpty()) return false
+        var diff = 0
+        for (i in actualHex.indices) {
+            diff = diff or (actualHex[i].code xor exp[i].code)
+        }
+        return diff == 0
+    }
+
+    suspend fun attachScanBytesToItem(
+        target: VaultItemPayload,
+        fileName: String,
+        mimeType: String,
+        rawBytes: ByteArray,
+        side: String,
+        currentItems: List<VaultItemPayload>
+    ): Pair<VaultItemPayload, List<VaultItemPayload>> = withContext(Dispatchers.IO) {
+        require(rawBytes.isNotEmpty() && rawBytes.size < 24 * 1024 * 1024) {
+            "Attachment exceeds 25 MB Zero-Knowledge Cloud limit"
+        }
+        val attId = "att_${System.currentTimeMillis()}_${ZeroKnowledgeEncryptionService.bytesToHex(primitives.secureRandomBytes(2))}"
+        val fileKey32 = primitives.secureRandomBytes(32)
+        val fileKeyHex = ZeroKnowledgeEncryptionService.bytesToHex(fileKey32).lowercase()
+        val aadBytes = "safepocket:attachment:$attId".encodeToByteArray()
+        val (ivBytes, cipherBytes) = primitives.aes256GcmEncrypt(fileKey32, rawBytes, aadBytes)
+        val ivHex = ZeroKnowledgeEncryptionService.bytesToHex(ivBytes).lowercase()
+        val sha256Hex = ZeroKnowledgeEncryptionService.bytesToHex(primitives.sha256(cipherBytes)).lowercase()
+
+        localEncryptedBlobFile(attId)?.writeBytes(cipherBytes)
+
+        var synced = false
+        if (storageMode == VaultStorageMode.CLOUD_SYNC && hasActiveCloudAuth() && _isNetworkOnline.value) {
+            synced = runCatching {
+                activeSyncAdapter().uploadEncryptedAttachmentBlob(
+                    vaultId = CLOUD_VAULT_COLLECTION_ID,
+                    attachmentId = attId,
+                    encryptedBytes = cipherBytes,
+                    expectedSha256Hex = sha256Hex
+                )
+            }.isSuccess
+        }
+
+        val inlineB64 = if (cipherBytes.size <= 16_384) {
+            android.util.Base64.encodeToString(cipherBytes, android.util.Base64.NO_WRAP)
+        } else null
+
+        val newAtt = EncryptedAttachmentRef(
+            id = attId,
+            fileName = fileName.ifBlank { "scan_${System.currentTimeMillis()}" },
+            mimeType = mimeType.ifBlank { "application/octet-stream" },
+            side = if (mimeType == "application/pdf") "front" else side,
+            sizeBytes = rawBytes.size.toLong(),
+            sha256Hex = sha256Hex,
+            ivHex = ivHex,
+            fileKeyHex = fileKeyHex,
+            ciphertextBase64 = inlineB64,
+            blobSynced = synced
+        )
+
+        val updatedItem = target.copy(
+            isSampleItem = false,
+            attachments = target.attachments + newAtt,
+            updatedAtEpochMs = System.currentTimeMillis()
+        )
+        val updatedList = currentItems.map { if (it.id == updatedItem.id) updatedItem else it }
+        upsertItem(updatedItem, updatedList)
+        updatedItem to updatedList
+    }
+
+    suspend fun removeAttachmentFromItem(
+        target: VaultItemPayload,
+        attachmentId: String,
+        currentItems: List<VaultItemPayload>
+    ): Pair<VaultItemPayload, List<VaultItemPayload>> = withContext(Dispatchers.IO) {
+        localEncryptedBlobFile(attachmentId)?.delete()
+        val updatedItem = target.copy(
+            isSampleItem = false,
+            attachments = target.attachments.filterNot { it.id == attachmentId },
+            updatedAtEpochMs = System.currentTimeMillis()
+        )
+        val updatedList = currentItems.map { if (it.id == updatedItem.id) updatedItem else it }
+        upsertItem(updatedItem, updatedList)
+        updatedItem to updatedList
+    }
+
+    suspend fun decryptAttachmentBytesInRam(
+        item: VaultItemPayload,
+        attachmentId: String
+    ): ByteArray = withContext(Dispatchers.IO) {
+        val att = item.attachments.firstOrNull { it.id == attachmentId }
+            ?: error("Attachment not found")
+
+        val localFile = localEncryptedBlobFile(att.id)
+        var cipherBytes: ByteArray? = localFile?.takeIf { it.exists() }?.readBytes()
+
+        if (cipherBytes == null && !att.ciphertextBase64.isNullOrBlank()) {
+            cipherBytes = runCatching {
+                android.util.Base64.decode(att.ciphertextBase64, android.util.Base64.DEFAULT)
+            }.getOrNull()
+        }
+
+        if (cipherBytes == null && storageMode == VaultStorageMode.CLOUD_SYNC && hasActiveCloudAuth()) {
+            val downloaded = activeSyncAdapter().downloadEncryptedAttachmentBlob(
+                vaultId = CLOUD_VAULT_COLLECTION_ID,
+                attachmentId = att.id
+            )
+            check(verifyBlobSha256ConstantTime(downloaded, att.sha256Hex)) {
+                "Firebase Storage .enc SHA-256 integrity check failed — tampering detected"
+            }
+            localFile?.writeBytes(downloaded)
+            cipherBytes = downloaded
+        }
+
+        val resolvedCipher = checkNotNull(cipherBytes) {
+            "Encrypted attachment ciphertext not available offline yet"
+        }
+        check(verifyBlobSha256ConstantTime(resolvedCipher, att.sha256Hex)) {
+            "Attachment SHA-256 integrity check failed — tampering detected"
+        }
+
+        val key32 = att.fileKeyHex?.trim()?.takeIf { it.length == 64 }
+            ?.let { ZeroKnowledgeEncryptionService.hexToBytes(it) }
+            ?: activeVaultItemKey32
+        val iv12 = ZeroKnowledgeEncryptionService.hexToBytes(att.ivHex)
+        val aad = "safepocket:attachment:${att.id}".encodeToByteArray()
+        primitives.aes256GcmDecrypt(key32, iv12, resolvedCipher, aad)
+    }
 
     // =========================================================================
     // INTERNAL SQLCIPHER + AES-GCM ROW SERIALIZATION

@@ -92,6 +92,12 @@ export class WebAuthnBiometricUnlock {
     return Boolean(localStorage.getItem(WebAuthnBiometricUnlock.CRED_STORAGE_KEY));
   }
 
+  static unenrollPasskey(): void {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(WebAuthnBiometricUnlock.CRED_STORAGE_KEY);
+    }
+  }
+
   static async enrollPlatformBiometric(): Promise<boolean> {
     if (!WebAuthnBiometricUnlock.isSupported()) return false;
     const challenge = crypto.getRandomValues(new Uint8Array(32));
@@ -128,9 +134,27 @@ export class WebAuthnBiometricUnlock {
   static async authenticateBiometric(): Promise<boolean> {
     if (!WebAuthnBiometricUnlock.isSupported()) return false;
     const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const savedIdB64 =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem(WebAuthnBiometricUnlock.CRED_STORAGE_KEY)
+        : null;
+    let allowCredentials: PublicKeyCredentialDescriptor[] | undefined;
+    if (savedIdB64) {
+      try {
+        const bin = atob(savedIdB64);
+        const rawId = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) {
+          rawId[i] = bin.charCodeAt(i);
+        }
+        allowCredentials = [{ type: 'public-key', id: rawId }];
+      } catch {
+        allowCredentials = undefined;
+      }
+    }
     const assertion = await navigator.credentials.get({
       publicKey: {
         challenge,
+        allowCredentials,
         userVerification: 'required',
         timeout: 45_000
       }

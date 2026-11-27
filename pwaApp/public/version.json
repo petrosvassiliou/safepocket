@@ -1,24 +1,24 @@
 {
   "schemaVersion": 2,
-  "channel": "stable",
-  "latestVersion": "0.5.0",
-  "versionCode": 20,
+  "channel": "beta",
+  "latestVersion": "0.6.0-beta.1",
+  "versionCode": 21,
   "minimumSupportedVersionCode": 1,
-  "publishedAt": "2026-11-27T00:20:00Z",
+  "publishedAt": "2026-11-27T01:30:00Z",
   "signingKeyId": "safepocket-release-ed25519-2026",
   "signingPublicKeyHex": "b793fdd180549d2d3f226fb13798fa85e2f85901d44c20fa85c2a6bde25420be",
-  "manifestSignature": "ed25519:236b02c6b753165c340adcd4fa01ab3ead9bf134111c5185ed6c0975b3edad7eec0bc6657ce37d31fe1cb6fc221814daaaaf81747e944ef6e1c58a24b1e5f00e",
+  "manifestSignature": "ed25519:d7a4f0b3345a4d5e02139e4b31cab2b2f2489abfda3984e76895c484aee23ba0cd414f849e6a05ca9ffbe9543910aa8fabd67cf4b16a8aef0180bcd98d368700",
   "releaseNotes": {
-    "en": "• SafePocket v0.5.0 Stable delivers the complete Digital Wallet & Power UX overhaul across Android, macOS, and PWA: 3D flippable ISO ID-1 cards with click-to-reveal CVV, Pinned Wallet Deck, offline EPC069-12 SEPA GiroCode QR, Counter Pass & Read-Aloud mode, 30s radial clipboard hygiene, Cmd/Ctrl+K Command Palette, 6-month Passport Travel Readiness Radar, and Quick-Copy swipe gestures.\n• Includes macOS single hardware-bound encrypted keybag (zero repeated Keychain prompts) and Cross-Platform Zero-Knowledge Cloud Sync v2.",
-    "de": "• SafePocket v0.5.0 Stable bringt das komplette Digital-Wallet- & Power-UX-Upgrade für Android, macOS und PWA: drehbare 3D-Karten mit CVV-Direktanzeige, angepinntes Wallet-Deck, Offline-SEPA-GiroCode (EPC-QR), Pass- & Vorlesemodus, 30s-Zwischenablage-Countdown, Cmd/Ctrl+K-Befehlspalette, 6-Monats-Reisepass-Radar und Schnellkopier-Wischgesten.\n• Inklusive einheitlichem macOS-Keybag ohne wiederholte Schlüsselbund-Abfragen und Zero-Knowledge Cloud-Sync v2.",
-    "it": "• SafePocket v0.5.0 Stable introduce il rinnovamento completo Digital Wallet su Android, macOS e PWA: carte 3D girevoli con CVV cliccabile, mazzo fissato, QR SEPA offline, modalità Pass e dettatura, comando rapido Cmd/Ctrl+K, radar passaporti (< 6 mesi) e swipe di copia rapida.",
-    "fr": "• SafePocket v0.5.0 Stable apporte la refonte complète Portefeuille Numérique sur Android, macOS et PWA : cartes 3D retournables avec CVV cliquable, cartes épinglées, QR SEPA hors ligne, mode Pass et dictée, palette Cmd/Ctrl+K, radar passeports (< 6 mois) et balayage copie rapide.",
-    "es": "• SafePocket v0.5.0 Stable presenta la renovación completa de Cartera Digital en Android, macOS y PWA: tarjetas 3D giratorias con CVV clicable, mazo fijado, QR SEPA sin conexión, modo Pase y dictado, paleta Cmd/Ctrl+K, radar de pasaportes (< 6 meses) y gesto de copia rápida.",
-    "el": "• Το SafePocket v0.5.0 Stable φέρνει την πλήρη αναβάθμιση Digital Wallet σε Android, macOS και PWA: τρισδιάστατες κάρτες με εμφάνιση CVV, καρφιτσωμένες κάρτες, QR SEPA εκτός σύνδεσης, λειτουργία πάσου/υπαγόρευσης, παλέτα εντολών Cmd/Ctrl+K, ραντάρ διαβατηρίων (< 6 μηνών) και γρήγορη αντιγραφή με σύρσιμο."
+    "en": "• SafePocket v0.6.0-beta.1 delivers Phases 1 & 2 of v0.6 across macOS, Android, and PWA:\n  1. Encrypted Document Scans & EU Cloud Blob Sync: attach Front/Back ID photos & PDFs (≤ 25 MB), encrypt with per-blob AES-256-GCM keys, and preview in-memory with zoom & PDF rendering.\n  2. Instant Biometric Unlock & macOS Menu Bar Quick-Vault: 1-tap Touch ID / BiometricPrompt / WebAuthn Passkey unlock on the Vault Shield, plus a live macOS Menu Bar popover for instant IBAN/card copy & SEPA GiroCode QR.",
+    "de": "• SafePocket v0.6.0-beta.1 bringt Phase 1 & 2 von v0.6 für macOS, Android und PWA:\n  1. Verschlüsselte Dokumentenscans & EU-Cloud-Blob-Sync (Vorder-/Rückseite & PDFs ≤ 25 MB mit AES-256-GCM und Vorschau im Arbeitsspeicher).\n  2. Biometrische Direktentsperrung (Touch ID / BiometricPrompt / Passkey) sowie Schnell-Tresor in der macOS-Menüleiste für 1-Klick-IBAN/Kartenkopie & SEPA-QR.",
+    "it": "• SafePocket v0.6.0-beta.1 introduce le Fasi 1 e 2 di v0.6 su macOS, Android e PWA: scansioni documenti e PDF cifrati con Cloud Blob Sync, sblocco biometrico istantaneo (Touch ID / BiometricPrompt / Passkey) e accesso rapido nella barra dei menu di macOS.",
+    "fr": "• SafePocket v0.6.0-beta.1 apporte les Phases 1 et 2 de v0.6 sur macOS, Android et PWA : scans de documents et PDF chiffrés avec Cloud Blob Sync, déverrouillage biométrique instantané (Touch ID / BiometricPrompt / Passkey) et accès rapide dans la barre des menus macOS.",
+    "es": "• SafePocket v0.6.0-beta.1 incorpora las Fases 1 y 2 de v0.6 en macOS, Android y PWA: escaneos y PDF cifrados con Cloud Blob Sync, desbloqueo biométrico instantáneo (Touch ID / BiometricPrompt / Passkey) y acceso rápido en la barra de menús de macOS.",
+    "el": "• Το SafePocket v0.6.0-beta.1 φέρνει τις Φάσεις 1 & 2 της v0.6 σε macOS, Android και PWA: κρυπτογραφημένες σαρώσεις & PDF με Cloud Blob Sync, άμεσο βιομετρικό ξεκλείδωμα (Touch ID / BiometricPrompt / Passkey) και γρήγορη πρόσβαση στη γραμμή μενού macOS."
   },
   "artifacts": {
     "android-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0/SafePocket-v0.5.0-b20-universal-arm64-x86_64.apk",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.6.0-beta.1/SafePocket-v0.6.0-beta.1-b21-universal-arm64-x86_64.apk",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "sizeBytes": 18432960,
       "minSdk": 29,
@@ -34,7 +34,7 @@
       "signingCertSha256": "5972aa8c113bfa8de1a02bda7b9ef86fb9304a617e7f1f9354d788640bd61a09"
     },
     "macos-universal": {
-      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.5.0/SafePocket-0.5.0-20-macOS-universal.dmg",
+      "url": "https://github.com/petrosvassiliou/safepocket/releases/download/v0.6.0-beta.1/SafePocket-0.6.0-beta.1-21-macOS-universal.dmg",
       "sparkleAppcastUrl": "https://github.com/petrosvassiliou/safepocket/releases/latest/download/version.json",
       "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       "edSignature": "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
@@ -44,8 +44,8 @@
     "chromeos-pwa": {
       "url": "/sw.js",
       "bundleManifestUrl": "/manifest.webmanifest",
-      "sha256": "378c5775909c1139d7fbcd269a70e824cc28a5418e047fbdf4885f0d013580de",
-      "sizeBytes": 2709
+      "sha256": "61e1ebb4f2e7be71b8a535892f2aa972e407ae48b8c560174fa69ad83dbe15e9",
+      "sizeBytes": 2716
     }
   }
 }
